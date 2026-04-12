@@ -73,7 +73,6 @@ _VALID_CHAT_MODELS: frozenset[str] = frozenset({
 
 # ─── Embedding model registry ────────────────────────────────────────────────
 # Each model gets its own ChromaDB collection so vectors are never mixed.
-# BGE models use a query prefix for retrieval (standard BEIR/MTEB practice).
 
 EMBEDDING_MODELS: dict[str, dict] = {
     "openai": {
@@ -81,27 +80,7 @@ EMBEDDING_MODELS: dict[str, dict] = {
         "description": "Best quality · requires API key · cloud",
         "dims": 1536,
         "local": False,
-        "hf_name": None,
-        "query_prefix": "",
         "collection": "discord_openai",
-    },
-    "bge-large": {
-        "label": "BAAI/bge-large-en-v1.5",
-        "description": "Best open-source · 1024-dim · ~1.3 GB download",
-        "dims": 1024,
-        "local": True,
-        "hf_name": "BAAI/bge-large-en-v1.5",
-        "query_prefix": "Represent this sentence for searching relevant passages: ",
-        "collection": "discord_bge_large",
-    },
-    "bge-base": {
-        "label": "BAAI/bge-base-en-v1.5",
-        "description": "Lighter open-source · 768-dim · ~440 MB download",
-        "dims": 768,
-        "local": True,
-        "hf_name": "BAAI/bge-base-en-v1.5",
-        "query_prefix": "Represent this sentence for searching relevant passages: ",
-        "collection": "discord_bge_base",
     },
 }
 
@@ -110,10 +89,6 @@ EMBEDDING_MODELS: dict[str, dict] = {
 openai_client: Optional[OpenAI] = None
 chroma_collections: dict[str, object] = {}   # model_id → chromadb.Collection
 current_embedding_model: str = "openai"
-
-# Lazy-loaded sentence-transformers model (one at a time to save RAM)
-_st_model = None
-_st_model_id: Optional[str] = None
 
 
 # ─── Database helpers ────────────────────────────────────────────────────────
@@ -253,50 +228,15 @@ def safe_str(val) -> str:
 
 # ─── Embedding helpers ───────────────────────────────────────────────────────
 
-def _get_st_model(model_id: str):
-    """Lazily load a sentence-transformers model (one at a time)."""
-    global _st_model, _st_model_id
-    if _st_model_id != model_id:
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            raise HTTPException(
-                400,
-                "sentence-transformers is not installed. "
-                "Run: pip install sentence-transformers"
-            )
-        hf_name = EMBEDDING_MODELS[model_id]["hf_name"]
-        logger.info("Loading local model %s (first use — may take a moment)…", hf_name)
-        _st_model = SentenceTransformer(hf_name)
-        _st_model_id = model_id
-        logger.info("Model loaded.")
-    return _st_model
-
-
-def embed_texts(texts: list[str], is_query: bool = False) -> list[list[float]]:
-    """Embed a list of texts using the currently selected model."""
-    cfg = EMBEDDING_MODELS[current_embedding_model]
-
-    if current_embedding_model == "openai":
-        if not openai_client:
-            raise HTTPException(400, "OpenAI API key not configured. Set it in Settings.")
-        response = openai_client.embeddings.create(
-            model="text-embedding-3-small",
-            input=[t[:8191] for t in texts],
-        )
-        return [e.embedding for e in response.data]
-
-    # Local sentence-transformers path
-    model = _get_st_model(current_embedding_model)
-    if is_query and cfg["query_prefix"]:
-        texts = [cfg["query_prefix"] + t for t in texts]
-    embeddings = model.encode(
-        texts,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-        batch_size=32,
+def embed_texts(texts: list[str]) -> list[list[float]]:
+    """Embed a list of texts using OpenAI text-embedding-3-small."""
+    if not openai_client:
+        raise HTTPException(400, "OpenAI API key not configured. Set it in Settings.")
+    response = openai_client.embeddings.create(
+        model="text-embedding-3-small",
+        input=[t[:8191] for t in texts],
     )
-    return embeddings.tolist()
+    return [e.embedding for e in response.data]
 
 
 def active_collection():
@@ -304,10 +244,8 @@ def active_collection():
     return chroma_collections[current_embedding_model]
 
 
-def embedding_model_available(model_id: str) -> bool:
-    if model_id == "openai":
-        return openai_client is not None
-    return True
+def embedding_model_available() -> bool:
+    return openai_client is not None
 
 
 # ─── App lifecycle ───────────────────────────────────────────────────────────
@@ -422,10 +360,10 @@ async def set_embedding_model(body: dict):
     model_id = body.get("model_id", "").strip()
     if model_id not in EMBEDDING_MODELS:
         raise HTTPException(400, f"Unknown model '{model_id}'")
-    if model_id == "openai" and not embedding_model_available("openai"):
+    if not embedding_model_available():
         raise HTTPException(
             400,
-            "OpenAI API key is not configured. Set it in Settings before selecting the OpenAI model."
+            "OpenAI API key is not configured. Set it in Settings before selecting an embedding model."
         )
     current_embedding_model = model_id
     set_setting("embedding_model", model_id)
@@ -441,10 +379,10 @@ async def list_embedding_models():
     return [
         {
             "id": mid,
-            **{k: v for k, v in cfg.items() if k != "hf_name"},
+            **cfg,
             "embedded_count": chroma_collections[mid].count(),
             "active": mid == current_embedding_model,
-            "available": embedding_model_available(mid),
+            "available": embedding_model_available(),
         }
         for mid, cfg in EMBEDDING_MODELS.items()
     ]
@@ -517,11 +455,10 @@ async def reembed_upload(upload_id: str):
             yield "data: Completed\n\n"
         return StreamingResponse(generate(), media_type="text/event-stream")
 
-    if current_embedding_model == "openai" and not embedding_model_available("openai"):
+    if not embedding_model_available():
         raise HTTPException(
             400,
-            "OpenAI API key is required to re-embed with the OpenAI model. "
-            "Set it in Settings or switch to a local embedding model first."
+            "OpenAI API key is required to re-embed. Set it in Settings first."
         )
 
     texts = [r["content"] for r in rows]
@@ -529,23 +466,22 @@ async def reembed_upload(upload_id: str):
     metas = [{"username": r["username"], "date": r["date"], "upload_id": upload_id} for r in rows]
 
     col = active_collection()
-    batch_size = 32 if current_embedding_model != "openai" else 2048
 
     async def generate():
         yield f"data: Starting embedding {len(texts)} messages with {EMBEDDING_MODELS[current_embedding_model]['label']}\n\n"
         embedded = 0
-        for i in range(0, len(texts), batch_size):
-            b_texts = texts[i : i + batch_size]
-            b_uuids = uuids[i : i + batch_size]
-            b_metas = metas[i : i + batch_size]
+        for i in range(0, len(texts), 2048):
+            b_texts = texts[i : i + 2048]
+            b_uuids = uuids[i : i + 2048]
+            b_metas = metas[i : i + 2048]
             try:
-                embeddings = embed_texts(b_texts, is_query=False)
+                embeddings = embed_texts(b_texts)
                 col.upsert(embeddings=embeddings, documents=b_texts, ids=b_uuids, metadatas=b_metas)
                 embedded += len(b_texts)
                 yield f"data: Embedded {embedded}/{len(texts)} messages\n\n"
             except Exception as e:
-                logger.warning("Reembed batch %d failed: %s", i // batch_size, e)
-                yield f"data: Error in batch {i // batch_size + 1}: {str(e)}\n\n"
+                logger.warning("Reembed batch %d failed: %s", i // 2048, e)
+                yield f"data: Error in batch {i // 2048 + 1}: {str(e)}\n\n"
         yield f"data: Completed: re-embedded {embedded} messages\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -633,12 +569,11 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
     df = df.reset_index(drop=True)
     df["content"] = df["content"].fillna("").astype(str)
 
-    if current_embedding_model == "openai" and not embedding_model_available("openai"):
+    if not embedding_model_available():
         if df["content"].astype(str).str.strip().any():
             raise HTTPException(
                 400,
-                "OpenAI API key is required to embed with the OpenAI model. "
-                "Set it in Settings or switch to a local embedding model before uploading."
+                "OpenAI API key is required to embed messages. Set it in Settings before uploading."
             )
 
     upload_id = str(uuid.uuid4())
@@ -706,19 +641,15 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
 
         # Embed using the active model into its dedicated collection
         embedded_count = 0
-        can_embed = (
-            current_embedding_model != "openai" or openai_client is not None
-        )
-        if can_embed and texts_to_embed:
+        if embedding_model_available() and texts_to_embed:
             yield f"data: Starting embedding {len(texts_to_embed)} messages with {EMBEDDING_MODELS[current_embedding_model]['label']}\n\n"
             col = active_collection()
-            batch_size = 32 if current_embedding_model != "openai" else 2048
-            for i in range(0, len(texts_to_embed), batch_size):
-                b_texts = texts_to_embed[i : i + batch_size]
-                b_uuids = uuids_to_embed[i : i + batch_size]
-                b_metas = metas_to_embed[i : i + batch_size]
+            for i in range(0, len(texts_to_embed), 2048):
+                b_texts = texts_to_embed[i : i + 2048]
+                b_uuids = uuids_to_embed[i : i + 2048]
+                b_metas = metas_to_embed[i : i + 2048]
                 try:
-                    embeddings = embed_texts(b_texts, is_query=False)
+                    embeddings = embed_texts(b_texts)
                     col.add(
                         embeddings=embeddings,
                         documents=b_texts,
@@ -728,10 +659,10 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
                     embedded_count += len(b_texts)
                     yield f"data: Embedded {embedded_count}/{len(texts_to_embed)} messages\n\n"
                 except Exception as e:
-                    logger.warning("Embedding batch %d failed: %s", i // batch_size, e)
-                    yield f"data: Error in batch {i // batch_size + 1}: {str(e)}\n\n"
-        elif not can_embed:
-            yield "data: Skipping embedding (no API key for OpenAI or model not available)\n\n"
+                    logger.warning("Embedding batch %d failed: %s", i // 2048, e)
+                    yield f"data: Error in batch {i // 2048 + 1}: {str(e)}\n\n"
+        elif not embedding_model_available():
+            yield "data: Skipping embedding (no OpenAI API key configured)\n\n"
         else:
             yield "data: No messages to embed\n\n"
 
@@ -996,7 +927,7 @@ async def search_semantic(
 
     has_filters = bool(username or date_from or date_to or (suno_team != "all") or uid_list or min_words)
     fetch_n = min(n_results * 4 if has_filters else n_results, total)
-    query_emb = embed_texts([query], is_query=True)[0]
+    query_emb = embed_texts([query])[0]
 
     results = col.query(query_embeddings=[query_emb], n_results=fetch_n)
     ids = results["ids"][0]
@@ -1068,7 +999,7 @@ async def chat_endpoint(request: Request):
             col = active_collection()
             if col.count() == 0:
                 return rows
-            query_emb = embed_texts([message], is_query=True)[0]
+            query_emb = embed_texts([message])[0]
             results = col.query(query_embeddings=[query_emb], n_results=12)
             ids = results.get("ids", [[]])[0]
             distances = results.get("distances", [[]])[0]
@@ -1517,7 +1448,7 @@ async def filter_semantic(body: dict):
     # Embed the query
     loop = asyncio.get_running_loop()
     query_vec = await loop.run_in_executor(
-        None, lambda: embed_texts([embed_text], is_query=True)[0]
+        None, lambda: embed_texts([embed_text])[0]
     )
 
     # ── Directly fetch stored embeddings by ID (avoids ChromaDB $in filter bugs) ──
