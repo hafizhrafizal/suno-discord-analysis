@@ -8,7 +8,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
-<body class="bg-slate-100 text-gray-900 min-h-screen">
+<body class="bg-slate-100 text-gray-900 min-h-screen overflow-x-hidden">
 
   <!-- Skip navigation for keyboard users -->
   <a href="#main-content"
@@ -109,37 +109,37 @@
       </div>
 
       <!-- Page navigation -->
-      <nav aria-label="Page navigation" class="flex gap-1 bg-indigo-800 rounded-lg p-0.5 shrink-0">
+      <nav aria-label="Page navigation" class="flex gap-0.5 bg-indigo-800 rounded-lg p-0.5 shrink-0">
         <button id="nav-search" class="nav-tab nav-active" data-page="search" aria-current="page">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
           </svg>
-          Search
+          <span class="hidden sm:inline">Search</span>
         </button>
         <button id="nav-chat" class="nav-tab" data-page="chat">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3v-3z"/>
           </svg>
-          Chat
+          <span class="hidden sm:inline">Chat</span>
         </button>
         <button id="nav-bookmarks" class="nav-tab" data-page="bookmarks">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
           </svg>
-          Bookmarks
+          <span class="hidden sm:inline">Bookmarks</span>
           <!-- bg-indigo-700 text-white on bg-indigo-800 nav → white on dark ✓ -->
-          <span id="bm-count-badge" class="hidden ml-1 text-[10px] bg-white text-indigo-800 rounded-full px-1.5 py-0.5 font-bold leading-none" aria-label="bookmarks count"></span>
+          <span id="bm-count-badge" class="hidden text-[10px] bg-white text-indigo-800 rounded-full px-1.5 py-0.5 font-bold leading-none" aria-label="bookmarks count"></span>
         </button>
         <button id="nav-settings" class="nav-tab" data-page="settings">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
           </svg>
-          Config
+          <span class="hidden sm:inline">Config</span>
         </button>
       </nav>
 
@@ -200,23 +200,25 @@
       <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="search-heading">
         <h2 id="search-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">Search</h2>
 
-        <div class="flex border-b mb-4" role="tablist" aria-label="Search type">
-          <button class="search-tab tab-active" data-tab="username" role="tab" aria-selected="true" aria-controls="tab-username">By Username</button>
-          <button class="search-tab" data-tab="keyword" role="tab" aria-selected="false" aria-controls="tab-keyword">Keyword</button>
-          <button class="search-tab" data-tab="semantic" role="tab" aria-selected="false" aria-controls="tab-semantic">Semantic</button>
-          <button class="search-tab" data-tab="range" role="tab" aria-selected="false" aria-controls="tab-range">Date Range</button>
+        <div class="flex border-b mb-4 overflow-x-auto" role="tablist" aria-label="Search type">
+          <button class="search-tab tab-active whitespace-nowrap" data-tab="username" role="tab" aria-selected="true" aria-controls="tab-username">By Username</button>
+          <button class="search-tab whitespace-nowrap" data-tab="keyword" role="tab" aria-selected="false" aria-controls="tab-keyword">Keyword</button>
+          <button class="search-tab whitespace-nowrap" data-tab="semantic" role="tab" aria-selected="false" aria-controls="tab-semantic">Semantic</button>
+          <button class="search-tab whitespace-nowrap" data-tab="range" role="tab" aria-selected="false" aria-controls="tab-range">Date Range</button>
         </div>
 
         <!-- Username Tab -->
         <div id="tab-username" class="search-panel" role="tabpanel" aria-labelledby="">
-          <div class="flex gap-2 mb-2">
+          <div class="flex flex-wrap gap-2 mb-2">
             <label for="username-input" class="sr-only">Username</label>
-            <input id="username-input" type="text" placeholder="Username or partial match…" class="search-input flex-1" />
-            <label for="username-limit" class="sr-only">Max results</label>
-            <input id="username-limit" type="number" value="200" min="1" max="1000" class="search-input w-24" title="Max results" aria-label="Max results" />
-            <label for="username-min-words" class="sr-only">Minimum word count</label>
-            <input id="username-min-words" type="number" value="0" min="0" class="search-input w-24" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
-            <button id="username-search-btn" class="search-btn">Search</button>
+            <input id="username-input" type="text" placeholder="Username or partial match…" class="search-input flex-1 min-w-[8rem]" />
+            <div class="flex gap-2 shrink-0">
+              <label for="username-limit" class="sr-only">Max results</label>
+              <input id="username-limit" type="number" value="200" min="1" max="1000" class="search-input w-20" title="Max results" aria-label="Max results" />
+              <label for="username-min-words" class="sr-only">Minimum word count</label>
+              <input id="username-min-words" type="number" value="0" min="0" class="search-input w-20" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+              <button id="username-search-btn" class="search-btn">Search</button>
+            </div>
           </div>
           <div class="flex flex-wrap gap-2 items-center">
             <label for="username-date-from" class="filter-label">From</label>
@@ -235,14 +237,16 @@
 
         <!-- Keyword Tab -->
         <div id="tab-keyword" class="search-panel hidden" role="tabpanel">
-          <div class="flex gap-2 mb-2">
+          <div class="flex flex-wrap gap-2 mb-2">
             <label for="keyword-input" class="sr-only">Keyword or phrase</label>
-            <input id="keyword-input" type="text" placeholder="Keyword or phrase…" class="search-input flex-1" />
-            <label for="keyword-limit" class="sr-only">Max results</label>
-            <input id="keyword-limit" type="number" value="200" min="1" max="1000" class="search-input w-24" title="Max results" aria-label="Max results" />
-            <label for="keyword-min-words" class="sr-only">Minimum word count</label>
-            <input id="keyword-min-words" type="number" value="0" min="0" class="search-input w-24" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
-            <button id="keyword-search-btn" class="search-btn">Search</button>
+            <input id="keyword-input" type="text" placeholder="Keyword or phrase…" class="search-input flex-1 min-w-[8rem]" />
+            <div class="flex gap-2 shrink-0">
+              <label for="keyword-limit" class="sr-only">Max results</label>
+              <input id="keyword-limit" type="number" value="200" min="1" max="1000" class="search-input w-20" title="Max results" aria-label="Max results" />
+              <label for="keyword-min-words" class="sr-only">Minimum word count</label>
+              <input id="keyword-min-words" type="number" value="0" min="0" class="search-input w-20" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+              <button id="keyword-search-btn" class="search-btn">Search</button>
+            </div>
           </div>
           <div class="flex flex-wrap gap-2 items-center">
             <label for="keyword-username-filter" class="filter-label">Author</label>
@@ -263,14 +267,16 @@
 
         <!-- Semantic Tab -->
         <div id="tab-semantic" class="search-panel hidden" role="tabpanel">
-          <div class="flex gap-2 mb-2">
+          <div class="flex flex-wrap gap-2 mb-2">
             <label for="semantic-input" class="sr-only">Semantic search query</label>
-            <input id="semantic-input" type="text" placeholder="Describe what you're looking for…" class="search-input flex-1" />
-            <label for="semantic-n" class="sr-only">Number of results</label>
-            <input id="semantic-n" type="number" value="20" min="1" max="100" class="search-input w-24" title="Number of results" aria-label="Number of results" />
-            <label for="semantic-min-words" class="sr-only">Minimum word count</label>
-            <input id="semantic-min-words" type="number" value="0" min="0" class="search-input w-24" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
-            <button id="semantic-search-btn" class="search-btn">Search</button>
+            <input id="semantic-input" type="text" placeholder="Describe what you're looking for…" class="search-input flex-1 min-w-[8rem]" />
+            <div class="flex gap-2 shrink-0">
+              <label for="semantic-n" class="sr-only">Number of results</label>
+              <input id="semantic-n" type="number" value="20" min="1" max="100" class="search-input w-20" title="Number of results" aria-label="Number of results" />
+              <label for="semantic-min-words" class="sr-only">Minimum word count</label>
+              <input id="semantic-min-words" type="number" value="0" min="0" class="search-input w-20" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+              <button id="semantic-search-btn" class="search-btn">Search</button>
+            </div>
           </div>
           <div class="flex flex-wrap gap-2 items-center">
             <label for="semantic-username-filter" class="filter-label">Author</label>
@@ -331,16 +337,16 @@
         </div>
 
         <!-- Context settings -->
-        <div class="mt-4 pt-4 border-t flex flex-wrap gap-x-5 gap-y-2 items-center text-sm text-gray-700">
-          <span class="font-semibold text-gray-800">Context window:</span>
+        <div class="mt-4 pt-4 border-t flex flex-wrap gap-x-4 gap-y-2 items-center text-sm text-gray-700">
+          <span class="font-semibold text-gray-800 w-full sm:w-auto">Context window:</span>
           <label for="ctx-before" class="flex items-center gap-1.5">
             <span class="text-gray-700">Before</span>
-            <input id="ctx-before" type="number" value="10" min="0" max="100" class="w-16 border border-gray-400 rounded-lg px-2 py-1 text-sm text-center text-gray-900" />
+            <input id="ctx-before" type="number" value="10" min="0" max="100" class="w-14 border border-gray-400 rounded-lg px-2 py-1 text-sm text-center text-gray-900" />
             <span class="text-gray-600 text-xs">msgs</span>
           </label>
           <label for="ctx-after" class="flex items-center gap-1.5">
             <span class="text-gray-700">After</span>
-            <input id="ctx-after" type="number" value="10" min="0" max="100" class="w-16 border border-gray-400 rounded-lg px-2 py-1 text-sm text-center text-gray-900" />
+            <input id="ctx-after" type="number" value="10" min="0" max="100" class="w-14 border border-gray-400 rounded-lg px-2 py-1 text-sm text-center text-gray-900" />
             <span class="text-gray-600 text-xs">msgs</span>
           </label>
           <span class="text-xs text-gray-600">(same CSV, original order)</span>
@@ -358,7 +364,7 @@
           </button>
         </div>
         <!-- Filter within results -->
-        <div class="sticky top-[57px] z-30 bg-white rounded-2xl shadow border border-gray-200 px-3 py-2 mb-3 flex items-center gap-2">
+        <div class="sticky top-[57px] z-30 bg-white rounded-2xl shadow border border-gray-200 px-3 py-2 mb-3 flex flex-wrap items-center gap-2">
           <!-- Mode toggle -->
           <div class="inline-flex rounded-lg overflow-hidden shrink-0 border border-gray-300" role="group" aria-label="Filter mode">
             <button id="filter-mode-exact"
@@ -382,28 +388,29 @@
               Semantic
             </button>
           </div>
-          <!-- divider -->
-          <div class="w-px h-4 bg-gray-300 shrink-0" aria-hidden="true"></div>
-          <!-- input -->
-          <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/>
-          </svg>
-          <label for="results-filter" class="sr-only">Filter results</label>
-          <input id="results-filter" type="text" placeholder="Exact: substring match · Semantic: re-rank by embedding similarity…"
-                 class="flex-1 text-sm bg-transparent outline-none placeholder-gray-500 min-w-0 text-gray-900" />
-          <!-- spinner (semantic mode) -->
-          <svg id="filter-spinner" class="hidden w-4 h-4 text-indigo-600 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" aria-label="Filtering…" role="img">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
-          </svg>
-          <!-- clear -->
-          <button id="results-filter-clear" class="hidden text-gray-600 hover:text-gray-900 shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-700 rounded" aria-label="Clear filter">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          <!-- search input row (expands to fill) -->
+          <div class="flex items-center gap-2 flex-1 min-w-[10rem]">
+            <div class="w-px h-4 bg-gray-300 shrink-0" aria-hidden="true"></div>
+            <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/>
             </svg>
-          </button>
-          <span id="results-filter-count" class="text-xs text-gray-600 shrink-0 hidden" aria-live="polite"></span>
+            <label for="results-filter" class="sr-only">Filter results</label>
+            <input id="results-filter" type="text" placeholder="Filter within results…"
+                   class="flex-1 text-sm bg-transparent outline-none placeholder-gray-500 min-w-0 text-gray-900" />
+            <!-- spinner (semantic mode) -->
+            <svg id="filter-spinner" class="hidden w-4 h-4 text-indigo-600 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" aria-label="Filtering…" role="img">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+            </svg>
+            <!-- clear -->
+            <button id="results-filter-clear" class="hidden text-gray-600 hover:text-gray-900 shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-700 rounded" aria-label="Clear filter">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div><!-- /search input row -->
+          <span id="results-filter-count" class="text-xs text-gray-600 shrink-0 hidden w-full sm:w-auto" aria-live="polite"></span>
         </div>
         <div id="results-container" class="space-y-3" aria-live="polite" aria-atomic="false"></div>
       </section>
@@ -554,12 +561,12 @@
             <label for="chat-input" class="sr-only">Chat message</label>
             <textarea id="chat-input" rows="2"
               placeholder="Ask about Suno Discord conversations…"
-              class="search-input flex-1 resize-none"></textarea>
-            <button id="chat-send-btn" class="search-btn self-end">Send</button>
+              class="search-input flex-1 resize-none min-w-0"></textarea>
+            <button id="chat-send-btn" class="search-btn self-end shrink-0">Send</button>
           </div>
-          <div class="flex items-center gap-2 mt-2">
+          <div class="flex flex-wrap items-center gap-2 mt-2">
             <label for="chat-model" class="text-xs font-medium text-gray-700 shrink-0">Model</label>
-            <select id="chat-model" class="search-input text-xs py-1 w-56">
+            <select id="chat-model" class="search-input text-xs py-1 flex-1 min-w-[10rem] max-w-xs">
               <optgroup label="GPT-5.4">
                 <option value="gpt-5.4" selected>GPT-5.4</option>
                 <option value="gpt-5.4-pro">GPT-5.4 pro</option>
@@ -643,9 +650,9 @@
             placeholder="e.g. Focus on feature requests and bug reports. Bullet-point format."
             class="search-input w-full resize-none mb-3"></textarea>
 
-          <div class="flex items-center gap-2 mb-3">
+          <div class="flex flex-wrap items-center gap-2 mb-3">
             <label for="sum-model" class="text-xs font-semibold text-gray-700 shrink-0">Model</label>
-            <select id="sum-model" class="search-input text-xs py-1 w-56">
+            <select id="sum-model" class="search-input text-xs py-1 flex-1 min-w-[10rem] max-w-xs">
               <optgroup label="GPT-5.4">
                 <option value="gpt-5.4" selected>GPT-5.4</option>
                 <option value="gpt-5.4-pro">GPT-5.4 pro</option>
@@ -715,9 +722,9 @@
           </select>
         </label>
         <label for="bm-filter-user" class="flex items-center gap-1.5 text-sm text-gray-700">
-          <span>Username</span>
+          <span class="shrink-0">Username</span>
           <input id="bm-filter-user" type="text" placeholder="Filter by username…"
-                 class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 w-40" />
+                 class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 w-32 sm:w-40 min-w-0" />
         </label>
         <label for="bm-filter-suno" class="flex items-center gap-1.5 text-sm text-gray-700">
           <span>Suno Team</span>
