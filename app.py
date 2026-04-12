@@ -241,7 +241,10 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 def active_collection():
     """Return the ChromaDB collection for the currently selected model."""
-    return chroma_collections[current_embedding_model]
+    col = chroma_collections.get(current_embedding_model)
+    if col is None:
+        raise HTTPException(503, "Vector store not ready — restart the server and try again.")
+    return col
 
 
 def embedding_model_available() -> bool:
@@ -260,20 +263,27 @@ async def lifespan(app: FastAPI):
 
     def _init_chroma():
         client = chromadb.PersistentClient(path=CHROMA_PATH)
-        return {
-            model_id: client.get_or_create_collection(
-                name=cfg["collection"],
-                metadata={"hnsw:space": "cosine"},
-            )
-            for model_id, cfg in EMBEDDING_MODELS.items()
-        }
+        cols = {}
+        for model_id, cfg in EMBEDDING_MODELS.items():
+            try:
+                cols[model_id] = client.get_or_create_collection(
+                    name=cfg["collection"],
+                    metadata={"hnsw:space": "cosine"},
+                )
+            except Exception as exc:
+                logger.error("Failed to init ChromaDB collection %s: %s", cfg["collection"], exc)
+        return cols
 
     loop = asyncio.get_running_loop()
-    chroma_cols, _ = await asyncio.gather(
-        loop.run_in_executor(None, _init_chroma),
-        loop.run_in_executor(None, init_db),
-    )
-    chroma_collections = chroma_cols
+    try:
+        chroma_cols, _ = await asyncio.gather(
+            loop.run_in_executor(None, _init_chroma),
+            loop.run_in_executor(None, init_db),
+        )
+        chroma_collections = chroma_cols
+    except Exception as exc:
+        logger.error("Startup error (ChromaDB or DB init failed): %s", exc)
+        chroma_collections = {}
 
     # Restore saved model preference
     saved = get_setting("embedding_model", "openai")
@@ -376,16 +386,20 @@ async def set_embedding_model(body: dict):
 
 @app.get("/api/embedding-models")
 async def list_embedding_models():
-    return [
-        {
+    result = []
+    for mid, cfg in EMBEDDING_MODELS.items():
+        try:
+            count = chroma_collections[mid].count() if mid in chroma_collections else 0
+        except Exception:
+            count = 0
+        result.append({
             "id": mid,
             **cfg,
-            "embedded_count": chroma_collections[mid].count(),
+            "embedded_count": count,
             "active": mid == current_embedding_model,
             "available": embedding_model_available(),
-        }
-        for mid, cfg in EMBEDDING_MODELS.items()
-    ]
+        })
+    return result
 
 
 @app.get("/api/stats")
@@ -394,11 +408,14 @@ async def get_stats():
     total_msgs = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
     total_uploads = conn.execute("SELECT COUNT(*) FROM uploads").fetchone()[0]
     conn.close()
-    active_col = active_collection()
+    try:
+        embedded_msgs = active_collection().count()
+    except Exception:
+        embedded_msgs = 0
     return {
         "total_messages": total_msgs,
         "total_uploads": total_uploads,
-        "embedded_messages": active_col.count(),
+        "embedded_messages": embedded_msgs,
         "api_key_set": openai_client is not None,
         "current_model": current_embedding_model,
         "current_model_label": EMBEDDING_MODELS[current_embedding_model]["label"],
@@ -408,7 +425,7 @@ async def get_stats():
 def _has_upload_in_collection(collection, upload_id: str) -> bool:
     """Fast presence check: does this upload have any vectors in this collection?"""
     try:
-        result = collection.get(where={"upload_id": upload_id}, limit=1, include=[])
+        result = collection.get(where={"upload_id": upload_id}, limit=1, include=["documents"])
         return len(result["ids"]) > 0
     except Exception:
         return False
@@ -512,7 +529,7 @@ async def delete_upload(upload_id: str):
                 batch_size = 500
                 for i in range(0, len(msg_uuids), batch_size):
                     batch_uuids = msg_uuids[i : i + batch_size]
-                    existing = col.get(ids=batch_uuids, include=[])
+                    existing = col.get(ids=batch_uuids, include=["documents"])
                     if existing["ids"]:
                         col.delete(ids=existing["ids"])
             except Exception as e:
