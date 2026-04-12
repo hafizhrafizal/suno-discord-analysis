@@ -1,0 +1,23 @@
+# Data files (contain research data — keep local)
+discord_data.db
+chroma_db/
+
+# Secrets — never commit
+.env
+
+# Development artifacts
+fix_app_py.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db

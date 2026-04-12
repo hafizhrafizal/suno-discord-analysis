@@ -1,0 +1,23 @@
+# Core web framework
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.30.0,<1.0.0
+
+# Data processing
+pandas>=2.2.0,<3.0.0
+numpy>=1.26.0,<3.0.0
+
+# Vector database
+chromadb>=0.5.0,<1.0.0
+
+# OpenAI client
+openai>=1.40.0,<2.0.0
+
+# Template / static serving
+jinja2>=3.1.0,<4.0.0
+python-multipart>=0.0.9,<1.0.0
+
+# Local embedding models (optional — only needed if using BGE models)
+sentence-transformers>=3.0.0,<4.0.0
+
+# Load .env files for local development
+python-dotenv>=1.0.0,<2.0.0

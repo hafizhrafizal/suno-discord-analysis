@@ -1,0 +1,1886 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   MARKED CONFIGURATION
+══════════════════════════════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof marked !== 'undefined') {
+    marked.use({ gfm: true, breaks: true });
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ERROR POPUP
+══════════════════════════════════════════════════════════════════════════ */
+function showErrorPopup(msg) {
+  document.getElementById('error-popup-msg').textContent = msg;
+  const popup = document.getElementById('error-popup');
+  popup.classList.remove('hidden');
+  // close on Escape
+  document.addEventListener('keydown', _errorPopupEscHandler);
+}
+function dismissErrorPopup() {
+  document.getElementById('error-popup').classList.add('hidden');
+  document.removeEventListener('keydown', _errorPopupEscHandler);
+}
+function _errorPopupEscHandler(e) {
+  if (e.key === 'Escape') dismissErrorPopup();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STATE
+══════════════════════════════════════════════════════════════════════════ */
+let currentResults   = [];
+let currentSearchType = '';
+let currentKeyword   = '';
+let allUploads       = [];           // [{id, filename, row_count, upload_time, embedded_models}]
+let selectedUploadIds = new Set();   // empty = search all
+let bookmarkedIds    = new Set();    // msg ids that are bookmarked
+let activeFilterTokens = [];         // tokens to highlight in filter results (exact mode)
+let _allLabels       = [];           // all defined labels [{id, name, color}]
+let _bmLabelFilter   = new Set();    // label IDs selected as bookmark filter
+
+/* ══════════════════════════════════════════════════════════════════════════
+   USERNAME COLOUR PALETTE
+══════════════════════════════════════════════════════════════════════════ */
+const _usernameColors = {};
+let _colorIdx = 0;
+const PALETTE = [
+  ['#dbeafe','#1e40af'],['#dcfce7','#166534'],['#ede9fe','#5b21b6'],
+  ['#fce7f3','#9d174d'],['#ffedd5','#9a3412'],['#ccfbf1','#0f5f53'],
+  ['#fee2e2','#991b1b'],['#fef9c3','#854d0e'],['#f1f5f9','#334155'],
+];
+function usernameStyle(u) {
+  if (!_usernameColors[u]) { _usernameColors[u] = PALETTE[_colorIdx++ % PALETTE.length]; }
+  const [bg, text] = _usernameColors[u];
+  return `background:${bg};color:${text}`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   UTILITIES
+══════════════════════════════════════════════════════════════════════════ */
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+function highlight(text, kw) {
+  if (!kw || !text) return esc(text);
+  return esc(text).replace(
+    new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi'),
+    m => `<mark>${m}</mark>`
+  );
+}
+// Highlight multiple tokens (longest first so phrases beat their own words)
+function highlightTerms(text, tokens) {
+  if (!tokens.length || !text) return esc(text);
+  const sorted  = [...tokens].sort((a, b) => b.length - a.length);
+  const pattern = sorted.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return esc(text).replace(new RegExp(`(${pattern})`, 'gi'), m => `<mark>${m}</mark>`);
+}
+function truthy(v) { return v === 'True' || v === 'true' || v === '1' || v === 1 || v === true; }
+function hasContent(v) { return v && v !== '' && v !== 'nan' && v !== '[]' && v !== 'None'; }
+function enc(s) { return encodeURIComponent(s); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PAGE NAVIGATION
+══════════════════════════════════════════════════════════════════════════ */
+function navigateTo(page) {
+  document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('nav-active', b.dataset.page === page));
+  document.getElementById('page-search').classList.toggle('hidden', page !== 'search');
+  document.getElementById('page-settings').classList.toggle('hidden', page !== 'settings');
+  document.getElementById('page-chat').classList.toggle('hidden', page !== 'chat');
+  document.getElementById('page-bookmarks').classList.toggle('hidden', page !== 'bookmarks');
+  if (page === 'settings') loadSettingsPage();
+  if (page === 'bookmarks') loadBookmarksPage();
+}
+
+document.querySelectorAll('.nav-tab').forEach(btn => {
+  btn.addEventListener('click', () => navigateTo(btn.dataset.page));
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STATS
+══════════════════════════════════════════════════════════════════════════ */
+async function loadStats() {
+  try {
+    const d = await fetch('/api/stats').then(r => r.json());
+    document.getElementById('stats-bar').innerHTML =
+      `${d.total_messages.toLocaleString()} msgs &bull; ` +
+      `${d.total_uploads} uploads &bull; ` +
+      `${d.embedded_messages.toLocaleString()} embedded &bull; ` +
+      `<span style="color:#c4b5fd">${esc(d.current_model_label)}</span>` +
+      (d.api_key_set ? ' &bull; <span style="color:#86efac">API key ✓</span>' : '');
+  } catch (_) {}
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SCOPE SELECTOR (Search page — which uploads to search)
+══════════════════════════════════════════════════════════════════════════ */
+function renderScopeChips() {
+  const container = document.getElementById('scope-chips');
+  if (!allUploads.length) {
+    container.innerHTML = '<span class="text-xs text-gray-400 italic">No uploads yet — go to the Data page to add data.</span>';
+    return;
+  }
+  container.innerHTML = allUploads.map(u => {
+    const active = selectedUploadIds.size === 0 || selectedUploadIds.has(u.id);
+    return `
+      <button class="scope-chip ${active ? 'scope-chip-on' : 'scope-chip-off'}"
+              data-id="${u.id}" title="${esc(u.id)}">
+        ${esc(u.filename)}
+        <span class="text-[10px] opacity-70">${Number(u.row_count).toLocaleString()} rows</span>
+      </button>`;
+  }).join('');
+
+  container.querySelectorAll('.scope-chip').forEach(btn => {
+    btn.addEventListener('click', () => toggleScopeChip(btn.dataset.id, btn));
+  });
+}
+
+function toggleScopeChip(uploadId, btn) {
+  if (selectedUploadIds.size === 0) {
+    // Currently "all" — switch to explicitly selecting all except clicked
+    allUploads.forEach(u => { if (u.id !== uploadId) selectedUploadIds.add(u.id); });
+  } else if (selectedUploadIds.has(uploadId)) {
+    selectedUploadIds.delete(uploadId);
+    if (selectedUploadIds.size === 0) selectedUploadIds = new Set(); // reset to "all"
+  } else {
+    selectedUploadIds.add(uploadId);
+    // If all are now selected, reset to "all"
+    if (selectedUploadIds.size === allUploads.length) selectedUploadIds = new Set();
+  }
+  renderScopeChips();
+}
+
+document.getElementById('scope-select-all').onclick = () => {
+  selectedUploadIds = new Set();
+  renderScopeChips();
+};
+document.getElementById('scope-select-none').onclick = () => {
+  // Select none = only results section stays empty; keep 1st upload selected for usability
+  selectedUploadIds = new Set();
+  renderScopeChips();
+};
+
+function getScopeParam() {
+  if (selectedUploadIds.size === 0) return '';
+  return [...selectedUploadIds].join(',');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SETTINGS PAGE
+══════════════════════════════════════════════════════════════════════════ */
+async function loadModelOptions() {
+  try {
+    const models = await fetch('/api/embedding-models').then(r => r.json());
+    const container = document.getElementById('model-options');
+    container.innerHTML = models.map(m => {
+      const available = m.available !== false;
+      const availabilityNote = available
+        ? ''
+        : '<p class="text-xs text-rose-500 mt-1">Requires OpenAI API key to use.</p>';
+      return `
+      <label class="model-option ${m.active ? 'model-option-active' : ''}" data-id="${m.id}">
+        <div class="flex items-start gap-3">
+          <input type="radio" name="embed-model" value="${m.id}"
+                 ${m.active ? 'checked' : ''} ${!available ? 'disabled' : ''} class="mt-0.5 accent-indigo-600 shrink-0" />
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-sm font-semibold text-gray-800">${esc(m.label)}</span>
+              ${m.local
+                ? '<span class="text-xs px-1.5 py-0.5 rounded" style="background:#dcfce7;color:#166534">local</span>'
+                : '<span class="text-xs px-1.5 py-0.5 rounded" style="background:#dbeafe;color:#1e40af">cloud</span>'}
+              ${m.active ? '<span class="text-xs px-1.5 py-0.5 rounded font-medium" style="background:#ede9fe;color:#5b21b6">active</span>' : ''}
+            </div>
+            <p class="text-xs text-gray-500 mt-0.5">${esc(m.description)}</p>
+            <p class="text-xs text-gray-400">${m.dims}-dim · ${m.embedded_count.toLocaleString()} msgs embedded</p>
+            ${availabilityNote}
+          </div>
+        </div>
+      </label>`;
+    }).join('');
+
+    container.querySelectorAll('input[name="embed-model"]').forEach(radio => {
+      radio.addEventListener('change', async () => {
+        try {
+          const res = await fetch('/api/set-embedding-model', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({model_id: radio.value}),
+          });
+          const d = await res.json();
+          if (!res.ok) throw new Error(d.detail);
+          const isLocal = models.find(m => m.id === radio.value)?.local;
+          const cnt     = models.find(m => m.id === radio.value)?.embedded_count || 0;
+          const msg = document.getElementById('model-msg');
+          msg.textContent = `Switched to ${d.label}.` +
+            (isLocal && cnt === 0 ? ' Weights will download on first use (~0.4–1.3 GB).' : '');
+          msg.classList.remove('hidden');
+          loadStats();
+          loadModelOptions();
+        } catch (e) { showErrorPopup('Failed to switch model: ' + e.message); }
+      });
+    });
+  } catch (_) {}
+}
+
+document.getElementById('settings-save').onclick = async () => {
+  const key = document.getElementById('api-key-input').value.trim();
+  if (!key) return;
+  try {
+    const res = await fetch('/api/set-api-key', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({api_key: key}),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail);
+    const msg = document.getElementById('settings-msg');
+    msg.textContent = d.message;
+    msg.classList.remove('hidden');
+    setTimeout(() => msg.classList.add('hidden'), 2500);
+    loadStats();
+  } catch (e) { showErrorPopup(e.message); }
+};
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DATA PAGE
+══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Upload new CSV ── */
+document.getElementById('upload-btn').onclick = async () => {
+  const input = document.getElementById('csv-file');
+  if (!input.files.length) { setUploadStatus('Please select a CSV file.', 'error'); return; }
+  const btn = document.getElementById('upload-btn');
+  btn.disabled = true; btn.textContent = 'Starting…';
+  hideUploadProgress();
+  showUploadProgress(0, 'Starting upload…');
+  const form = new FormData();
+  form.append('file', input.files[0]);
+  try {
+    const response = await fetch('/api/upload', { method: 'POST', body: form });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          if (data.startsWith('Processing ')) {
+            showUploadProgress(5, data);
+          } else if (data.startsWith('Inserted ')) {
+            showUploadProgress(20, data);
+          } else if (data.startsWith('Starting embedding ')) {
+            showUploadProgress(30, data);
+          } else if (data.startsWith('Embedded ')) {
+            const match = data.match(/Embedded\s+(\d+)\/(\d+)/);
+            if (match) {
+              const current = Number(match[1]);
+              const total = Number(match[2]);
+              const pct = total ? 30 + Math.min(70, 70 * current / total) : 30;
+              showUploadProgress(pct, data);
+            } else {
+              showUploadProgress(50, data);
+            }
+            btn.textContent = data;
+          } else if (data.startsWith('Completed:')) {
+            showUploadProgress(100, data.replace('Completed: ', ''), 'success');
+            btn.textContent = 'Upload & Embed';
+            refreshUploads();
+            loadStats();
+          } else if (data.startsWith('Error')) {
+            showUploadProgress(100, data, 'error');
+          } else {
+            setUploadStatus(data, 'info');
+          }
+        }
+      }
+    }
+  } catch (e) {
+    setUploadStatus('Error: ' + e.message, 'error');
+    btn.textContent = 'Upload & Embed';
+  } finally {
+    btn.disabled = false;
+  }
+};
+function setUploadStatus(msg, type) {
+  const el = document.getElementById('upload-status');
+  el.textContent = msg;
+  el.className = 'mt-2 text-sm ' +
+    (type==='error' ? 'text-red-600' : type==='success' ? 'text-green-600' : 'text-gray-500');
+}
+
+function showUploadProgress(percent, label, type = 'info') {
+  const progress = document.getElementById('upload-progress');
+  const fill = document.getElementById('upload-progress-fill');
+  const labelEl = document.getElementById('upload-progress-label');
+  if (!progress || !fill || !labelEl) return;
+  progress.classList.remove('hidden');
+  fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  fill.classList.toggle('error', type === 'error');
+  labelEl.textContent = `${label} (${Math.round(Math.max(0, Math.min(100, percent)))}%)`;
+  setUploadStatus(label, type);
+}
+
+function hideUploadProgress() {
+  const progress = document.getElementById('upload-progress');
+  const fill = document.getElementById('upload-progress-fill');
+  const labelEl = document.getElementById('upload-progress-label');
+  if (!progress || !fill || !labelEl) return;
+  progress.classList.add('hidden');
+  fill.style.width = '0%';
+  fill.classList.remove('error');
+  labelEl.textContent = '';
+}
+
+/* ── Uploads table ── */
+async function refreshUploads() {
+  try {
+    allUploads = await fetch('/api/uploads').then(r => r.json());
+  } catch (_) { allUploads = []; }
+  renderScopeChips();
+  if (!document.getElementById('page-settings').classList.contains('hidden')) {
+    renderUploadsTable();
+  }
+  loadStats();
+}
+
+function renderUploadsTable() {
+  const container = document.getElementById('uploads-table');
+  if (!allUploads.length) {
+    container.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No uploads yet.</p>';
+    return;
+  }
+  container.innerHTML = allUploads.map(u => uploadCard(u)).join('');
+
+  container.querySelectorAll('.reembed-btn').forEach(btn => {
+    btn.addEventListener('click', () => doReembed(btn.dataset.id, btn.dataset.name, btn));
+  });
+  container.querySelectorAll('.delete-btn').forEach(btn => {
+    btn.addEventListener('click', () => confirmDelete(btn.dataset.id, btn.dataset.name));
+  });
+}
+
+function uploadCard(u) {
+  const modelBadges = Object.entries(u.embedded_models || {}).map(([mid, has]) => {
+    const labels = {openai:'OpenAI', 'bge-large':'BGE-large', 'bge-base':'BGE-base'};
+    return has
+      ? `<span class="embed-badge embed-badge-yes">${labels[mid] || mid}</span>`
+      : `<span class="embed-badge embed-badge-no">${labels[mid] || mid} —</span>`;
+  }).join('');
+
+  return `
+    <div class="border border-gray-200 rounded-xl p-4 hover:border-indigo-200 transition-colors">
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex-1 min-w-0">
+          <p class="font-semibold text-sm text-gray-800 truncate">${esc(u.filename)}</p>
+          <p class="text-xs text-gray-500 mt-0.5">
+            ${Number(u.row_count).toLocaleString()} rows &bull;
+            Uploaded ${u.upload_time.slice(0,16)}
+          </p>
+          <p class="text-xs text-gray-400 font-mono mt-0.5" title="Upload ID">${u.id}</p>
+          <div class="flex flex-wrap gap-1.5 mt-2">${modelBadges}</div>
+        </div>
+        <div class="flex flex-col gap-2 shrink-0">
+          <button class="reembed-btn action-btn-primary"
+                  data-id="${u.id}" data-name="${esc(u.filename)}">
+            Re-embed
+          </button>
+          <button class="delete-btn action-btn-danger"
+                  data-id="${u.id}" data-name="${esc(u.filename)}">
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function doReembed(uploadId, filename, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+  try {
+    const response = await fetch(`/api/uploads/${enc(uploadId)}/reembed`, { method: 'POST' });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          if (data.startsWith('Completed:')) {
+            btn.textContent = 'Re-embed';
+            refreshUploads();
+            loadStats();
+          } else if (data.startsWith('Error')) {
+            showErrorPopup(data);
+          } else {
+            btn.textContent = data;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    showErrorPopup('Re-embed failed: ' + e.message);
+    btn.textContent = 'Re-embed';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ── Delete with confirm modal ── */
+let _pendingDeleteId = null;
+function confirmDelete(uploadId, filename) {
+  _pendingDeleteId = uploadId;
+  document.getElementById('confirm-msg').textContent =
+    `Delete "${filename}" and all its messages? This cannot be undone.`;
+  document.getElementById('confirm-modal').classList.remove('hidden');
+}
+document.getElementById('confirm-cancel').onclick = () => {
+  document.getElementById('confirm-modal').classList.add('hidden');
+  document.getElementById('delete-progress').classList.add('hidden');
+  document.getElementById('delete-status').classList.add('hidden');
+  document.getElementById('confirm-ok').disabled = false;
+  _pendingDeleteId = null;
+};
+document.getElementById('confirm-ok').onclick = async () => {
+  if (!_pendingDeleteId) return;
+  const btn = document.getElementById('confirm-ok');
+  const statusEl = document.getElementById('delete-status');
+  const progressEl = document.getElementById('delete-progress');
+  const progressFill = document.getElementById('delete-progress-fill');
+  
+  btn.disabled = true;
+  progressEl.classList.remove('hidden');
+  statusEl.classList.add('hidden');
+  progressFill.classList.remove('error');
+  
+  try {
+    const res = await fetch(`/api/uploads/${enc(_pendingDeleteId)}`, {method:'DELETE'});
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail);
+    
+    progressFill.style.width = '100%';
+    progressEl.querySelector('#delete-progress-label').textContent = 'Deleted successfully';
+    statusEl.textContent = `Removed ${d.deleted_messages} messages and all embeddings.`;
+    statusEl.className = 'bg-green-50 text-green-700 border border-green-200 rounded-lg p-3 text-sm';
+    statusEl.classList.remove('hidden');
+    
+    selectedUploadIds.delete(_pendingDeleteId);
+    setTimeout(() => {
+      document.getElementById('confirm-modal').classList.add('hidden');
+      refreshUploads();
+    }, 1500);
+  } catch (e) {
+    progressFill.style.width = '100%';
+    progressFill.classList.add('error');
+    progressEl.querySelector('#delete-progress-label').textContent = 'Deletion failed';
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.className = 'bg-red-50 text-red-700 border border-red-200 rounded-lg p-3 text-sm';
+    statusEl.classList.remove('hidden');
+  }
+  btn.disabled = false;
+  _pendingDeleteId = null;
+};
+
+document.getElementById('refresh-data-btn').onclick = refreshUploads;
+document.getElementById('refresh-suno-btn').onclick = renderSunoTeamTable;
+
+async function loadSettingsPage() {
+  loadModelOptions();
+  renderUploadsTable();
+  renderLabelManager();
+  renderSunoTeamTable();
+}
+
+async function renderLabelManager() {
+  await loadAllLabels();   // refreshes _allLabels + filter chips if bookmark page was open
+  const list = document.getElementById('labels-list');
+  if (!_allLabels.length) {
+    list.innerHTML = '<p class="text-sm text-gray-400">No labels yet. Create one above.</p>';
+    return;
+  }
+  list.innerHTML = _allLabels.map(l => {
+    const tc = labelTextColor(l.color);
+    return `<span class="inline-flex items-center gap-1.5 text-xs font-medium rounded-full px-3 py-1"
+                  style="background:${l.color};color:${tc}">
+              ${esc(l.name)}
+              <button class="label-delete-btn opacity-70 hover:opacity-100 font-bold leading-none"
+                      data-label-id="${l.id}" data-label-name="${esc(l.name)}" title="Delete label">×</button>
+            </span>`;
+  }).join('');
+}
+
+document.getElementById('labels-list').addEventListener('click', async e => {
+  const btn = e.target.closest('.label-delete-btn');
+  if (!btn) return;
+  const id   = parseInt(btn.dataset.labelId);
+  const name = btn.dataset.labelName;
+  if (!confirm(`Delete label "${name}"? It will be removed from all bookmarks.`)) return;
+  btn.disabled = true;
+  const res = await fetch(`/api/labels/${id}`, { method: 'DELETE' });
+  if (!res.ok) { btn.disabled = false; return; }
+  _allLabels = _allLabels.filter(l => l.id !== id);
+  _bmLabelFilter.delete(id);
+  _cachedBookmarks.forEach(bm => { bm.labels = (bm.labels || []).filter(l => l.id !== id); });
+  renderLabelManager();
+  renderBmLabelFilterChips();
+});
+
+document.getElementById('label-create-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const nameInput  = document.getElementById('label-name-input');
+  const colorInput = document.getElementById('label-color-input');
+  const msgEl      = document.getElementById('label-create-msg');
+  const name  = nameInput.value.trim();
+  const color = colorInput.value;
+  if (!name) return;
+  msgEl.classList.add('hidden');
+  const res = await fetch('/api/labels', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, color }),
+  });
+  if (!res.ok) {
+    msgEl.textContent = (await res.json()).detail || 'Failed to create label.';
+    msgEl.classList.remove('hidden');
+    return;
+  }
+  const newLabel = await res.json();
+  _allLabels = [..._allLabels, newLabel].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  );
+  nameInput.value = '';
+  renderLabelManager();
+  renderBmLabelFilterChips();
+});
+
+async function renderSunoTeamTable() {
+  const el = document.getElementById('suno-team-table');
+  el.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">Loading…</p>';
+  try {
+    const members = await fetch('/api/suno-team').then(r => r.json());
+    if (!members.length) {
+      el.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No Suno Team members found.</p>';
+      return;
+    }
+    el.innerHTML = `
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm border-collapse">
+          <thead>
+            <tr class="bg-gray-50 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              <th class="px-3 py-2 border-b border-gray-200">Username</th>
+              <th class="px-3 py-2 border-b border-gray-200 text-right">Messages</th>
+              <th class="px-3 py-2 border-b border-gray-200"></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${members.map(m => `
+              <tr class="border-b border-gray-100 hover:bg-gray-50" id="suno-row-${esc(m.username)}">
+                <td class="px-3 py-2">
+                  <span class="ubadge" style="${usernameStyle(m.username)}">${esc(m.username)}</span>
+                </td>
+                <td class="px-3 py-2 text-right text-gray-600 tabular-nums">${m.msg_count.toLocaleString()}</td>
+                <td class="px-3 py-2 text-right">
+                  <button class="suno-remove action-btn-danger"
+                          data-username="${esc(m.username)}">
+                    Remove from team
+                  </button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<p class="text-sm text-red-500 text-center py-6">Failed to load: ${esc(e.message)}</p>`;
+  }
+}
+
+document.getElementById('suno-team-table').addEventListener('click', async e => {
+  const btn = e.target.closest('.suno-remove');
+  if (!btn) return;
+  const username = btn.dataset.username;
+  btn.disabled = true;
+  btn.textContent = 'Removing…';
+  try {
+    const res = await fetch(`/api/suno-team/${encodeURIComponent(username)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await res.text());
+    const row = document.getElementById(`suno-row-${username}`);
+    if (row) row.remove();
+    // if table body is now empty, show empty state
+    const tbody = document.querySelector('#suno-team-table tbody');
+    if (tbody && !tbody.querySelector('tr')) {
+      document.getElementById('suno-team-table').innerHTML =
+        '<p class="text-sm text-gray-400 text-center py-6">No Suno Team members found.</p>';
+    }
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Remove from team';
+    alert(`Failed to remove: ${err.message}`);
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SEARCH TABS
+══════════════════════════════════════════════════════════════════════════ */
+document.querySelectorAll('.search-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.search-tab').forEach(b => b.classList.remove('tab-active'));
+    btn.classList.add('tab-active');
+    document.querySelectorAll('.search-panel').forEach(p => p.classList.add('hidden'));
+    document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+  });
+});
+
+[
+  ['username-input',           'username'],
+  ['keyword-input',            'keyword'],
+  ['keyword-username-filter',  'keyword'],
+  ['semantic-input',           'semantic'],
+  ['semantic-username-filter', 'semantic'],
+].forEach(([id, type]) => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch(type);
+  });
+});
+
+document.getElementById('username-search-btn').addEventListener('click', () => doSearch('username'));
+document.getElementById('keyword-search-btn').addEventListener('click', () => doSearch('keyword'));
+document.getElementById('semantic-search-btn').addEventListener('click', () => doSearch('semantic'));
+const rangeSearchBtn = document.getElementById('range-search-btn');
+if (rangeSearchBtn) {
+  rangeSearchBtn.addEventListener('click', () => doSearch('range'));
+}
+
+document.getElementById('range-mode-exact').addEventListener('click', () => {
+  document.getElementById('range-mode-exact').classList.add('range-mode-active');
+  document.getElementById('range-mode-month').classList.remove('range-mode-active');
+  document.getElementById('range-exact-inputs').classList.remove('hidden');
+  document.getElementById('range-month-inputs').classList.add('hidden');
+});
+document.getElementById('range-mode-month').addEventListener('click', () => {
+  document.getElementById('range-mode-month').classList.add('range-mode-active');
+  document.getElementById('range-mode-exact').classList.remove('range-mode-active');
+  document.getElementById('range-month-inputs').classList.remove('hidden');
+  document.getElementById('range-exact-inputs').classList.add('hidden');
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SEARCH
+══════════════════════════════════════════════════════════════════════════ */
+function appendDateParams(url, from, to) {
+  if (from) url += `&date_from=${enc(from)}`;
+  if (to)   url += `&date_to=${enc(to)}`;
+  return url;
+}
+
+async function doSearch(type) {
+  let url, keyword = '';
+  const scope = getScopeParam();
+
+  if (type === 'username') {
+    const q       = document.getElementById('username-input').value.trim();
+    if (!q) return;
+    const limit   = document.getElementById('username-limit').value || 200;
+    const dFrom   = document.getElementById('username-date-from').value;
+    const dTo     = document.getElementById('username-date-to').value;
+    const suno    = document.getElementById('username-suno').value;
+    const minW    = parseInt(document.getElementById('username-min-words').value) || 0;
+    url = `/api/search/username?username=${enc(q)}&limit=${limit}`;
+    if (scope)          url += `&upload_ids=${enc(scope)}`;
+    if (suno !== 'all') url += `&suno_team=${enc(suno)}`;
+    if (minW > 1) url += `&min_words=${minW}`;
+    url = appendDateParams(url, dFrom, dTo);
+
+  } else if (type === 'keyword') {
+    keyword     = document.getElementById('keyword-input').value.trim();
+    if (!keyword) return;
+    const uFilter = document.getElementById('keyword-username-filter').value.trim();
+    const limit   = document.getElementById('keyword-limit').value || 200;
+    const dFrom   = document.getElementById('keyword-date-from').value;
+    const dTo     = document.getElementById('keyword-date-to').value;
+    const suno    = document.getElementById('keyword-suno').value;
+    const minW    = parseInt(document.getElementById('keyword-min-words').value) || 0;
+    url = `/api/search/keyword?keyword=${enc(keyword)}&limit=${limit}`;
+    if (uFilter)        url += `&username=${enc(uFilter)}`;
+    if (scope)          url += `&upload_ids=${enc(scope)}`;
+    if (suno !== 'all') url += `&suno_team=${enc(suno)}`;
+    if (minW > 1) url += `&min_words=${minW}`;
+    url = appendDateParams(url, dFrom, dTo);
+
+  } else if (type === 'semantic') {
+    const q       = document.getElementById('semantic-input').value.trim();
+    if (!q) return;
+    const n       = document.getElementById('semantic-n').value || 20;
+    const uFilter = document.getElementById('semantic-username-filter').value.trim();
+    const dFrom   = document.getElementById('semantic-date-from').value;
+    const dTo     = document.getElementById('semantic-date-to').value;
+    const suno    = document.getElementById('semantic-suno').value;
+    const minW    = parseInt(document.getElementById('semantic-min-words').value) || 0;
+    url = `/api/search/semantic?query=${enc(q)}&n_results=${n}`;
+    if (uFilter)        url += `&username=${enc(uFilter)}`;
+    if (scope)          url += `&upload_ids=${enc(scope)}`;
+    if (suno !== 'all') url += `&suno_team=${enc(suno)}`;
+    if (minW > 1) url += `&min_words=${minW}`;
+    url = appendDateParams(url, dFrom, dTo);
+  } else if (type === 'range') {
+    const suno       = document.getElementById('range-suno').value;
+    const isMonthMode = document.getElementById('range-mode-month').classList.contains('range-mode-active');
+    let dFrom = '', dTo = '';
+
+    if (isMonthMode) {
+      const mFrom = document.getElementById('range-month-from').value; // "YYYY-MM"
+      const mTo   = document.getElementById('range-month-to').value;
+      if (!mFrom && !mTo) {
+        renderError('Please set at least a "From" or "To" month.');
+        return;
+      }
+      if (mFrom) dFrom = `${mFrom}-01`;
+      if (mTo) {
+        const [y, m] = mTo.split('-');
+        const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
+        dTo = `${mTo}-${String(lastDay).padStart(2, '0')}`;
+      }
+    } else {
+      dFrom = document.getElementById('range-date-from').value;
+      dTo   = document.getElementById('range-date-to').value;
+      if (!dFrom && !dTo) {
+        renderError('Please set at least a "From" or "To" date.');
+        return;
+      }
+    }
+
+    const minW = parseInt(document.getElementById('range-min-words').value) || 0;
+    url = '/api/search/range?';
+    if (scope)          url += `upload_ids=${enc(scope)}&`;
+    if (suno !== 'all') url += `suno_team=${enc(suno)}&`;
+    if (dFrom)        url += `date_from=${enc(dFrom)}&`;
+    if (dTo)          url += `date_to=${enc(dTo)}&`;
+    if (minW > 1)     url += `min_words=${minW}&`;
+    url = url.replace(/[?&]$/, '');
+  }
+
+  currentSearchType = type;
+  currentKeyword    = keyword;
+  setBtnLoading(type, true);
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Search failed'); }
+    currentResults = await res.json();
+    renderResults(currentResults);
+  } catch (e) { renderError(e.message); }
+  finally { setBtnLoading(type, false); }
+}
+
+function setBtnLoading(type, loading) {
+  const btn = document.getElementById(`${type}-search-btn`);
+  btn.disabled   = loading;
+  btn.textContent = loading ? 'Searching…' : 'Search';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   RESULTS
+══════════════════════════════════════════════════════════════════════════ */
+function renderError(msg) {
+  showErrorPopup(msg);
+}
+
+function renderResults(results) {
+  const sec = document.getElementById('results-section');
+  sec.classList.remove('hidden');
+  document.getElementById('results-count').textContent =
+    `${results.length.toLocaleString()} result${results.length !== 1 ? 's' : ''}`;
+  document.getElementById('export-btn').classList.toggle('hidden', results.length === 0);
+
+  // Reset filter bar on new search
+  activeFilterTokens = [];
+  document.getElementById('results-filter').value = '';
+  document.getElementById('results-filter-clear').classList.add('hidden');
+  document.getElementById('results-filter-count').classList.add('hidden');
+  document.getElementById('filter-spinner').classList.add('hidden');
+
+  const container = document.getElementById('results-container');
+  sec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (!results.length) {
+    container.innerHTML = '<p class="text-center text-gray-400 py-10 text-sm">No results found.</p>';
+    return;
+  }
+  container.innerHTML = results.map(msg => msgCard(msg)).join('');
+  container.querySelectorAll('.ctx-toggle').forEach(btn => {
+    btn.addEventListener('click', () => toggleContext(parseInt(btn.dataset.id), btn));
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   RESULTS FILTER
+══════════════════════════════════════════════════════════════════════════ */
+
+let filterMode        = 'exact';  // 'exact' | 'semantic'
+let _semanticDebounce = null;
+
+/* ── Set active mode + update UI ── */
+const _EXACT_ACTIVE    = ['bg-indigo-700','text-white'];
+const _EXACT_INACTIVE  = ['bg-slate-100','text-slate-500'];
+const _SEM_ACTIVE      = ['bg-violet-600','text-white'];
+const _SEM_INACTIVE    = ['bg-slate-100','text-slate-500'];
+
+function setFilterMode(mode) {
+  filterMode = mode;
+  const exactBtn = document.getElementById('filter-mode-exact');
+  const semBtn   = document.getElementById('filter-mode-semantic');
+
+  if (mode === 'exact') {
+    exactBtn.classList.remove(..._EXACT_INACTIVE);  exactBtn.classList.add(..._EXACT_ACTIVE);
+    semBtn.classList.remove(..._SEM_ACTIVE);         semBtn.classList.add(..._SEM_INACTIVE);
+  } else {
+    semBtn.classList.remove(..._SEM_INACTIVE);       semBtn.classList.add(..._SEM_ACTIVE);
+    exactBtn.classList.remove(..._EXACT_ACTIVE);     exactBtn.classList.add(..._EXACT_INACTIVE);
+  }
+
+  document.getElementById('results-filter').placeholder =
+    mode === 'exact'
+      ? 'Exact: substring match, multi-word scores by relevance…'
+      : 'Semantic: re-rank results by embedding similarity…';
+}
+
+document.getElementById('filter-mode-exact')
+  .addEventListener('click', () => { setFilterMode('exact');    applyResultsFilter(); });
+document.getElementById('filter-mode-semantic')
+  .addEventListener('click', () => { setFilterMode('semantic'); applyResultsFilter(); });
+
+/* ── Shared render helpers ── */
+function _attachCtxListeners(container) {
+  container.querySelectorAll('.ctx-toggle').forEach(btn => {
+    btn.addEventListener('click', () => toggleContext(parseInt(btn.dataset.id), btn));
+  });
+}
+
+function _renderFilteredCards(msgs, total) {
+  const countLabel = document.getElementById('results-filter-count');
+  const container  = document.getElementById('results-container');
+  countLabel.textContent = `${msgs.length} of ${total}`;
+  countLabel.classList.remove('hidden');
+  if (!msgs.length) {
+    container.innerHTML = '<p class="text-center text-gray-400 py-10 text-sm">No results match the filter.</p>';
+    return;
+  }
+  container.innerHTML = msgs.map(m => msgCard(m)).join('');
+  _attachCtxListeners(container);
+}
+
+function _resetToAllResults() {
+  activeFilterTokens = [];
+  document.getElementById('results-filter-count').classList.add('hidden');
+  const container = document.getElementById('results-container');
+  container.innerHTML = currentResults.map(m => msgCard(m)).join('');
+  _attachCtxListeners(container);
+}
+
+/* ── Exact filter (instant, client-side) ── */
+function _applyExactFilter(term) {
+  if (!term) { _resetToAllResults(); return; }
+
+  const words  = term.split(/\s+/).filter(Boolean);
+  // tokens for scoring: individual words only
+  // tokens for highlighting: phrase first (if multi-word), then words — longest-first so phrase wins
+  const scoreTokens = words;
+  activeFilterTokens = words.length > 1 ? [term, ...words] : words;
+
+  const scored = currentResults
+    .map(m => {
+      const user    = (m.username || '').toLowerCase();
+      const content = (m.content  || '').toLowerCase();
+      const hay     = user + ' ' + content;
+      // Phrase match scores highest; otherwise sum per-word matches
+      if (hay.includes(term)) return { m, s: 1000 + (user.includes(term) ? 500 : 0) };
+      let s = 0;
+      for (const tok of scoreTokens) {
+        if (user.includes(tok))    s += 20;
+        if (content.includes(tok)) s += 10;
+      }
+      return { m, s };
+    })
+    .filter(x => x.s > 0)
+    .sort((a, b) => new Date(a.m.date) - new Date(b.m.date));
+
+  _renderFilteredCards(scored.map(x => x.m), currentResults.length);
+}
+
+/* ── Semantic filter (debounced, API-backed) ── */
+async function _applySemanticFilter(term) {
+  if (!term) { _resetToAllResults(); return; }
+  if (!currentResults.length) return;
+
+  const spinner    = document.getElementById('filter-spinner');
+  const countLabel = document.getElementById('results-filter-count');
+
+  spinner.classList.remove('hidden');
+  countLabel.classList.add('hidden');
+
+  try {
+    const res = await fetch('/api/filter/semantic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: term, msg_ids: currentResults.map(m => m.id) }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Semantic filter failed' }));
+      throw new Error(err.detail || 'Semantic filter failed');
+    }
+
+    const data = await res.json();
+    const { results: ranked, threshold, query_used, warning } = data;
+    if (warning) {
+      document.getElementById('results-container').innerHTML =
+        `<p class="text-center text-amber-600 py-10 text-sm">⚠ ${esc(warning)}</p>`;
+      spinner.classList.add('hidden');
+      return;
+    }
+    const byId = Object.fromEntries(currentResults.map(m => [m.id, m]));
+
+    const hits = ranked
+      .map(r => ({ ...byId[r.id], similarity_score: r.score }))
+      .filter(m => m.id != null);
+
+    // Show count with threshold label, and query interpretation if it changed
+    const interpreted = query_used && query_used !== term
+      ? ` · searched: "${query_used}"` : '';
+    const countLabel2 = document.getElementById('results-filter-count');
+    countLabel2.textContent = `${hits.length} of ${currentResults.length} · similarity ≥ ${threshold}${interpreted}`;
+    countLabel2.classList.remove('hidden');
+
+    const container = document.getElementById('results-container');
+    if (!hits.length) {
+      container.innerHTML = `<p class="text-center text-gray-400 py-10 text-sm">
+        No results above the ${threshold} similarity threshold${interpreted}.<br>
+        <span class="text-xs">Try a broader query or switch to Exact mode.</span>
+      </p>`;
+      return;
+    }
+    container.innerHTML = hits.map(m => msgCard(m)).join('');
+    _attachCtxListeners(container);
+  } catch (e) {
+    showErrorPopup(`Semantic filter error: ${e.message}`);
+    _resetToAllResults();
+  } finally {
+    spinner.classList.add('hidden');
+  }
+}
+
+/* ── Unified dispatcher ── */
+function applyResultsFilter() {
+  const term     = document.getElementById('results-filter').value.trim().toLowerCase();
+  const clearBtn = document.getElementById('results-filter-clear');
+  clearBtn.classList.toggle('hidden', !term);
+  if (!currentResults.length) return;
+
+  clearTimeout(_semanticDebounce);
+  if (filterMode === 'exact') {
+    _applyExactFilter(term);
+  } else {
+    if (!term) { _applySemanticFilter(''); return; }
+    _semanticDebounce = setTimeout(() => _applySemanticFilter(term), 500);
+  }
+}
+
+document.getElementById('results-filter').addEventListener('input', applyResultsFilter);
+document.getElementById('results-filter-clear').addEventListener('click', () => {
+  document.getElementById('results-filter').value = '';
+  applyResultsFilter();
+});
+
+function formatDate(raw) {
+  if (!raw) return '';
+  const d = new Date(raw);
+  if (isNaN(d)) return esc(raw);  // prevent XSS if date field contains HTML
+  const MONTHS = ['January','February','March','April','May','June',
+                  'July','August','September','October','November','December'];
+  const day  = d.getUTCDate();
+  const mon  = MONTHS[d.getUTCMonth()];
+  const yr   = d.getUTCFullYear();
+  const hh   = String(d.getUTCHours()).padStart(2, '0');
+  const mm   = String(d.getUTCMinutes()).padStart(2, '0');
+  const ss   = String(d.getUTCSeconds()).padStart(2, '0');
+  return `${day} ${mon} ${yr} ${hh}:${mm}:${ss} GMT+0`;
+}
+
+function msgCard(msg) {
+  const score = msg.similarity_score !== undefined
+    ? `<span class="text-xs px-2 py-0.5 rounded-full" style="background:#eef2ff;color:#3730a3">
+         ${msg.similarity_score}
+       </span>` : '';
+  const teamBadge = truthy(msg.is_suno_team)
+    ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium"
+             style="background:#fef3c7;color:#92400e">Suno Team</span>` : '';
+  const body = activeFilterTokens.length
+    ? highlightTerms(msg.content, activeFilterTokens)
+    : currentSearchType === 'keyword'
+      ? highlight(msg.content, currentKeyword)
+      : esc(msg.content);
+  const userHtml = activeFilterTokens.length
+    ? highlightTerms(msg.username, activeFilterTokens)
+    : esc(msg.username);
+  const attachLine = hasContent(msg.attachments)
+    ? `<p class="text-xs text-gray-500 mt-1">📎 ${esc(msg.attachments)}</p>` : '';
+  const reactLine = hasContent(msg.reactions)
+    ? `<p class="text-xs text-gray-500 mt-1">💬 ${esc(msg.reactions)}</p>` : '';
+
+  // Find source filename
+  const src = allUploads.find(u => u.id === msg.upload_id);
+  const srcLabel = src ? `<span class="text-[10px] text-gray-400 truncate max-w-[12rem]" title="${esc(msg.upload_id)}">${esc(src.filename)}</span>` : '';
+
+  return `
+    <div id="card-${msg.id}" class="bg-white rounded-2xl shadow border border-gray-100 overflow-hidden">
+      <div class="p-4">
+        <div class="flex items-start justify-between gap-2 mb-2">
+          <div class="flex flex-col gap-0.5">
+            <div class="flex items-center flex-wrap gap-1.5">
+              <span class="ubadge" style="${usernameStyle(msg.username)}">${userHtml}</span>
+              ${teamBadge}${score}
+            </div>
+            <span class="text-xs text-gray-400">${formatDate(msg.date)}</span>
+          </div>
+          ${srcLabel}
+        </div>
+        <p class="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words">${body}</p>
+        ${attachLine}${reactLine}
+      </div>
+      <div class="border-t bg-gray-50 px-4 py-2 flex items-center justify-between gap-2">
+        <button class="bm-toggle text-xs font-medium flex items-center gap-1 transition-colors"
+                data-id="${msg.id}"
+                title="${bookmarkedIds.has(msg.id) ? 'Remove bookmark' : 'Save bookmark'}">
+          ${bookmarkedIds.has(msg.id)
+            ? `<svg class="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg><span class="text-amber-600">Bookmarked</span>`
+            : `<svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg><span class="text-gray-500">Bookmark</span>`}
+        </button>
+        <button class="ctx-toggle text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                data-id="${msg.id}" data-open="false">
+          Show context ↕
+        </button>
+      </div>
+      <div id="ctx-${msg.id}" class="hidden"></div>
+    </div>`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CONTEXT EXPANSION
+══════════════════════════════════════════════════════════════════════════ */
+async function toggleContext(id, btn) {
+  const ctxEl = document.getElementById(`ctx-${id}`);
+  if (btn.dataset.open === 'true') {
+    ctxEl.classList.add('hidden');
+    btn.dataset.open = 'false';
+    btn.textContent = 'Show context ↕';
+    return;
+  }
+  const before = document.getElementById('ctx-before').value || 5;
+  const after  = document.getElementById('ctx-after').value  || 5;
+  btn.textContent = 'Loading…'; btn.disabled = true;
+  try {
+    const res  = await fetch(`/api/context/${id}?before=${before}&after=${after}`);
+    if (!res.ok) throw new Error('Failed to load context');
+    const msgs = await res.json();
+    ctxEl.innerHTML = `
+      <div class="border-t bg-slate-50 p-4 space-y-2">
+        <p class="text-xs text-gray-500 font-medium mb-3">
+          Context — ${msgs.length} messages (${before} before &bull; ${after} after)
+        </p>
+        ${msgs.map(m => ctxMsg(m)).join('')}
+      </div>`;
+    ctxEl.classList.remove('hidden');
+    btn.dataset.open = 'true';
+    btn.textContent = 'Hide context ↕';
+  } catch (e) { btn.textContent = 'Show context ↕'; console.error(e); }
+  finally { btn.disabled = false; }
+}
+
+function ctxMsg(msg) {
+  const cls = msg.is_target ? 'ctx-target' : 'ctx-regular';
+  const targetBadge = msg.is_target
+    ? `<span class="text-xs px-1.5 py-0.5 rounded font-semibold"
+             style="background:#fef08a;color:#78350f">★ result</span>` : '';
+  const teamBadge = truthy(msg.is_suno_team)
+    ? `<span class="text-xs px-1.5 py-0.5 rounded" style="background:#fef3c7;color:#92400e">Team</span>` : '';
+  return `
+    <div class="${cls} p-3">
+      <div class="flex items-center justify-between gap-2 mb-1">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span class="ubadge" style="${usernameStyle(msg.username)}">${esc(msg.username)}</span>
+          ${teamBadge}${targetBadge}
+        </div>
+        <span class="text-xs text-gray-400 shrink-0">${formatDate(msg.date)}</span>
+      </div>
+      <p class="text-sm text-gray-800 whitespace-pre-wrap break-words">${esc(msg.content)}</p>
+    </div>`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   EXPORT
+══════════════════════════════════════════════════════════════════════════ */
+document.getElementById('export-btn').onclick = () => {
+  if (!currentResults.length) return;
+  const cols = ['id','username','date','content','attachments','reactions',
+                'is_suno_team','week','month','author_id','similarity_score'];
+  const csv = [
+    cols.join(','),
+    ...currentResults.map(m =>
+      cols.map(c => `"${String(m[c] ?? '').replace(/"/g,'""')}"`).join(',')
+    ),
+  ].join('\n');
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([csv], {type:'text/csv'})),
+    download: `results_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`,
+  });
+  a.click();
+};
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BOOKMARKS
+══════════════════════════════════════════════════════════════════════════ */
+
+async function loadBookmarkIds() {
+  try {
+    const ids = await fetch('/api/bookmarks/ids').then(r => r.json());
+    bookmarkedIds = new Set(ids);
+    updateBmBadge();
+  } catch (_) {}
+}
+
+function updateBmBadge() {
+  const badge = document.getElementById('bm-count-badge');
+  if (bookmarkedIds.size > 0) {
+    badge.textContent = bookmarkedIds.size;
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+async function toggleBookmark(msgId) {
+  if (bookmarkedIds.has(msgId)) {
+    await fetch(`/api/bookmarks/by-msg/${msgId}`, { method: 'DELETE' });
+    bookmarkedIds.delete(msgId);
+  } else {
+    await fetch('/api/bookmarks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ msg_id: msgId }),
+    });
+    bookmarkedIds.add(msgId);
+  }
+  updateBmBadge();
+
+  // Re-render the button in the card without re-rendering all results
+  const card = document.getElementById(`card-${msgId}`);
+  if (card) {
+    const btn = card.querySelector('.bm-toggle');
+    if (btn) {
+      const isNow = bookmarkedIds.has(msgId);
+      btn.title = isNow ? 'Remove bookmark' : 'Save bookmark';
+      btn.innerHTML = isNow
+        ? `<svg class="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg><span class="text-amber-600">Bookmarked</span>`
+        : `<svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg><span class="text-gray-500">Bookmark</span>`;
+    }
+  }
+}
+
+// Event delegation for bookmark buttons in results
+document.getElementById('results-container').addEventListener('click', async e => {
+  const btn = e.target.closest('.bm-toggle');
+  if (!btn) return;
+  btn.disabled = true;
+  await toggleBookmark(parseInt(btn.dataset.id));
+  btn.disabled = false;
+});
+
+function _sortBookmarks(bms) {
+  const mode = document.getElementById('bm-sort').value;
+  const sorted = [...bms];
+  if (mode === 'date') {
+    sorted.sort((a, b) => new Date(a.date) - new Date(b.date));
+  } else if (mode === 'username') {
+    sorted.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+  } else {
+    // 'added' — sort by bookmark_id ascending (insertion order)
+    sorted.sort((a, b) => a.bookmark_id - b.bookmark_id);
+  }
+  return sorted;
+}
+
+let _cachedBookmarks = [];
+
+async function loadBookmarksPage() {
+  const container = document.getElementById('bookmarks-container');
+  container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">Loading…</p>';
+  await loadAllLabels();
+  try {
+    _cachedBookmarks = await fetch('/api/bookmarks').then(r => r.json());
+    _renderBookmarksSorted();
+  } catch (e) {
+    container.innerHTML = `<p class="text-sm text-red-500 text-center py-8">Failed to load bookmarks: ${esc(e.message)}</p>`;
+  }
+}
+
+// ── Label colour helpers ──────────────────────────────────────────────────────
+function labelTextColor(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.55 ? '#1f2937' : '#ffffff';
+}
+
+// ── Load & render label filter chips ─────────────────────────────────────────
+async function loadAllLabels() {
+  try {
+    _allLabels = await fetch('/api/labels').then(r => r.json());
+  } catch (_) { _allLabels = []; }
+  renderBmLabelFilterChips();
+}
+
+function renderBmLabelFilterChips() {
+  const container = document.getElementById('bm-label-filter-chips');
+  if (!_allLabels.length) {
+    container.innerHTML = '<span class="text-xs text-gray-400">No labels yet. Create labels in Config → Manage Labels.</span>';
+    return;
+  }
+  container.innerHTML = _allLabels.map(l => {
+    const active = _bmLabelFilter.has(l.id);
+    const bg     = active ? l.color : '#f1f5f9';
+    const tc     = active ? labelTextColor(l.color) : '#64748b';
+    const border = active ? l.color : '#e2e8f0';
+    return `<button class="bm-label-filter-chip text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all"
+                    data-label-id="${l.id}"
+                    style="background:${bg};color:${tc};border-color:${border}">
+              ${esc(l.name)}
+            </button>`;
+  }).join('');
+}
+
+// ── Bookmark label chips inside card ─────────────────────────────────────────
+function _bmLabelChipsHtml(bm) {
+  const chips = (bm.labels || []).map(l => {
+    const tc = labelTextColor(l.color);
+    return `<span class="bm-label-chip text-xs px-2 py-0.5 rounded-full font-medium cursor-pointer select-none"
+                  style="background:${l.color};color:${tc}"
+                  data-bm-id="${bm.bookmark_id}" data-label-id="${l.id}"
+                  title="Remove label">${esc(l.name)} ×</span>`;
+  }).join('');
+  return chips + `<button class="bm-label-btn text-xs text-gray-400 hover:text-indigo-600 border border-dashed border-gray-300 hover:border-indigo-400 rounded-full px-2 py-0.5 transition-colors"
+                          data-bm-id="${bm.bookmark_id}">+ label</button>`;
+}
+
+// ── Render the inline label picker panel ─────────────────────────────────────
+function _renderBmLabelPanel(bookmarkId) {
+  const panel = document.getElementById(`bm-label-panel-${bookmarkId}`);
+  const bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
+  if (!panel || !bm) return;
+  const assignedIds = new Set((bm.labels || []).map(l => l.id));
+  const existingChips = _allLabels.length
+    ? `<div class="flex flex-wrap gap-1.5 mb-2">
+        ${_allLabels.map(l => {
+          const active = assignedIds.has(l.id);
+          const bg     = active ? l.color : '#f8fafc';
+          const tc     = active ? labelTextColor(l.color) : '#64748b';
+          const border = active ? l.color : '#cbd5e1';
+          return `<button class="bm-label-toggle text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all"
+                          data-bm-id="${bookmarkId}" data-label-id="${l.id}"
+                          style="background:${bg};color:${tc};border-color:${border}">
+                    ${active ? '✓ ' : ''}${esc(l.name)}
+                  </button>`;
+        }).join('')}
+      </div>`
+    : '';
+  panel.innerHTML = `
+    <div class="p-2">
+      ${existingChips}
+      <div class="flex items-center gap-1.5 pt-1 border-t border-gray-100">
+        <input class="bm-new-label-input flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
+               placeholder="New label name…" maxlength="40" data-bm-id="${bookmarkId}" />
+        <input class="bm-new-label-color w-7 h-7 rounded cursor-pointer border border-gray-200 p-0.5"
+               type="color" value="#6366f1" data-bm-id="${bookmarkId}" title="Pick colour" />
+        <button class="bm-new-label-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
+                data-bm-id="${bookmarkId}">Add</button>
+      </div>
+    </div>`;
+}
+
+// ── filter bookmarks ─────────────────────────────────────────────────────────
+function _filterBookmarks(bms) {
+  const userTerm = (document.getElementById('bm-filter-user').value || '').trim().toLowerCase();
+  const sunoMode = document.getElementById('bm-filter-suno').value;
+  return bms.filter(bm => {
+    if (userTerm && !(bm.username || '').toLowerCase().includes(userTerm)) return false;
+    if (sunoMode === 'only'    && !truthy(bm.is_suno_team)) return false;
+    if (sunoMode === 'exclude' &&  truthy(bm.is_suno_team)) return false;
+    if (_bmLabelFilter.size > 0) {
+      const bmLabelIds = new Set((bm.labels || []).map(l => l.id));
+      const hasMatch = [..._bmLabelFilter].some(id => bmLabelIds.has(id));
+      if (!hasMatch) return false;
+    }
+    return true;
+  });
+}
+
+function _renderBookmarksSorted() {
+  const container = document.getElementById('bookmarks-container');
+  if (!_cachedBookmarks.length) {
+    container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No bookmarks yet. Use the bookmark button on any search result.</p>';
+    return;
+  }
+  const filtered = _filterBookmarks(_sortBookmarks(_cachedBookmarks));
+  if (!filtered.length) {
+    container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No bookmarks match the current filters.</p>';
+    return;
+  }
+  container.innerHTML = filtered.map(bm => bookmarkCard(bm)).join('');
+}
+
+function bookmarkCard(bm) {
+  const score = bm.similarity_score !== undefined && bm.similarity_score !== null
+    ? `<span class="text-xs px-2 py-0.5 rounded-full" style="background:#eef2ff;color:#3730a3">${bm.similarity_score}</span>` : '';
+  const teamBadge = truthy(bm.is_suno_team)
+    ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium" style="background:#fef3c7;color:#92400e">Suno Team</span>` : '';
+  const src = allUploads.find(u => u.id === bm.upload_id);
+  const srcLabel = src
+    ? `<span class="text-[10px] text-gray-400 truncate max-w-[12rem]" title="${esc(bm.upload_id)}">${esc(src.filename)}</span>` : '';
+  const savedAt = new Date(bm.created_at).toLocaleString();
+
+  return `
+    <div id="bm-card-${bm.bookmark_id}" class="bg-white rounded-2xl shadow border border-amber-100 overflow-hidden">
+      <div class="bg-amber-50 px-4 py-1.5 flex items-center justify-between gap-2 border-b border-amber-100">
+        <span class="text-xs text-amber-700 flex items-center gap-1">
+          <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>
+          Saved ${savedAt}
+        </span>
+        <button class="bm-remove text-xs text-red-400 hover:text-red-600 font-medium"
+                data-bm-id="${bm.bookmark_id}" data-msg-id="${bm.id}">
+          Remove
+        </button>
+      </div>
+      <div class="p-4">
+        <div class="flex items-start justify-between gap-2 mb-2">
+          <div class="flex flex-col gap-0.5">
+            <div class="flex items-center flex-wrap gap-1.5">
+              <span class="ubadge" style="${usernameStyle(bm.username)}">${esc(bm.username)}</span>
+              ${teamBadge}${score}
+            </div>
+            <span class="text-xs text-gray-400">${formatDate(bm.date)}</span>
+          </div>
+          ${srcLabel}
+        </div>
+        <p class="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words">${esc(bm.content)}</p>
+        ${hasContent(bm.attachments) ? `<p class="text-xs text-gray-500 mt-1">📎 ${esc(bm.attachments)}</p>` : ''}
+        ${hasContent(bm.reactions)   ? `<p class="text-xs text-gray-500 mt-1">💬 ${esc(bm.reactions)}</p>`   : ''}
+        <!-- Labels -->
+        <div class="flex items-center flex-wrap gap-1 mt-2 min-h-[1.5rem]" id="bm-labels-${bm.bookmark_id}">
+          ${_bmLabelChipsHtml(bm)}
+        </div>
+        <!-- Inline label picker (hidden until opened) -->
+        <div id="bm-label-panel-${bm.bookmark_id}" class="hidden mt-1 border border-dashed border-gray-200 rounded-xl bg-gray-50"></div>
+      </div>
+      <div class="border-t bg-gray-50 px-4 py-2 flex justify-end">
+        <button class="bm-ctx-toggle text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                data-id="${bm.id}" data-open="false">
+          Show context ↕
+        </button>
+      </div>
+      <div id="bmctx-${bm.id}" class="hidden"></div>
+    </div>`;
+}
+
+// Event delegation for bookmarks page
+document.getElementById('bookmarks-container').addEventListener('click', async e => {
+  // Remove bookmark
+  const removeBtn = e.target.closest('.bm-remove');
+  if (removeBtn) {
+    const bmId  = parseInt(removeBtn.dataset.bmId);
+    const msgId = parseInt(removeBtn.dataset.msgId);
+    removeBtn.disabled = true;
+    await fetch(`/api/bookmarks/${bmId}`, { method: 'DELETE' });
+    bookmarkedIds.delete(msgId);
+    updateBmBadge();
+    document.getElementById(`bm-card-${bmId}`)?.remove();
+    // Update star in results if visible
+    const card = document.getElementById(`card-${msgId}`);
+    if (card) {
+      const btn = card.querySelector('.bm-toggle');
+      if (btn) {
+        btn.title = 'Save bookmark';
+        btn.innerHTML = `<svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg><span class="text-gray-500">Bookmark</span>`;
+      }
+    }
+    const container = document.getElementById('bookmarks-container');
+    if (!container.querySelector('[id^="bm-card-"]')) {
+      container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No bookmarks yet. Use the bookmark button on any search result.</p>';
+    }
+    return;
+  }
+
+  // Remove label chip (× click on assigned label)
+  const labelChip = e.target.closest('.bm-label-chip');
+  if (labelChip) {
+    const bmId    = parseInt(labelChip.dataset.bmId);
+    const labelId = parseInt(labelChip.dataset.labelId);
+    await fetch(`/api/bookmarks/${bmId}/labels/${labelId}`, { method: 'DELETE' });
+    const bm = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+    if (bm) bm.labels = (bm.labels || []).filter(l => l.id !== labelId);
+    const labelsRow = document.getElementById(`bm-labels-${bmId}`);
+    if (labelsRow) labelsRow.innerHTML = _bmLabelChipsHtml(bm);
+    return;
+  }
+
+  // Open/close label picker panel
+  const labelBtn = e.target.closest('.bm-label-btn');
+  if (labelBtn) {
+    const bmId = parseInt(labelBtn.dataset.bmId);
+    const panel = document.getElementById(`bm-label-panel-${bmId}`);
+    if (panel.classList.contains('hidden')) {
+      _renderBmLabelPanel(bmId);
+      panel.classList.remove('hidden');
+    } else {
+      panel.classList.add('hidden');
+    }
+    return;
+  }
+
+  // Toggle label assignment in picker panel
+  const labelToggle = e.target.closest('.bm-label-toggle');
+  if (labelToggle) {
+    const bmId    = parseInt(labelToggle.dataset.bmId);
+    const labelId = parseInt(labelToggle.dataset.labelId);
+    const bm      = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+    if (!bm) return;
+    const isAssigned = (bm.labels || []).some(l => l.id === labelId);
+    if (isAssigned) {
+      await fetch(`/api/bookmarks/${bmId}/labels/${labelId}`, { method: 'DELETE' });
+      bm.labels = (bm.labels || []).filter(l => l.id !== labelId);
+    } else {
+      await fetch(`/api/bookmarks/${bmId}/labels/${labelId}`, { method: 'POST' });
+      const label = _allLabels.find(l => l.id === labelId);
+      if (label) bm.labels = [...(bm.labels || []), { id: label.id, name: label.name, color: label.color }];
+    }
+    // Update chips row and re-render panel
+    const labelsRow = document.getElementById(`bm-labels-${bmId}`);
+    if (labelsRow) labelsRow.innerHTML = _bmLabelChipsHtml(bm);
+    _renderBmLabelPanel(bmId);
+    return;
+  }
+
+  // Create new label inline and assign it
+  const createBtn = e.target.closest('.bm-new-label-create');
+  if (createBtn) {
+    const bmId  = parseInt(createBtn.dataset.bmId);
+    const panel = document.getElementById(`bm-label-panel-${bmId}`);
+    const nameInput  = panel.querySelector('.bm-new-label-input');
+    const colorInput = panel.querySelector('.bm-new-label-color');
+    const name  = (nameInput?.value || '').trim();
+    const color = colorInput?.value || '#6366f1';
+    if (!name) { nameInput?.focus(); return; }
+    createBtn.disabled = true;
+    createBtn.textContent = '…';
+    try {
+      // Create the label
+      const labelRes = await fetch('/api/labels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, color }),
+      });
+      const newLabel = await labelRes.json();
+      if (!labelRes.ok) {
+        // Label may already exist — find it in _allLabels
+        const existing = _allLabels.find(l => l.name.toLowerCase() === name.toLowerCase());
+        if (!existing) { createBtn.disabled = false; createBtn.textContent = 'Add'; return; }
+        newLabel.id = existing.id; newLabel.name = existing.name; newLabel.color = existing.color;
+      } else {
+        // Add to global cache, keep sorted
+        _allLabels = [..._allLabels, newLabel].sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+        );
+        renderBmLabelFilterChips();
+      }
+      // Assign to this bookmark
+      await fetch(`/api/bookmarks/${bmId}/labels/${newLabel.id}`, { method: 'POST' });
+      const bm = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+      if (bm && !(bm.labels || []).some(l => l.id === newLabel.id)) {
+        bm.labels = [...(bm.labels || []), { id: newLabel.id, name: newLabel.name, color: newLabel.color }];
+      }
+      const labelsRow = document.getElementById(`bm-labels-${bmId}`);
+      if (labelsRow) labelsRow.innerHTML = _bmLabelChipsHtml(bm);
+      _renderBmLabelPanel(bmId);
+    } catch (_) {
+      createBtn.disabled = false;
+      createBtn.textContent = 'Add';
+    }
+    return;
+  }
+
+  // Toggle context in bookmark card
+  const ctxBtn = e.target.closest('.bm-ctx-toggle');
+  if (!ctxBtn) return;
+  const id     = parseInt(ctxBtn.dataset.id);
+  const ctxEl  = document.getElementById(`bmctx-${id}`);
+
+  if (ctxBtn.dataset.open === 'true') {
+    ctxEl.classList.add('hidden');
+    ctxBtn.dataset.open = 'false';
+    ctxBtn.textContent  = 'Show context ↕';
+    return;
+  }
+
+  // Read current global controls at click-time
+  const before = parseInt(document.getElementById('bm-ctx-before').value) || 5;
+  const after  = parseInt(document.getElementById('bm-ctx-after').value)  || 5;
+
+  ctxBtn.textContent = 'Loading…';
+  ctxBtn.disabled    = true;
+  try {
+    const msgs = await fetch(`/api/context/${id}?before=${before}&after=${after}`).then(r => r.json());
+    ctxEl.innerHTML = `
+      <div class="border-t bg-slate-50 p-4 space-y-2">
+        <p class="text-xs text-gray-500 font-medium mb-3">
+          Context — ${msgs.length} messages (${before} before &bull; ${after} after)
+        </p>
+        ${msgs.map(m => ctxMsg(m)).join('')}
+      </div>`;
+    ctxEl.classList.remove('hidden');
+    ctxBtn.dataset.open = 'true';
+    ctxBtn.textContent  = 'Hide context ↕';
+  } catch (_) {
+    ctxBtn.textContent = 'Show context ↕';
+  } finally {
+    ctxBtn.disabled = false;
+  }
+});
+
+document.getElementById('bm-refresh-btn').addEventListener('click', loadBookmarksPage);
+
+/* Collapse all open bookmark context panels when ctx values change (no re-render, no network) */
+function _collapseAllBmContext() {
+  document.querySelectorAll('.bm-ctx-toggle[data-open="true"]').forEach(btn => {
+    const ctxEl = document.getElementById(`bmctx-${btn.dataset.id}`);
+    if (ctxEl) ctxEl.classList.add('hidden');
+    btn.dataset.open = 'false';
+    btn.textContent  = 'Show context ↕';
+  });
+}
+document.getElementById('bm-ctx-before').addEventListener('change', _collapseAllBmContext);
+document.getElementById('bm-ctx-after') .addEventListener('change', _collapseAllBmContext);
+document.getElementById('bm-sort').addEventListener('change', () => {
+  _collapseAllBmContext();
+  _renderBookmarksSorted();
+});
+document.getElementById('bm-filter-suno').addEventListener('change', () => {
+  _collapseAllBmContext();
+  _renderBookmarksSorted();
+});
+
+// Enter key in inline label name input → click the Add button
+document.getElementById('bookmarks-container').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const input = e.target.closest('.bm-new-label-input');
+  if (!input) return;
+  e.preventDefault();
+  const bmId = input.dataset.bmId;
+  document.querySelector(`.bm-new-label-create[data-bm-id="${bmId}"]`)?.click();
+});
+
+// Label filter chip toggle
+document.getElementById('bm-label-filter-chips').addEventListener('click', e => {
+  const chip = e.target.closest('.bm-label-filter-chip');
+  if (!chip) return;
+  const id = parseInt(chip.dataset.labelId);
+  if (_bmLabelFilter.has(id)) _bmLabelFilter.delete(id);
+  else _bmLabelFilter.add(id);
+  renderBmLabelFilterChips();
+  _collapseAllBmContext();
+  _renderBookmarksSorted();
+});
+let _bmUserFilterDebounce = null;
+document.getElementById('bm-filter-user').addEventListener('input', () => {
+  clearTimeout(_bmUserFilterDebounce);
+  _bmUserFilterDebounce = setTimeout(() => {
+    _collapseAllBmContext();
+    _renderBookmarksSorted();
+  }, 250);
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CHAT PAGE
+══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Chat sub-tab switching ── */
+document.querySelectorAll('.chat-sub-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.chat-sub-tab').forEach(b => b.classList.remove('tab-active'));
+    btn.classList.add('tab-active');
+    document.querySelectorAll('.chat-subpanel').forEach(p => p.classList.add('hidden'));
+    document.getElementById('ctab-' + btn.dataset.ctab).classList.remove('hidden');
+  });
+});
+
+/* ── Summarize date mode toggle ── */
+document.getElementById('sum-mode-exact').addEventListener('click', () => {
+  document.getElementById('sum-mode-exact').classList.add('range-mode-active');
+  document.getElementById('sum-mode-month').classList.remove('range-mode-active');
+  document.getElementById('sum-exact-inputs').classList.remove('hidden');
+  document.getElementById('sum-month-inputs').classList.add('hidden');
+});
+document.getElementById('sum-mode-month').addEventListener('click', () => {
+  document.getElementById('sum-mode-month').classList.add('range-mode-active');
+  document.getElementById('sum-mode-exact').classList.remove('range-mode-active');
+  document.getElementById('sum-month-inputs').classList.remove('hidden');
+  document.getElementById('sum-exact-inputs').classList.add('hidden');
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   RAG CHAT
+══════════════════════════════════════════════════════════════════════════ */
+let chatHistory = []; // [{role:'user'|'assistant', content:'...'}]
+
+function appendAssistantBubble(text) {
+  const container = document.getElementById('chat-history');
+  let inner = container.querySelector('.flex.flex-col');
+  if (!inner) {
+    container.innerHTML = '';
+    inner = document.createElement('div');
+    inner.className = 'flex flex-col gap-3';
+    container.appendChild(inner);
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'flex justify-start';
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble-assistant markdown-body';
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  inner.appendChild(wrap);
+  container.scrollTop = container.scrollHeight;
+  return bubble;
+}
+
+function appendUserBubble(text) {
+  const container = document.getElementById('chat-history');
+  let inner = container.querySelector('.flex.flex-col');
+  if (!inner) {
+    container.innerHTML = '';
+    inner = document.createElement('div');
+    inner.className = 'flex flex-col gap-3';
+    container.appendChild(inner);
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'flex justify-end';
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble-user';
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  inner.appendChild(wrap);
+  container.scrollTop = container.scrollHeight;
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('chat-send-btn');
+  const message = input.value.trim();
+  if (!message) return;
+
+  input.value = '';
+  input.disabled = true;
+  sendBtn.disabled = true;
+  sendBtn.textContent = '...';
+
+  chatHistory.push({ role: 'user', content: message });
+  appendUserBubble(message);
+
+  const bubble = appendAssistantBubble('');
+  let assistantText = '';
+  const scope = getScopeParam();
+
+  try {
+    const chatModel = document.getElementById('chat-model').value;
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        history: chatHistory.slice(0, -1),
+        upload_ids: scope ? scope.split(',') : [],
+        model: chatModel,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+      throw new Error(err.detail || 'Request failed');
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') break;
+        try {
+          const delta = JSON.parse(raw);
+          if (delta.content) {
+            assistantText += delta.content;
+            bubble.innerHTML = marked.parse(assistantText);
+            document.getElementById('chat-history').scrollTop =
+              document.getElementById('chat-history').scrollHeight;
+          } else if (delta.error) {
+            throw new Error(delta.error);
+          }
+        } catch (parseErr) {
+          if (!(parseErr instanceof SyntaxError)) throw parseErr;
+        }
+      }
+    }
+
+    chatHistory.push({ role: 'assistant', content: assistantText });
+  } catch (e) {
+    bubble.remove();
+    chatHistory.pop();
+    showErrorPopup(e.message);
+  } finally {
+    input.disabled = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+    input.focus();
+  }
+}
+
+document.getElementById('chat-send-btn').addEventListener('click', sendChatMessage);
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); sendChatMessage(); }
+});
+document.getElementById('chat-clear-btn').addEventListener('click', () => {
+  chatHistory = [];
+  document.getElementById('chat-history').innerHTML =
+    '<p class="text-center text-gray-400 text-sm py-8">No messages yet. Ask a question above.</p>';
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SUMMARIZE
+══════════════════════════════════════════════════════════════════════════ */
+async function doSummarize() {
+  const btn = document.getElementById('sum-btn');
+  const resultEl = document.getElementById('sum-result');
+
+  const username = document.getElementById('sum-username').value.trim();
+  const isMonthMode = document.getElementById('sum-mode-month').classList.contains('range-mode-active');
+  const minW = parseInt(document.getElementById('sum-min-words').value) || 0;
+  const suno = document.getElementById('sum-suno').value;
+  const prompt = document.getElementById('sum-prompt').value.trim();
+  const scope = getScopeParam();
+
+  let dateFrom = '', dateTo = '';
+  if (isMonthMode) {
+    const mFrom = document.getElementById('sum-month-from').value;
+    const mTo   = document.getElementById('sum-month-to').value;
+    if (mFrom) dateFrom = mFrom + '-01';
+    if (mTo) {
+      const parts = mTo.split('-');
+      const lastDay = new Date(parseInt(parts[0]), parseInt(parts[1]), 0).getDate();
+      dateTo = mTo + '-' + String(lastDay).padStart(2, '0');
+    }
+  } else {
+    dateFrom = document.getElementById('sum-date-from').value;
+    dateTo   = document.getElementById('sum-date-to').value;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Summarizing...';
+  resultEl.classList.remove('hidden');
+  resultEl.textContent = '';
+  resultEl.style.background = '';
+  resultEl.style.color = '';
+
+  try {
+    const sumModel = document.getElementById('sum-model').value;
+    const res = await fetch('/api/summarize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: username || null,
+        date_from: dateFrom || null,
+        date_to: dateTo || null,
+        prompt: prompt || null,
+        upload_ids: scope ? scope.split(',') : [],
+        min_words: minW,
+        suno_team: suno,
+        model: sumModel,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+      throw new Error(err.detail || 'Request failed');
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let summaryText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') break;
+        try {
+          const delta = JSON.parse(raw);
+          if (delta.content) {
+            summaryText += delta.content;
+            resultEl.innerHTML = marked.parse(summaryText);
+          } else if (delta.error) {
+            throw new Error(delta.error);
+          }
+        } catch (parseErr) {
+          if (!(parseErr instanceof SyntaxError)) throw parseErr;
+        }
+      }
+    }
+    if (!summaryText) {
+      resultEl.classList.add('hidden');
+      showErrorPopup('No response received from the model. The model may be unavailable or the request was rejected. Check your API key and selected model.');
+    }
+  } catch (e) {
+    resultEl.classList.add('hidden');
+    showErrorPopup(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Summarize';
+  }
+}
+
+document.getElementById('sum-btn').addEventListener('click', doSummarize);
+
+/* ══════════════════════════════════════════════════════════════════════════
+   INIT
+══════════════════════════════════════════════════════════════════════════ */
+(async () => {
+  await refreshUploads();   // loads allUploads, renders scope chips, stats
+  await loadBookmarkIds();  // populate bookmarkedIds set + badge
+})();

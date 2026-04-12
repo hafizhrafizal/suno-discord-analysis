@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Suno Discord Analysis — Chat Search</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="bg-slate-100 text-gray-900 min-h-screen">
+
+  <!-- Skip navigation for keyboard users -->
+  <a href="#main-content"
+     class="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2
+            focus:px-4 focus:py-2 focus:bg-indigo-700 focus:text-white focus:rounded-lg
+            focus:font-semibold focus:shadow-lg">
+    Skip to main content
+  </a>
+
+  <!-- ── Error popup ── -->
+  <div id="error-popup" class="fixed inset-0 z-50 flex items-center justify-center hidden"
+       role="dialog" aria-modal="true" aria-labelledby="error-popup-title">
+    <!-- backdrop -->
+    <div id="error-backdrop" class="absolute inset-0 bg-black/50 backdrop-blur-sm" onclick="dismissErrorPopup()"></div>
+    <!-- card -->
+    <div class="relative z-10 bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+      <div class="flex items-center gap-3 bg-red-700 px-5 py-3">
+        <svg class="w-5 h-5 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+        </svg>
+        <span id="error-popup-title" class="text-white font-semibold text-sm">Error</span>
+      </div>
+      <div class="px-5 py-4">
+        <p id="error-popup-msg" class="text-gray-800 text-sm leading-relaxed whitespace-pre-wrap"></p>
+      </div>
+      <div class="px-5 pb-4 flex justify-end">
+        <button onclick="dismissErrorPopup()"
+                class="px-4 py-1.5 rounded-lg bg-red-700 hover:bg-red-800 text-white text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-red-900">
+          Dismiss
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Header ── -->
+  <header class="bg-indigo-700 text-white shadow-lg sticky top-0 z-40">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center gap-4">
+
+      <!-- Title + stats -->
+      <div class="flex-1 min-w-0">
+        <h1 class="text-base font-bold tracking-tight leading-none">Suno Discord Analysis</h1>
+        <!-- text-indigo-100 on bg-indigo-700 → 6.2:1 ✓ -->
+        <p id="stats-bar" class="text-indigo-100 text-xs mt-0.5 truncate" aria-live="polite" aria-atomic="true">Loading…</p>
+      </div>
+
+      <!-- Page navigation -->
+      <nav aria-label="Page navigation" class="flex gap-1 bg-indigo-800 rounded-lg p-0.5 shrink-0">
+        <button id="nav-search" class="nav-tab nav-active" data-page="search" aria-current="page">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          Search
+        </button>
+        <button id="nav-chat" class="nav-tab" data-page="chat">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3v-3z"/>
+          </svg>
+          Chat
+        </button>
+        <button id="nav-bookmarks" class="nav-tab" data-page="bookmarks">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+          </svg>
+          Bookmarks
+          <!-- bg-indigo-700 text-white on bg-indigo-800 nav → white on dark ✓ -->
+          <span id="bm-count-badge" class="hidden ml-1 text-[10px] bg-white text-indigo-800 rounded-full px-1.5 py-0.5 font-bold leading-none" aria-label="bookmarks count"></span>
+        </button>
+        <button id="nav-settings" class="nav-tab" data-page="settings">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+          Config
+        </button>
+      </nav>
+
+    </div>
+  </header>
+
+
+  <!-- ── Confirm Delete Modal ── -->
+  <div id="confirm-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+       role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+    <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm">
+      <h2 id="confirm-modal-title" class="text-base font-bold mb-2 text-gray-900">Delete Upload</h2>
+      <p id="confirm-msg" class="text-sm text-gray-700 mb-5"></p>
+      <div id="delete-progress" class="hidden mb-4">
+        <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Delete progress">
+          <div id="delete-progress-fill" class="progress-fill"></div>
+        </div>
+        <p id="delete-progress-label" class="mt-2 text-xs text-gray-600" aria-live="polite">Deleting…</p>
+      </div>
+      <div id="delete-status" class="hidden mb-4 p-3 rounded-lg text-sm" aria-live="polite"></div>
+      <div class="flex gap-2 justify-end">
+        <button id="confirm-cancel"
+                class="px-4 py-2 text-sm font-medium border border-gray-300 rounded-lg hover:bg-gray-100 text-gray-800 focus-visible:outline focus-visible:outline-3 focus-visible:outline-gray-800 focus-visible:outline-offset-2">
+          Cancel
+        </button>
+        <button id="confirm-ok"
+                class="px-4 py-2 text-sm font-semibold bg-red-700 text-white rounded-lg hover:bg-red-800 focus-visible:outline focus-visible:outline-3 focus-visible:outline-red-900 focus-visible:outline-offset-2">
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <main id="main-content" class="max-w-5xl mx-auto px-4 py-5">
+
+    <!-- ════════════════════════════════════════
+         SEARCH PAGE
+    ════════════════════════════════════════ -->
+    <div id="page-search" class="space-y-4">
+
+      <!-- Scope selector -->
+      <section class="bg-white rounded-2xl shadow p-4" aria-labelledby="scope-heading">
+        <div class="flex items-center justify-between mb-2">
+          <h2 id="scope-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide">Search Scope</h2>
+          <div class="flex gap-2 items-center">
+            <button id="scope-select-all" class="text-xs font-semibold text-indigo-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700 rounded">All</button>
+            <span class="text-gray-400" aria-hidden="true">|</span>
+            <button id="scope-select-none" class="text-xs font-semibold text-indigo-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700 rounded">None</button>
+          </div>
+        </div>
+        <div id="scope-chips" class="flex flex-wrap gap-2" role="group" aria-label="Upload scope selection">
+          <span class="text-xs text-gray-600 italic">No uploads yet — go to the Config page to add data.</span>
+        </div>
+        <p class="text-xs text-gray-600 mt-2">Toggle which uploaded files to include. All selected = search everything.</p>
+      </section>
+
+      <!-- Search -->
+      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="search-heading">
+        <h2 id="search-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">Search</h2>
+
+        <div class="flex border-b mb-4" role="tablist" aria-label="Search type">
+          <button class="search-tab tab-active" data-tab="username" role="tab" aria-selected="true" aria-controls="tab-username">By Username</button>
+          <button class="search-tab" data-tab="keyword" role="tab" aria-selected="false" aria-controls="tab-keyword">Keyword</button>
+          <button class="search-tab" data-tab="semantic" role="tab" aria-selected="false" aria-controls="tab-semantic">Semantic</button>
+          <button class="search-tab" data-tab="range" role="tab" aria-selected="false" aria-controls="tab-range">Date Range</button>
+        </div>
+
+        <!-- Username Tab -->
+        <div id="tab-username" class="search-panel" role="tabpanel" aria-labelledby="">
+          <div class="flex gap-2 mb-2">
+            <label for="username-input" class="sr-only">Username</label>
+            <input id="username-input" type="text" placeholder="Username or partial match…" class="search-input flex-1" />
+            <label for="username-limit" class="sr-only">Max results</label>
+            <input id="username-limit" type="number" value="200" min="1" max="1000" class="search-input w-24" title="Max results" aria-label="Max results" />
+            <label for="username-min-words" class="sr-only">Minimum word count</label>
+            <input id="username-min-words" type="number" value="0" min="0" class="search-input w-24" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+            <button id="username-search-btn" class="search-btn">Search</button>
+          </div>
+          <div class="flex flex-wrap gap-2 items-center">
+            <label for="username-date-from" class="filter-label">From</label>
+            <input id="username-date-from" type="date" class="search-input" />
+            <label for="username-date-to" class="filter-label">To</label>
+            <input id="username-date-to" type="date" class="search-input" />
+            <label for="username-suno" class="filter-label">Suno Team</label>
+            <select id="username-suno" class="search-input">
+              <option value="all">All</option>
+              <option value="only">Only Suno Team</option>
+              <option value="exclude">Exclude Suno Team</option>
+            </select>
+          </div>
+          <p class="text-xs text-gray-600 mt-1.5">Partial match, case-insensitive.</p>
+        </div>
+
+        <!-- Keyword Tab -->
+        <div id="tab-keyword" class="search-panel hidden" role="tabpanel">
+          <div class="flex gap-2 mb-2">
+            <label for="keyword-input" class="sr-only">Keyword or phrase</label>
+            <input id="keyword-input" type="text" placeholder="Keyword or phrase…" class="search-input flex-1" />
+            <label for="keyword-limit" class="sr-only">Max results</label>
+            <input id="keyword-limit" type="number" value="200" min="1" max="1000" class="search-input w-24" title="Max results" aria-label="Max results" />
+            <label for="keyword-min-words" class="sr-only">Minimum word count</label>
+            <input id="keyword-min-words" type="number" value="0" min="0" class="search-input w-24" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+            <button id="keyword-search-btn" class="search-btn">Search</button>
+          </div>
+          <div class="flex flex-wrap gap-2 items-center">
+            <label for="keyword-username-filter" class="filter-label">Author</label>
+            <input id="keyword-username-filter" type="text" placeholder="Optional username…" class="search-input flex-1 min-w-36" />
+            <label for="keyword-date-from" class="filter-label">From</label>
+            <input id="keyword-date-from" type="date" class="search-input" />
+            <label for="keyword-date-to" class="filter-label">To</label>
+            <input id="keyword-date-to" type="date" class="search-input" />
+            <label for="keyword-suno" class="filter-label">Suno Team</label>
+            <select id="keyword-suno" class="search-input">
+              <option value="all">All</option>
+              <option value="only">Only Suno Team</option>
+              <option value="exclude">Exclude Suno Team</option>
+            </select>
+          </div>
+          <p class="text-xs text-gray-600 mt-1.5">Case-insensitive substring match.</p>
+        </div>
+
+        <!-- Semantic Tab -->
+        <div id="tab-semantic" class="search-panel hidden" role="tabpanel">
+          <div class="flex gap-2 mb-2">
+            <label for="semantic-input" class="sr-only">Semantic search query</label>
+            <input id="semantic-input" type="text" placeholder="Describe what you're looking for…" class="search-input flex-1" />
+            <label for="semantic-n" class="sr-only">Number of results</label>
+            <input id="semantic-n" type="number" value="20" min="1" max="100" class="search-input w-24" title="Number of results" aria-label="Number of results" />
+            <label for="semantic-min-words" class="sr-only">Minimum word count</label>
+            <input id="semantic-min-words" type="number" value="0" min="0" class="search-input w-24" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+            <button id="semantic-search-btn" class="search-btn">Search</button>
+          </div>
+          <div class="flex flex-wrap gap-2 items-center">
+            <label for="semantic-username-filter" class="filter-label">Author</label>
+            <input id="semantic-username-filter" type="text" placeholder="Optional username…" class="search-input flex-1 min-w-36" />
+            <label for="semantic-date-from" class="filter-label">From</label>
+            <input id="semantic-date-from" type="date" class="search-input" />
+            <label for="semantic-date-to" class="filter-label">To</label>
+            <input id="semantic-date-to" type="date" class="search-input" />
+            <label for="semantic-suno" class="filter-label">Suno Team</label>
+            <select id="semantic-suno" class="search-input">
+              <option value="all">All</option>
+              <option value="only">Only Suno Team</option>
+              <option value="exclude">Exclude Suno Team</option>
+            </select>
+          </div>
+          <p class="text-xs text-gray-600 mt-1.5">
+            Requires embedded data. Vectors are content-only — author &amp; date filter after retrieval.
+          </p>
+        </div>
+
+        <!-- Date Range Tab -->
+        <div id="tab-range" class="search-panel hidden" role="tabpanel">
+          <!-- Segmented mode control -->
+          <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden mb-3" role="group" aria-label="Date input mode">
+            <button id="range-mode-exact" class="range-mode-btn range-mode-active" type="button" aria-pressed="true">Exact Date Range</button>
+            <button id="range-mode-month" class="range-mode-btn" type="button" aria-pressed="false">By Month &amp; Year</button>
+          </div>
+
+          <!-- Exact date inputs -->
+          <div id="range-exact-inputs" class="flex flex-wrap gap-2 items-center mb-2">
+            <label for="range-date-from" class="filter-label">From</label>
+            <input id="range-date-from" type="date" class="search-input" />
+            <label for="range-date-to" class="filter-label">To</label>
+            <input id="range-date-to" type="date" class="search-input" />
+          </div>
+
+          <!-- Month inputs (hidden by default) -->
+          <div id="range-month-inputs" class="hidden flex flex-wrap gap-2 items-center mb-2">
+            <label for="range-month-from" class="filter-label">From</label>
+            <input id="range-month-from" type="month" class="search-input" />
+            <label for="range-month-to" class="filter-label">To</label>
+            <input id="range-month-to" type="month" class="search-input" />
+          </div>
+
+          <!-- Actions row -->
+          <div class="flex flex-wrap gap-2 items-center mt-1">
+            <label for="range-suno" class="filter-label">Suno Team</label>
+            <select id="range-suno" class="search-input">
+              <option value="all">All</option>
+              <option value="only">Only Suno Team</option>
+              <option value="exclude">Exclude Suno Team</option>
+            </select>
+            <label for="range-min-words" class="sr-only">Minimum word count</label>
+            <input id="range-min-words" type="number" value="0" min="0" class="search-input w-24" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+            <button id="range-search-btn" type="button" class="search-btn">Search</button>
+          </div>
+          <p class="text-xs text-gray-600 mt-1.5">Returns all messages in the selected range. At least one date is required.</p>
+        </div>
+
+        <!-- Context settings -->
+        <div class="mt-4 pt-4 border-t flex flex-wrap gap-x-5 gap-y-2 items-center text-sm text-gray-700">
+          <span class="font-semibold text-gray-800">Context window:</span>
+          <label for="ctx-before" class="flex items-center gap-1.5">
+            <span class="text-gray-700">Before</span>
+            <input id="ctx-before" type="number" value="10" min="0" max="100" class="w-16 border border-gray-400 rounded-lg px-2 py-1 text-sm text-center text-gray-900" />
+            <span class="text-gray-600 text-xs">msgs</span>
+          </label>
+          <label for="ctx-after" class="flex items-center gap-1.5">
+            <span class="text-gray-700">After</span>
+            <input id="ctx-after" type="number" value="10" min="0" max="100" class="w-16 border border-gray-400 rounded-lg px-2 py-1 text-sm text-center text-gray-900" />
+            <span class="text-gray-600 text-xs">msgs</span>
+          </label>
+          <span class="text-xs text-gray-600">(same CSV, original order)</span>
+        </div>
+      </section>
+
+      <!-- Results -->
+      <section id="results-section" class="hidden" aria-labelledby="results-count">
+        <div class="flex items-center justify-between mb-3 px-1">
+          <h2 id="results-count" class="font-semibold text-sm text-gray-700 uppercase tracking-wide" aria-live="polite" aria-atomic="true">Results</h2>
+          <button id="export-btn"
+                  class="hidden text-xs text-indigo-700 hover:text-indigo-900 font-semibold border border-indigo-300
+                         hover:border-indigo-500 px-3 py-1 rounded-lg transition-colors focus-visible:outline focus-visible:outline-3 focus-visible:outline-indigo-700 focus-visible:outline-offset-2">
+            Export CSV
+          </button>
+        </div>
+        <!-- Filter within results -->
+        <div class="sticky top-[57px] z-30 bg-white rounded-2xl shadow border border-gray-200 px-3 py-2 mb-3 flex items-center gap-2">
+          <!-- Mode toggle -->
+          <div class="inline-flex rounded-lg overflow-hidden shrink-0 border border-gray-300" role="group" aria-label="Filter mode">
+            <button id="filter-mode-exact"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
+                           bg-indigo-700 text-white border-r border-indigo-800 transition-colors"
+                    aria-pressed="true">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                      d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"/>
+              </svg>
+              Exact
+            </button>
+            <button id="filter-mode-semantic"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
+                           bg-slate-100 text-slate-700 transition-colors"
+                    aria-pressed="false">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+              </svg>
+              Semantic
+            </button>
+          </div>
+          <!-- divider -->
+          <div class="w-px h-4 bg-gray-300 shrink-0" aria-hidden="true"></div>
+          <!-- input -->
+          <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/>
+          </svg>
+          <label for="results-filter" class="sr-only">Filter results</label>
+          <input id="results-filter" type="text" placeholder="Exact: substring match · Semantic: re-rank by embedding similarity…"
+                 class="flex-1 text-sm bg-transparent outline-none placeholder-gray-500 min-w-0 text-gray-900" />
+          <!-- spinner (semantic mode) -->
+          <svg id="filter-spinner" class="hidden w-4 h-4 text-indigo-600 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" aria-label="Filtering…" role="img">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          <!-- clear -->
+          <button id="results-filter-clear" class="hidden text-gray-600 hover:text-gray-900 shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-700 rounded" aria-label="Clear filter">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+          <span id="results-filter-count" class="text-xs text-gray-600 shrink-0 hidden" aria-live="polite"></span>
+        </div>
+        <div id="results-container" class="space-y-3" aria-live="polite" aria-atomic="false"></div>
+      </section>
+
+    </div><!-- /page-search -->
+
+
+    <!-- ════════════════════════════════════════
+         SETTINGS PAGE
+    ════════════════════════════════════════ -->
+    <div id="page-settings" class="hidden space-y-5">
+
+      <!-- Embedding model -->
+      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="embed-model-heading">
+        <h2 id="embed-model-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">Embedding Model</h2>
+        <div id="model-options" class="space-y-2 mb-1"></div>
+        <p class="text-xs text-gray-600 mb-1">
+          Each model has its own vector index. Switch before uploading to embed with that model.
+          Multiple models can coexist.
+        </p>
+        <p id="model-msg" class="text-xs text-amber-700 mt-1 hidden" aria-live="polite"></p>
+      </section>
+
+      <!-- OpenAI API key -->
+      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="api-key-heading">
+        <h2 id="api-key-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">OpenAI API Key</h2>
+        <label for="api-key-input" class="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+        <div class="flex gap-2 items-center">
+          <input id="api-key-input" type="password" placeholder="sk-…"
+                 class="flex-1 border border-gray-400 rounded-lg px-3 py-2 text-sm font-mono text-gray-900
+                        focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600" />
+          <button id="settings-save"
+                  class="px-4 py-2 text-sm font-semibold bg-indigo-700 text-white rounded-lg hover:bg-indigo-800 transition-colors shrink-0
+                         focus-visible:outline focus-visible:outline-3 focus-visible:outline-indigo-900 focus-visible:outline-offset-2">
+            Save Key
+          </button>
+        </div>
+        <p class="text-xs text-gray-600 mt-1">Required only for the OpenAI embedding model. Stored in memory for this session.</p>
+        <p id="settings-msg" class="text-sm mt-2 text-green-700 hidden" aria-live="polite"></p>
+      </section>
+
+      <!-- Upload new CSV -->
+      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="upload-heading">
+        <h2 id="upload-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">Upload New CSV</h2>
+        <p class="text-xs text-gray-600 mb-3">
+          Required columns: <code class="bg-gray-100 text-gray-800 px-1 rounded">author_id, username, date, content</code>.
+          Optional: <code class="bg-gray-100 text-gray-800 px-1 rounded">attachments, reactions, is_suno_team, week, month</code>.
+          Messages will be embedded with the active model above.
+        </p>
+        <div class="flex flex-wrap gap-3 items-center">
+          <label for="csv-file" class="sr-only">Choose CSV file</label>
+          <input id="csv-file" type="file" accept=".csv"
+                 class="text-sm text-gray-700 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0
+                        file:bg-indigo-100 file:text-indigo-800 file:font-semibold file:text-sm
+                        hover:file:bg-indigo-200 cursor-pointer" />
+          <button id="upload-btn"
+                  class="bg-indigo-700 text-white px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-indigo-800
+                         disabled:opacity-50 disabled:cursor-not-allowed transition-colors
+                         focus-visible:outline focus-visible:outline-3 focus-visible:outline-indigo-900 focus-visible:outline-offset-2">
+            Upload &amp; Embed
+          </button>
+        </div>
+        <p id="upload-status" class="mt-2 text-sm min-h-[1.25rem] text-gray-800" aria-live="polite"></p>
+        <div id="upload-progress" class="hidden mt-3">
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Upload progress">
+            <div id="upload-progress-fill" class="progress-fill"></div>
+          </div>
+          <p id="upload-progress-label" class="mt-2 text-xs text-gray-600" aria-live="polite">0%</p>
+        </div>
+      </section>
+
+      <!-- Existing uploads -->
+      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="uploads-heading">
+        <div class="flex items-center justify-between mb-4">
+          <h2 id="uploads-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide">Your Uploads</h2>
+          <button id="refresh-data-btn" class="text-xs font-semibold text-indigo-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700 rounded">Refresh</button>
+        </div>
+        <div id="uploads-table" class="space-y-3" aria-live="polite">
+          <p class="text-sm text-gray-600 text-center py-6">No uploads yet.</p>
+        </div>
+      </section>
+
+      <!-- Label management -->
+      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="labels-heading">
+        <h2 id="labels-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">Manage Labels</h2>
+        <p class="text-xs text-gray-600 mb-4">Create coding labels to categorize bookmarked chats. Labels are filterable on the Bookmarks page.</p>
+        <!-- Create form -->
+        <form id="label-create-form" class="flex items-center gap-2 mb-4 flex-wrap" aria-label="Create new label">
+          <label for="label-name-input" class="sr-only">Label name</label>
+          <input id="label-name-input" type="text" placeholder="Label name…" maxlength="40"
+                 class="flex-1 min-w-[10rem] border border-gray-400 rounded-lg px-3 py-1.5 text-sm text-gray-900
+                        focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600" />
+          <label for="label-color-input" class="sr-only">Label colour</label>
+          <input id="label-color-input" type="color" value="#6366f1"
+                 class="w-9 h-9 rounded-lg border border-gray-400 cursor-pointer p-0.5" title="Pick a colour" />
+          <button type="submit"
+                  class="px-4 py-1.5 text-sm font-semibold bg-indigo-700 text-white rounded-lg hover:bg-indigo-800 transition-colors shrink-0
+                         focus-visible:outline focus-visible:outline-3 focus-visible:outline-indigo-900 focus-visible:outline-offset-2">
+            Create
+          </button>
+          <p id="label-create-msg" class="text-xs text-red-700 hidden w-full" aria-live="polite" role="alert"></p>
+        </form>
+        <!-- Existing labels -->
+        <div id="labels-list" class="flex flex-wrap gap-2" aria-live="polite">
+          <p class="text-sm text-gray-600">Loading…</p>
+        </div>
+      </section>
+
+      <!-- Suno Team management -->
+      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="suno-team-heading">
+        <div class="flex items-center justify-between mb-4">
+          <h2 id="suno-team-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide">Suno Team Members</h2>
+          <button id="refresh-suno-btn" class="text-xs font-semibold text-indigo-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700 rounded">Refresh</button>
+        </div>
+        <p class="text-xs text-gray-600 mb-3">Usernames currently flagged as Suno Team in the database. Removing a user marks all their messages as non-team.</p>
+        <div id="suno-team-table" class="space-y-2" aria-live="polite">
+          <p class="text-sm text-gray-600 text-center py-6">Loading…</p>
+        </div>
+      </section>
+
+    </div><!-- /page-settings -->
+    <!-- ════════════════════════════════════════
+         CHAT PAGE
+    ════════════════════════════════════════ -->
+    <div id="page-chat" class="hidden space-y-4">
+
+      <!-- Sub-tabs -->
+      <div class="flex border-b bg-white rounded-t-2xl shadow px-5 pt-4" role="tablist" aria-label="Chat mode">
+        <button class="chat-sub-tab tab-active" data-ctab="rag" role="tab" aria-selected="true" aria-controls="ctab-rag">RAG Chat</button>
+        <button class="chat-sub-tab" data-ctab="summarize" role="tab" aria-selected="false" aria-controls="ctab-summarize">Summarize</button>
+      </div>
+
+      <!-- ── RAG Chat Panel ── -->
+      <div id="ctab-rag" class="chat-subpanel" role="tabpanel" aria-labelledby="">
+        <section class="bg-white rounded-b-2xl rounded-tr-2xl shadow p-5">
+          <div class="flex items-center justify-between mb-3">
+            <p class="text-xs text-gray-600">Ask questions about the Suno Discord conversations. The assistant retrieves relevant messages from the vector database to answer.</p>
+            <button id="chat-clear-btn"
+                    class="text-xs font-semibold text-red-700 hover:text-red-900 border border-red-300 hover:border-red-500 px-3 py-1 rounded-lg transition-colors whitespace-nowrap ml-3
+                           focus-visible:outline focus-visible:outline-3 focus-visible:outline-red-700 focus-visible:outline-offset-2">
+              Clear chat
+            </button>
+          </div>
+
+          <!-- Chat history -->
+          <div id="chat-history" class="space-y-3 mb-4 max-h-[28rem] overflow-y-auto pr-1" aria-live="polite" aria-label="Chat history"></div>
+
+          <!-- Input row -->
+          <div class="flex gap-2 items-end">
+            <label for="chat-input" class="sr-only">Chat message</label>
+            <textarea id="chat-input" rows="2"
+              placeholder="Ask about Suno Discord conversations…"
+              class="search-input flex-1 resize-none"></textarea>
+            <button id="chat-send-btn" class="search-btn self-end">Send</button>
+          </div>
+          <div class="flex items-center gap-2 mt-2">
+            <label for="chat-model" class="text-xs font-medium text-gray-700 shrink-0">Model</label>
+            <select id="chat-model" class="search-input text-xs py-1 w-56">
+              <optgroup label="GPT-5.4">
+                <option value="gpt-5.4" selected>GPT-5.4</option>
+                <option value="gpt-5.4-pro">GPT-5.4 pro</option>
+                <option value="gpt-5.4-mini">GPT-5.4 mini</option>
+                <option value="gpt-5.4-nano">GPT-5.4 nano</option>
+              </optgroup>
+              <optgroup label="GPT-5">
+                <option value="gpt-5">GPT-5</option>
+                <option value="gpt-5-mini">GPT-5 mini</option>
+                <option value="gpt-5-nano">GPT-5 nano</option>
+              </optgroup>
+              <optgroup label="GPT-4.1">
+                <option value="gpt-4.1">GPT-4.1</option>
+                <option value="gpt-4.1-mini">GPT-4.1 mini</option>
+                <option value="gpt-4.1-nano">GPT-4.1 nano</option>
+              </optgroup>
+              <optgroup label="GPT-4o">
+                <option value="gpt-4o">GPT-4o</option>
+                <option value="gpt-4o-mini">GPT-4o mini</option>
+              </optgroup>
+              <optgroup label="o-series (reasoning)">
+                <option value="o4-mini">o4 mini</option>
+                <option value="o3">o3</option>
+                <option value="o3-mini">o3 mini</option>
+                <option value="o1">o1</option>
+                <option value="o1-mini">o1 mini</option>
+              </optgroup>
+            </select>
+            <p class="text-xs text-gray-600">Press Ctrl+Enter or click Send.</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- ── Summarize Panel ── -->
+      <div id="ctab-summarize" class="chat-subpanel hidden" role="tabpanel">
+        <section class="bg-white rounded-b-2xl rounded-tr-2xl shadow p-5">
+          <p class="text-xs text-gray-600 mb-4">Filter messages by username and date range, then generate an AI summary.</p>
+
+          <!-- Filters -->
+          <div class="flex flex-wrap gap-2 items-center mb-3">
+            <label for="sum-username" class="filter-label">Username</label>
+            <input id="sum-username" type="text" placeholder="Optional username…" class="search-input w-44" />
+
+            <!-- Date mode toggle -->
+            <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden" role="group" aria-label="Date input mode">
+              <button id="sum-mode-exact" class="range-mode-btn range-mode-active" type="button" aria-pressed="true">Exact Date</button>
+              <button id="sum-mode-month" class="range-mode-btn" type="button" aria-pressed="false">By Month</button>
+            </div>
+          </div>
+
+          <!-- Exact date inputs -->
+          <div id="sum-exact-inputs" class="flex flex-wrap gap-2 items-center mb-3">
+            <label for="sum-date-from" class="filter-label">From</label>
+            <input id="sum-date-from" type="date" class="search-input" />
+            <label for="sum-date-to" class="filter-label">To</label>
+            <input id="sum-date-to" type="date" class="search-input" />
+          </div>
+
+          <!-- Month inputs -->
+          <div id="sum-month-inputs" class="hidden flex flex-wrap gap-2 items-center mb-3">
+            <label for="sum-month-from" class="filter-label">From</label>
+            <input id="sum-month-from" type="month" class="search-input" />
+            <label for="sum-month-to" class="filter-label">To</label>
+            <input id="sum-month-to" type="month" class="search-input" />
+          </div>
+
+          <div class="flex flex-wrap gap-2 items-center mb-3">
+            <label for="sum-min-words" class="sr-only">Minimum word count</label>
+            <input id="sum-min-words" type="number" value="0" min="0" class="search-input w-24" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+            <label for="sum-suno" class="filter-label">Suno Team</label>
+            <select id="sum-suno" class="search-input">
+              <option value="all">All</option>
+              <option value="only">Only Suno Team</option>
+              <option value="exclude">Exclude Suno Team</option>
+            </select>
+          </div>
+
+          <!-- Prompt -->
+          <label for="sum-prompt" class="block text-xs font-semibold text-gray-700 mb-1">Custom instructions (optional)</label>
+          <textarea id="sum-prompt" rows="2"
+            placeholder="e.g. Focus on feature requests and bug reports. Bullet-point format."
+            class="search-input w-full resize-none mb-3"></textarea>
+
+          <div class="flex items-center gap-2 mb-3">
+            <label for="sum-model" class="text-xs font-semibold text-gray-700 shrink-0">Model</label>
+            <select id="sum-model" class="search-input text-xs py-1 w-56">
+              <optgroup label="GPT-5.4">
+                <option value="gpt-5.4" selected>GPT-5.4</option>
+                <option value="gpt-5.4-pro">GPT-5.4 pro</option>
+                <option value="gpt-5.4-mini">GPT-5.4 mini</option>
+                <option value="gpt-5.4-nano">GPT-5.4 nano</option>
+              </optgroup>
+              <optgroup label="GPT-5">
+                <option value="gpt-5">GPT-5</option>
+                <option value="gpt-5-mini">GPT-5 mini</option>
+                <option value="gpt-5-nano">GPT-5 nano</option>
+              </optgroup>
+              <optgroup label="GPT-4.1">
+                <option value="gpt-4.1">GPT-4.1</option>
+                <option value="gpt-4.1-mini">GPT-4.1 mini</option>
+                <option value="gpt-4.1-nano">GPT-4.1 nano</option>
+              </optgroup>
+              <optgroup label="GPT-4o">
+                <option value="gpt-4o">GPT-4o</option>
+                <option value="gpt-4o-mini">GPT-4o mini</option>
+              </optgroup>
+              <optgroup label="o-series (reasoning)">
+                <option value="o4-mini">o4 mini</option>
+                <option value="o3">o3</option>
+                <option value="o3-mini">o3 mini</option>
+                <option value="o1">o1</option>
+                <option value="o1-mini">o1 mini</option>
+              </optgroup>
+            </select>
+          </div>
+          <button id="sum-btn" class="search-btn">Summarize</button>
+
+          <!-- Result -->
+          <div id="sum-result" class="hidden mt-4 bg-slate-50 border border-slate-300 rounded-xl p-4 text-sm text-gray-900 markdown-body" aria-live="polite"></div>
+        </section>
+      </div>
+
+    </div><!-- /page-chat -->
+
+
+    <!-- ════════════════════════════════════════
+         BOOKMARKS PAGE
+    ════════════════════════════════════════ -->
+    <div id="page-bookmarks" class="hidden space-y-4">
+
+      <!-- Sticky context-window control bar -->
+      <div class="sticky top-[57px] z-30 bg-white rounded-2xl shadow border border-gray-200 px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2"
+           role="search" aria-label="Bookmark filters">
+        <span class="font-semibold text-sm text-gray-800">Context window</span>
+        <label for="bm-ctx-before" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span>Before</span>
+          <input id="bm-ctx-before" type="number" value="10" min="0" max="100"
+                 class="w-16 border border-gray-400 rounded-lg px-2 py-1 text-sm text-center text-gray-900" />
+          <span class="text-gray-600 text-xs">msgs</span>
+        </label>
+        <label for="bm-ctx-after" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span>After</span>
+          <input id="bm-ctx-after" type="number" value="10" min="0" max="100"
+                 class="w-16 border border-gray-400 rounded-lg px-2 py-1 text-sm text-center text-gray-900" />
+          <span class="text-gray-600 text-xs">msgs</span>
+        </label>
+        <label for="bm-sort" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span>Sort by</span>
+          <select id="bm-sort" class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 cursor-pointer">
+            <option value="added">Bookmark added</option>
+            <option value="date">Content date</option>
+            <option value="username">Username</option>
+          </select>
+        </label>
+        <label for="bm-filter-user" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span>Username</span>
+          <input id="bm-filter-user" type="text" placeholder="Filter by username…"
+                 class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 w-40" />
+        </label>
+        <label for="bm-filter-suno" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span>Suno Team</span>
+          <select id="bm-filter-suno" class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 cursor-pointer">
+            <option value="all">All</option>
+            <option value="only">Only Suno Team</option>
+            <option value="exclude">Exclude Suno Team</option>
+          </select>
+        </label>
+        <span class="text-xs text-gray-600">Changing values collapses open context panels.</span>
+        <button id="bm-refresh-btn" class="ml-auto text-xs font-semibold text-indigo-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700 rounded">Refresh</button>
+        <!-- Label filter row -->
+        <div class="w-full flex flex-wrap items-center gap-2 pt-2 border-t border-gray-200">
+          <span class="text-xs text-gray-700 font-semibold shrink-0">Labels:</span>
+          <div id="bm-label-filter-chips" class="flex flex-wrap gap-1.5" role="group" aria-label="Filter by label">
+            <span class="text-xs text-gray-600">No labels yet.</span>
+          </div>
+        </div>
+      </div>
+
+      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="bookmarks-heading">
+        <h2 id="bookmarks-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-4">Saved Bookmarks</h2>
+        <div id="bookmarks-container" class="space-y-4" aria-live="polite">
+          <p class="text-sm text-gray-600 text-center py-8">Loading bookmarks…</p>
+        </div>
+      </section>
+    </div><!-- /page-bookmarks -->
+
+
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
