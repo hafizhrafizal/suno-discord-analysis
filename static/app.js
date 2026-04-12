@@ -218,23 +218,109 @@ async function loadModelOptions() {
   } catch (_) {}
 }
 
-document.getElementById('settings-save').onclick = async () => {
-  const key = document.getElementById('api-key-input').value.trim();
-  if (!key) return;
+/* ══════════════════════════════════════════════════════════════════════════
+   API KEY POPUP
+══════════════════════════════════════════════════════════════════════════ */
+const STORAGE_KEY = 'openai_api_key';
+
+async function _sendKeyToServer(key) {
+  const res = await fetch('/api/set-api-key', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({api_key: key}),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.detail || 'Failed to save API key');
+  return d;
+}
+
+function showApiKeyPopup(dismissable = false) {
+  const popup     = document.getElementById('apikey-popup');
+  const input     = document.getElementById('apikey-popup-input');
+  const skipBtn   = document.getElementById('apikey-popup-skip');
+  const errorEl   = document.getElementById('apikey-popup-error');
+
+  // Pre-fill if a key is already stored
+  const stored = localStorage.getItem(STORAGE_KEY) || '';
+  input.value = stored;
+  errorEl.textContent = '';
+  errorEl.classList.add('hidden');
+
+  // Show/hide Skip button depending on dismissability
+  skipBtn.classList.toggle('hidden', !dismissable);
+
+  popup.classList.remove('hidden');
+  input.focus();
+
+  // Backdrop click only dismisses if dismissable
+  document.getElementById('apikey-backdrop').onclick = dismissable ? hideApiKeyPopup : null;
+
+  document.addEventListener('keydown', _apiKeyEscHandler);
+}
+
+function hideApiKeyPopup() {
+  document.getElementById('apikey-popup').classList.add('hidden');
+  document.removeEventListener('keydown', _apiKeyEscHandler);
+}
+
+function _apiKeyEscHandler(e) {
+  if (e.key !== 'Escape') return;
+  // Only dismiss on Esc if a key is already saved (popup is dismissable)
+  if (localStorage.getItem(STORAGE_KEY)) hideApiKeyPopup();
+}
+
+function updateSettingsKeyStatus() {
+  const statusEl = document.getElementById('settings-key-status');
+  if (!statusEl) return;
+  const stored = localStorage.getItem(STORAGE_KEY);
+  statusEl.textContent = stored
+    ? 'API key saved in your browser (localStorage).'
+    : 'No API key set. Click "Change Key" to add one.';
+}
+
+// Save button
+document.getElementById('apikey-popup-save').onclick = async () => {
+  const input   = document.getElementById('apikey-popup-input');
+  const errorEl = document.getElementById('apikey-popup-error');
+  const saveBtn = document.getElementById('apikey-popup-save');
+  const key = input.value.trim();
+
+  if (!key) {
+    errorEl.textContent = 'Please enter your API key.';
+    errorEl.classList.remove('hidden');
+    input.focus();
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving…';
+  errorEl.textContent = '';
+  errorEl.classList.add('hidden');
+
   try {
-    const res = await fetch('/api/set-api-key', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({api_key: key}),
-    });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.detail);
-    const msg = document.getElementById('settings-msg');
-    msg.textContent = d.message;
-    msg.classList.remove('hidden');
-    setTimeout(() => msg.classList.add('hidden'), 2500);
+    await _sendKeyToServer(key);
+    localStorage.setItem(STORAGE_KEY, key);
+    hideApiKeyPopup();
+    updateSettingsKeyStatus();
     loadStats();
-  } catch (e) { showErrorPopup(e.message); }
+  } catch (e) {
+    errorEl.textContent = e.message;
+    errorEl.classList.remove('hidden');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save & Continue';
+  }
 };
+
+// Skip button
+document.getElementById('apikey-popup-skip').onclick = () => hideApiKeyPopup();
+
+// Enter key in popup input triggers save
+document.getElementById('apikey-popup-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('apikey-popup-save').click();
+});
+
+// "Change Key" button on settings page
+document.getElementById('settings-change-key').onclick = () => showApiKeyPopup(true);
 
 /* ══════════════════════════════════════════════════════════════════════════
    DATA PAGE
@@ -365,7 +451,7 @@ function renderUploadsTable() {
 
 function uploadCard(u) {
   const modelBadges = Object.entries(u.embedded_models || {}).map(([mid, has]) => {
-    const labels = {openai:'OpenAI', 'bge-large':'BGE-large', 'bge-base':'BGE-base'};
+    const labels = {openai:'OpenAI'};
     return has
       ? `<span class="embed-badge embed-badge-yes">${labels[mid] || mid}</span>`
       : `<span class="embed-badge embed-badge-no">${labels[mid] || mid} —</span>`;
@@ -501,6 +587,7 @@ async function loadSettingsPage() {
   renderUploadsTable();
   renderLabelManager();
   renderSunoTeamTable();
+  updateSettingsKeyStatus();
 }
 
 async function renderLabelManager() {
@@ -1883,4 +1970,20 @@ document.getElementById('sum-btn').addEventListener('click', doSummarize);
 (async () => {
   await refreshUploads();   // loads allUploads, renders scope chips, stats
   await loadBookmarkIds();  // populate bookmarkedIds set + badge
+
+  // Restore API key from localStorage → send to server, then check stats.
+  // If no key is stored yet, show the popup so the user can enter one.
+  const storedKey = localStorage.getItem(STORAGE_KEY);
+  if (storedKey) {
+    try {
+      await _sendKeyToServer(storedKey);
+      loadStats();
+    } catch (_) {
+      // Stored key is invalid/rejected — clear it and prompt again
+      localStorage.removeItem(STORAGE_KEY);
+      showApiKeyPopup(false);
+    }
+  } else {
+    showApiKeyPopup(false);
+  }
 })();
