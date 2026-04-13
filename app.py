@@ -229,7 +229,12 @@ def safe_str(val) -> str:
 # ─── Embedding helpers ───────────────────────────────────────────────────────
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed a list of texts using OpenAI text-embedding-3-small."""
+    """Embed a list of texts using OpenAI text-embedding-3-small.
+
+    This is a synchronous/blocking call — always invoke it via
+    ``asyncio.get_event_loop().run_in_executor(None, embed_texts, batch)``
+    inside async code so it does not freeze the event loop.
+    """
     if not openai_client:
         raise HTTPException(400, "OpenAI API key not configured. Set it in Settings.")
     response = openai_client.embeddings.create(
@@ -237,6 +242,12 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         input=[t[:8191] for t in texts],
     )
     return [e.embedding for e in response.data]
+
+
+# Batch size for embedding API calls.
+# Smaller batches → more frequent SSE progress events → proxy keepalive.
+# OpenAI accepts up to 2048 inputs, but 500 keeps round-trips under ~10 s.
+_EMBED_BATCH_SIZE = 500
 
 
 def active_collection():
@@ -483,25 +494,41 @@ async def reembed_upload(upload_id: str):
     metas = [{"username": r["username"], "date": r["date"], "upload_id": upload_id} for r in rows]
 
     col = active_collection()
+    loop = asyncio.get_event_loop()
 
     async def generate():
         yield f"data: Starting embedding {len(texts)} messages with {EMBEDDING_MODELS[current_embedding_model]['label']}\n\n"
         embedded = 0
-        for i in range(0, len(texts), 2048):
-            b_texts = texts[i : i + 2048]
-            b_uuids = uuids[i : i + 2048]
-            b_metas = metas[i : i + 2048]
+        batch_num = 0
+        for i in range(0, len(texts), _EMBED_BATCH_SIZE):
+            b_texts = texts[i : i + _EMBED_BATCH_SIZE]
+            b_uuids = uuids[i : i + _EMBED_BATCH_SIZE]
+            b_metas = metas[i : i + _EMBED_BATCH_SIZE]
+            batch_num += 1
+            # SSE comment — ignored by the client but sends bytes to the proxy,
+            # resetting its idle-read timer before each blocking API call.
+            yield f": batch {batch_num}\n\n"
             try:
-                embeddings = embed_texts(b_texts)
+                # Run the blocking OpenAI call in a thread so the event loop
+                # (and SSE flush) is not frozen while waiting for the API.
+                embeddings = await loop.run_in_executor(None, embed_texts, b_texts)
                 col.upsert(embeddings=embeddings, documents=b_texts, ids=b_uuids, metadatas=b_metas)
                 embedded += len(b_texts)
                 yield f"data: Embedded {embedded}/{len(texts)} messages\n\n"
             except Exception as e:
-                logger.warning("Reembed batch %d failed: %s", i // 2048, e)
-                yield f"data: Error in batch {i // 2048 + 1}: {str(e)}\n\n"
+                logger.warning("Reembed batch %d failed: %s", batch_num, e)
+                yield f"data: Error in batch {batch_num}: {str(e)}\n\n"
         yield f"data: Completed: re-embedded {embedded} messages\n\n"
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            # Tell proxies/CDNs not to buffer this response.
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 @app.delete("/api/uploads/{upload_id}")
@@ -654,6 +681,8 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
     upload_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
 
+    _loop = asyncio.get_event_loop()
+
     async def generate():
         yield f"data: Processing {len(df)} rows from {file.filename}\n\n"
 
@@ -719,12 +748,16 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
         if embedding_model_available() and texts_to_embed:
             yield f"data: Starting embedding {len(texts_to_embed)} messages with {EMBEDDING_MODELS[current_embedding_model]['label']}\n\n"
             col = active_collection()
-            for i in range(0, len(texts_to_embed), 2048):
-                b_texts = texts_to_embed[i : i + 2048]
-                b_uuids = uuids_to_embed[i : i + 2048]
-                b_metas = metas_to_embed[i : i + 2048]
+            batch_num = 0
+            for i in range(0, len(texts_to_embed), _EMBED_BATCH_SIZE):
+                b_texts = texts_to_embed[i : i + _EMBED_BATCH_SIZE]
+                b_uuids = uuids_to_embed[i : i + _EMBED_BATCH_SIZE]
+                b_metas = metas_to_embed[i : i + _EMBED_BATCH_SIZE]
+                batch_num += 1
+                # SSE keepalive comment — resets proxy idle timer before the blocking call
+                yield f": batch {batch_num}\n\n"
                 try:
-                    embeddings = embed_texts(b_texts)
+                    embeddings = await _loop.run_in_executor(None, embed_texts, b_texts)
                     col.add(
                         embeddings=embeddings,
                         documents=b_texts,
@@ -734,8 +767,8 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
                     embedded_count += len(b_texts)
                     yield f"data: Embedded {embedded_count}/{len(texts_to_embed)} messages\n\n"
                 except Exception as e:
-                    logger.warning("Embedding batch %d failed: %s", i // 2048, e)
-                    yield f"data: Error in batch {i // 2048 + 1}: {str(e)}\n\n"
+                    logger.warning("Embedding batch %d failed: %s", batch_num, e)
+                    yield f"data: Error in batch {batch_num}: {str(e)}\n\n"
         elif not embedding_model_available():
             yield "data: Skipping embedding (no OpenAI API key configured)\n\n"
         else:
@@ -743,7 +776,14 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
 
         yield f"data: Completed: inserted {rows_inserted}, embedded {embedded_count}\n\n"
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 # ─── FTS5 keyword helper ─────────────────────────────────────────────────────
