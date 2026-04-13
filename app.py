@@ -545,6 +545,64 @@ async def delete_upload(upload_id: str):
     return {"status": "ok", "deleted_messages": len(msg_uuids)}
 
 
+@app.delete("/api/uploads/{upload_id}/sqlite")
+async def delete_upload_sqlite(upload_id: str):
+    """Delete an upload and its messages from SQLite only — embeddings are preserved."""
+    conn = get_db()
+    upload = conn.execute(
+        "SELECT * FROM uploads WHERE id = ?", (upload_id,)
+    ).fetchone()
+    if not upload:
+        conn.close()
+        raise HTTPException(404, "Upload not found")
+
+    msg_count = conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE upload_id = ?", (upload_id,)
+    ).fetchone()[0]
+
+    conn.execute("DELETE FROM messages WHERE upload_id = ?", (upload_id,))
+    conn.execute("DELETE FROM uploads WHERE id = ?", (upload_id,))
+    conn.commit()
+    conn.close()
+
+    return {"status": "ok", "deleted_messages": msg_count}
+
+
+@app.delete("/api/uploads/{upload_id}/embeddings")
+async def delete_upload_embeddings(upload_id: str):
+    """Delete embeddings for an upload from every ChromaDB collection — SQLite untouched."""
+    conn = get_db()
+    upload = conn.execute(
+        "SELECT * FROM uploads WHERE id = ?", (upload_id,)
+    ).fetchone()
+    if not upload:
+        conn.close()
+        raise HTTPException(404, "Upload not found")
+
+    uuid_rows = conn.execute(
+        "SELECT msg_uuid FROM messages WHERE upload_id = ?", (upload_id,)
+    ).fetchall()
+    conn.close()
+    msg_uuids = [r["msg_uuid"] for r in uuid_rows]
+
+    deleted_count = 0
+    if msg_uuids:
+        for col in chroma_collections.values():
+            try:
+                batch_size = 500
+                for i in range(0, len(msg_uuids), batch_size):
+                    batch_uuids = msg_uuids[i : i + batch_size]
+                    existing = col.get(ids=batch_uuids, include=["documents"])
+                    if existing["ids"]:
+                        col.delete(ids=existing["ids"])
+                        deleted_count += len(existing["ids"])
+            except Exception as e:
+                logger.error("Chroma delete embeddings failed for upload %s: %s", upload_id, e)
+                raise HTTPException(500, f"Failed to delete vectors from ChromaDB: {str(e)}")
+
+    return {"status": "ok", "deleted_embeddings": deleted_count}
+
+
 @app.post("/api/upload")
 async def upload_csv(request: Request, file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".csv"):
