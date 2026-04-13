@@ -393,47 +393,49 @@ async def lifespan(app: FastAPI):
 
     logger.info("Active embedding model: %s", current_embedding_model)
 
-    # ── One-time migration: populate embedded_uploads from ChromaDB metadata ──
+    # ── One-time migration: populate embedded_uploads from ChromaDB ──────────
     # Runs only when the tracking table is empty (first startup after upgrade).
-    # Does a single full-metadata scan per collection instead of O(n_uploads) scans.
+    # Uses limit=1 per upload_id — tiny memory footprint, safe in production.
+    # Runs in a background thread so it never blocks server startup or requests.
     def _migrate_embedded_uploads():
         conn = get_db()
-        existing = conn.execute("SELECT COUNT(*) FROM embedded_uploads").fetchone()[0]
-        if existing > 0:
-            conn.close()
-            return  # already populated
+        try:
+            existing = conn.execute("SELECT COUNT(*) FROM embedded_uploads").fetchone()[0]
+            if existing > 0:
+                return  # already populated
 
-        known_upload_ids = {
-            r[0] for r in conn.execute("SELECT id FROM uploads").fetchall()
-        }
-        if not known_upload_ids:
-            conn.close()
-            return
+            known_uploads = [
+                r[0] for r in conn.execute("SELECT id FROM uploads").fetchall()
+            ]
+            if not known_uploads:
+                return
 
-        migrated = 0
-        now_ts = datetime.now().isoformat()
-        for model_id, col in chroma_collections.items():
-            try:
-                # One full metadata scan per collection — far cheaper than
-                # one where-filter scan per upload.
-                result = col.get(include=["metadatas"])
-                found_ids = {
-                    m["upload_id"]
-                    for m in (result.get("metadatas") or [])
-                    if m and "upload_id" in m and m["upload_id"] in known_upload_ids
-                }
-                for uid in found_ids:
-                    conn.execute(
-                        "INSERT OR IGNORE INTO embedded_uploads (upload_id, model_id, embedded_at) VALUES (?,?,?)",
-                        (uid, model_id, now_ts),
-                    )
-                    migrated += 1
-            except Exception as e:
-                logger.warning("Migration scan failed for model %s: %s", model_id, e)
-        conn.commit()
-        conn.close()
-        if migrated:
-            logger.info("Migrated %d upload→model records into embedded_uploads", migrated)
+            now_ts = datetime.now().isoformat()
+            migrated = 0
+            for model_id, col in chroma_collections.items():
+                for uid in known_uploads:
+                    try:
+                        result = col.get(
+                            where={"upload_id": {"$eq": uid}},
+                            limit=1,
+                            include=[],
+                        )
+                        if result.get("ids"):
+                            conn.execute(
+                                "INSERT OR IGNORE INTO embedded_uploads "
+                                "(upload_id, model_id, embedded_at) VALUES (?,?,?)",
+                                (uid, model_id, now_ts),
+                            )
+                            migrated += 1
+                    except Exception as e:
+                        logger.warning("Migration check failed uid=%s model=%s: %s", uid, model_id, e)
+            conn.commit()
+            if migrated:
+                logger.info("Migrated %d upload→model records into embedded_uploads", migrated)
+        except Exception as e:
+            logger.error("embedded_uploads migration failed: %s", e)
+        finally:
+            conn.close()
 
     if chroma_collections:
         loop.run_in_executor(None, _migrate_embedded_uploads)  # fire-and-forget background thread

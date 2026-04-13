@@ -8,6 +8,33 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
+   FETCH HELPER
+   Wraps fetch() so non-JSON responses (proxy 502/504, nginx error pages,
+   HTTP→HTTPS redirects) produce a clear error instead of "Unexpected token '<'".
+══════════════════════════════════════════════════════════════════════════ */
+async function apiFetch(url, options = {}) {
+  const r = await fetch(url, options);
+  const ct = r.headers.get('content-type') || '';
+  if (!r.ok || !ct.includes('application/json')) {
+    // Try to extract a detail message from JSON; fall back to status text.
+    let detail;
+    try {
+      const body = await r.json();
+      detail = body.detail || body.message || JSON.stringify(body);
+    } catch {
+      detail = await r.text().catch(() => '');
+      // If it looks like HTML (proxy error page), give a friendlier message.
+      if (detail.trimStart().startsWith('<')) {
+        detail = `Server returned an HTML error page (HTTP ${r.status}). ` +
+                 `Check that the backend is running and the proxy is correctly configured.`;
+      }
+    }
+    throw new Error(detail || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    ERROR POPUP
 ══════════════════════════════════════════════════════════════════════════ */
 function showErrorPopup(msg) {
@@ -98,7 +125,7 @@ document.querySelectorAll('.nav-tab').forEach(btn => {
 ══════════════════════════════════════════════════════════════════════════ */
 async function loadStats() {
   try {
-    const d = await fetch('/api/stats').then(r => r.json());
+    const d = await apiFetch('/api/stats');
     document.getElementById('stats-bar').innerHTML =
       `${d.total_messages.toLocaleString()} msgs &bull; ` +
       `${d.total_uploads} uploads &bull; ` +
@@ -167,7 +194,7 @@ function getScopeParam() {
 ══════════════════════════════════════════════════════════════════════════ */
 async function loadModelOptions() {
   try {
-    const models = await fetch('/api/embedding-models').then(r => r.json());
+    const models = await apiFetch('/api/embedding-models');
     const container = document.getElementById('model-options');
     container.innerHTML = models.map(m => {
       const available = m.available !== false;
@@ -424,7 +451,7 @@ function hideUploadProgress() {
 /* ── Uploads table ── */
 async function refreshUploads() {
   try {
-    allUploads = await fetch('/api/uploads').then(r => r.json());
+    allUploads = await apiFetch('/api/uploads');
   } catch (_) { allUploads = []; }
   renderScopeChips();
   if (!document.getElementById('page-settings').classList.contains('hidden')) {
@@ -806,7 +833,7 @@ async function renderSunoTeamTable() {
   const el = document.getElementById('suno-team-table');
   el.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">Loading…</p>';
   try {
-    const members = await fetch('/api/suno-team').then(r => r.json());
+    const members = await apiFetch('/api/suno-team');
     if (!members.length) {
       el.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No Suno Team members found.</p>';
       return;
@@ -1388,7 +1415,7 @@ document.getElementById('export-btn').onclick = () => {
 
 async function loadBookmarkIds() {
   try {
-    const ids = await fetch('/api/bookmarks/ids').then(r => r.json());
+    const ids = await apiFetch('/api/bookmarks/ids');
     bookmarkedIds = new Set(ids);
     updateBmBadge();
   } catch (_) {}
@@ -1462,7 +1489,7 @@ async function loadBookmarksPage() {
   container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">Loading…</p>';
   await loadAllLabels();
   try {
-    _cachedBookmarks = await fetch('/api/bookmarks').then(r => r.json());
+    _cachedBookmarks = await apiFetch('/api/bookmarks');
     _renderBookmarksSorted();
   } catch (e) {
     container.innerHTML = `<p class="text-sm text-red-500 text-center py-8">Failed to load bookmarks: ${esc(e.message)}</p>`;
@@ -1480,7 +1507,7 @@ function labelTextColor(hex) {
 // ── Load & render label filter chips ─────────────────────────────────────────
 async function loadAllLabels() {
   try {
-    _allLabels = await fetch('/api/labels').then(r => r.json());
+    _allLabels = await apiFetch('/api/labels');
   } catch (_) { _allLabels = []; }
   renderBmLabelFilterChips();
 }
@@ -1782,7 +1809,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
   ctxBtn.textContent = 'Loading…';
   ctxBtn.disabled    = true;
   try {
-    const msgs = await fetch(`/api/context/${id}?before=${before}&after=${after}`).then(r => r.json());
+    const msgs = await apiFetch(`/api/context/${id}?before=${before}&after=${after}`);
     ctxEl.innerHTML = `
       <div class="border-t bg-slate-50 p-4 space-y-2">
         <p class="text-xs text-gray-500 font-medium mb-3">
