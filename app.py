@@ -530,12 +530,18 @@ async def reembed_upload(upload_id: str):
                     embedded += len(b_texts)
                     yield f"data: Embedded {embedded}/{len(texts)} messages\n\n"
                 except Exception as e:
-                    logger.warning("Reembed batch %d failed: %s", batch_num, e)
-                    yield f"data: Error in batch {batch_num}: {str(e)}\n\n"
+                    tb = traceback.format_exc()
+                    logger.warning("Reembed batch %d failed:\n%s", batch_num, tb)
+                    # Encode newlines so they survive as a single SSE data line,
+                    # the client decodes them back before display.
+                    detail = f"{type(e).__name__}: {e}\n\n{tb}".replace("\n", "\\n")
+                    yield f"data: Error in batch {batch_num}: {detail}\n\n"
             yield f"data: Completed: re-embedded {embedded} messages\n\n"
         except Exception as e:
-            logger.error("Reembed generator crashed: %s", e)
-            yield f"data: Error: {str(e)}\n\n"
+            tb = traceback.format_exc()
+            logger.error("Reembed generator crashed:\n%s", tb)
+            detail = f"{type(e).__name__}: {e}\n\n{tb}".replace("\n", "\\n")
+            yield f"data: Error: {detail}\n\n"
 
     return StreamingResponse(
         generate(),

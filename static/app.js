@@ -522,10 +522,33 @@ async function doReembed(uploadId, filename, btn) {
     labelEl.textContent = 'Starting…';
   }
 
+  // Error detail panel lives inside the progress section of this card.
+  // We use a <pre> so long tracebacks are readable; create it once if absent.
+  let errEl = document.getElementById(`reembed-err-${safeId}`);
+  if (!errEl && progressEl) {
+    errEl = document.createElement('pre');
+    errEl.id = `reembed-err-${safeId}`;
+    errEl.className = 'hidden mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2 max-h-48 overflow-auto whitespace-pre-wrap break-all';
+    progressEl.appendChild(errEl);
+  }
+
+  function showReembedError(msg) {
+    // Decode escaped newlines the server sends inside a single SSE data line.
+    const decoded = msg.replace(/\\n/g, '\n');
+    if (fillEl) fillEl.classList.add('error');
+    if (labelEl) labelEl.textContent = 'Failed — see details below';
+    if (errEl) {
+      errEl.textContent = decoded;
+      errEl.classList.remove('hidden');
+    }
+  }
+
   try {
     const response = await fetch(`/api/uploads/${enc(uploadId)}/reembed`, { method: 'POST' });
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      let detail = `HTTP ${response.status}`;
+      try { const d = await response.json(); detail = d.detail || detail; } catch {}
+      throw new Error(detail);
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -540,7 +563,6 @@ async function doReembed(uploadId, filename, btn) {
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           const data = line.slice(6).trim();
-          if (labelEl) labelEl.textContent = data;
 
           // Parse "Embedded X/Y messages" for progress %
           const m = data.match(/Embedded\s+(\d+)\/(\d+)/i);
@@ -548,29 +570,30 @@ async function doReembed(uploadId, filename, btn) {
             const pct = Math.round((parseInt(m[1]) / parseInt(m[2])) * 100);
             fillEl.style.width = pct + '%';
             fillEl.parentElement.setAttribute('aria-valuenow', pct);
+            if (labelEl) labelEl.textContent = `Embedding… ${pct}% (${m[1]}/${m[2]} messages)`;
+          } else if (!data.startsWith('Error') && !data.startsWith('Completed')) {
+            if (labelEl) labelEl.textContent = data;
           }
 
           if (data.startsWith('Completed:')) {
             if (fillEl) fillEl.style.width = '100%';
+            if (labelEl) labelEl.textContent = data;
             btn.textContent = 'Re-embed';
             setTimeout(() => {
               if (progressEl) progressEl.classList.add('hidden');
-            }, 2000);
+              if (errEl) errEl.classList.add('hidden');
+            }, 3000);
             refreshUploads();
             loadStats();
           } else if (data.startsWith('Error')) {
-            if (fillEl) fillEl.classList.add('error');
-            showErrorPopup(data);
+            showReembedError(data);
           }
         }
       }
     }
   } catch (e) {
-    showErrorPopup('Re-embed failed: ' + e.message);
+    showReembedError('Network / fetch error:\n' + e.message);
     btn.textContent = 'Re-embed';
-    if (fillEl) fillEl.classList.add('error');
-    if (labelEl) labelEl.textContent = 'Failed — ' + e.message;
-    setTimeout(() => { if (progressEl) progressEl.classList.add('hidden'); }, 3000);
   } finally {
     btn.disabled = false;
   }
