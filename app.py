@@ -277,6 +277,13 @@ async def lifespan(app: FastAPI):
         client = chromadb.PersistentClient(path=CHROMA_PATH)
         logger.info("Using CHROMA_PATH: %s", CHROMA_PATH)
         logger.info("Existing collections: %s", [c.name for c in client.list_collections()])
+        try:
+            existing = client.list_collections()
+            logger.info("Existing collections: %s", [c.name for c in existing])
+        except Exception as e:
+            logger.error("Failed to list collections: %s", e)
+            existing = []
+
         cols = {}
         for model_id, cfg in EMBEDDING_MODELS.items():
             try:
