@@ -100,16 +100,26 @@ _embed_jobs: dict[str, dict] = {}
 # upload_id → job_id  (only while the job is running; cleared on finish)
 _active_embed: dict[str, str] = {}
 
-# ─── Stats cache ─────────────────────────────────────────────────────────────
-# ChromaDB .count() is slow; cache the result for a short window.
+# ─── Stats / uploads cache ───────────────────────────────────────────────────
+# ChromaDB .count() and per-upload presence checks are slow; cache both.
 import time as _time
-_stats_cache: dict | None = None
-_stats_cache_ts: float    = 0.0
-_STATS_TTL                = 30.0   # seconds
+_stats_cache: dict | None   = None
+_stats_cache_ts: float      = 0.0
+_uploads_cache: list | None = None
+_uploads_cache_ts: float    = 0.0
+_STATS_TTL                  = 30.0   # seconds
 
 def _invalidate_stats_cache():
     global _stats_cache
     _stats_cache = None
+
+def _invalidate_uploads_cache():
+    global _uploads_cache
+    _uploads_cache = None
+
+def _invalidate_all_caches():
+    _invalidate_stats_cache()
+    _invalidate_uploads_cache()
 
 
 # ─── Database helpers ────────────────────────────────────────────────────────
@@ -300,13 +310,11 @@ async def lifespan(app: FastAPI):
     def _init_chroma():
         client = chromadb.PersistentClient(path=CHROMA_PATH)
         logger.info("Using CHROMA_PATH: %s", CHROMA_PATH)
-        logger.info("Existing collections: %s", [c.name for c in client.list_collections()])
         try:
             existing = client.list_collections()
             logger.info("Existing collections: %s", [c.name for c in existing])
         except Exception as e:
             logger.error("Failed to list collections: %s", e)
-            existing = []
 
         cols = {}
         for model_id, cfg in EMBEDDING_MODELS.items():
@@ -509,6 +517,11 @@ def _has_upload_in_collection(collection, upload_id: str) -> bool:
 
 @app.get("/api/uploads")
 async def list_uploads():
+    global _uploads_cache, _uploads_cache_ts
+    now = _time.monotonic()
+    if _uploads_cache is not None and (now - _uploads_cache_ts) < _STATS_TTL:
+        return _uploads_cache
+
     loop = asyncio.get_running_loop()
 
     def _fetch_uploads():
@@ -519,13 +532,17 @@ async def list_uploads():
 
     uploads = await loop.run_in_executor(None, _fetch_uploads)
     if not uploads:
+        _uploads_cache    = uploads
+        _uploads_cache_ts = now
         return uploads
 
-    # Build every (upload, model) presence check as a separate executor task,
-    # then await all of them in parallel — O(1) wall-clock instead of O(n*m).
+    # Build every (upload, model) presence check as a separate executor task.
+    # Use _chroma_executor (capped at 4 workers) instead of the default executor
+    # to avoid flooding ChromaDB with concurrent where-filter scans and causing
+    # internal lock contention on the collection.
     mid_list = [mid for mid in EMBEDDING_MODELS if mid in chroma_collections]
     tasks = [
-        loop.run_in_executor(None, _has_upload_in_collection, chroma_collections[mid], u["id"])
+        loop.run_in_executor(_chroma_executor, _has_upload_in_collection, chroma_collections[mid], u["id"])
         for u in uploads
         for mid in mid_list
     ]
@@ -539,6 +556,8 @@ async def list_uploads():
             u["embedded_models"][mid] = bool(r) if not isinstance(r, Exception) else False
             idx += 1
 
+    _uploads_cache    = uploads
+    _uploads_cache_ts = now
     return uploads
 
 
@@ -577,7 +596,7 @@ async def _run_embed_job(job_id: str, upload_id: str, col, all_texts: list, all_
 
         if not todo:
             job["status"] = "completed"
-            _invalidate_stats_cache()
+            _invalidate_all_caches()
             return
 
         # ── 2. Concurrent embedding ───────────────────────────────────────
@@ -634,7 +653,7 @@ async def _run_embed_job(job_id: str, upload_id: str, col, all_texts: list, all_
         await asyncio.gather(*batch_coros)
 
         job["status"] = "completed"
-        _invalidate_stats_cache()
+        _invalidate_all_caches()
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -747,7 +766,7 @@ async def delete_upload(upload_id: str):
     conn.execute("DELETE FROM uploads WHERE id = ?", (upload_id,))
     conn.commit()
     conn.close()
-    _invalidate_stats_cache()
+    _invalidate_all_caches()
     return {"status": "ok", "deleted_messages": len(msg_uuids)}
 
 
@@ -770,7 +789,7 @@ async def delete_upload_sqlite(upload_id: str):
     conn.execute("DELETE FROM uploads WHERE id = ?", (upload_id,))
     conn.commit()
     conn.close()
-    _invalidate_stats_cache()
+    _invalidate_all_caches()
     return {"status": "ok", "deleted_messages": msg_count}
 
 
@@ -810,7 +829,7 @@ async def delete_upload_embeddings(upload_id: str):
             logger.error("Chroma delete embeddings failed for upload %s: %s", upload_id, e)
             raise HTTPException(500, f"Failed to delete vectors from ChromaDB: {str(e)}")
 
-    _invalidate_stats_cache()
+    _invalidate_all_caches()
     return {"status": "ok", "deleted_embeddings": deleted_count}
 
 
@@ -929,33 +948,65 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
         embedded_count = 0
         if embedding_model_available() and texts_to_embed:
             yield f"data: Starting embedding {len(texts_to_embed)} messages with {EMBEDDING_MODELS[current_embedding_model]['label']}\n\n"
-            col       = active_collection()
-            loop      = asyncio.get_running_loop()
-            batch_num = 0
-            for i in range(0, len(texts_to_embed), _EMBED_BATCH_SIZE):
-                b_texts = texts_to_embed[i : i + _EMBED_BATCH_SIZE]
-                b_uuids = uuids_to_embed[i : i + _EMBED_BATCH_SIZE]
-                b_metas = metas_to_embed[i : i + _EMBED_BATCH_SIZE]
-                batch_num += 1
-                yield f": batch {batch_num}\n\n"
+            col  = active_collection()
+            loop = asyncio.get_running_loop()
+            sem  = asyncio.Semaphore(_EMBED_CONCURRENCY)
+            embed_errors: list[str] = []
+
+            # Fire all batches concurrently (same approach as _run_embed_job)
+            async def _upload_embed_batch(batch_num: int, b_texts, b_uuids, b_metas):
+                nonlocal embedded_count
+                async with sem:
+                    try:
+                        embeddings = await embed_texts_async(b_texts)
+                    except Exception as e:
+                        logger.warning("Embedding batch %d failed: %s", batch_num, e)
+                        embed_errors.append(f"batch {batch_num}: {type(e).__name__}: {e}")
+                        return
                 try:
-                    embeddings = await embed_texts_async(b_texts)
                     _e, _bt, _bu, _bm = embeddings, b_texts, b_uuids, b_metas
                     await loop.run_in_executor(
                         _chroma_executor,
                         lambda: col.add(embeddings=_e, documents=_bt, ids=_bu, metadatas=_bm),
                     )
                     embedded_count += len(b_texts)
-                    yield f"data: Embedded {embedded_count}/{len(texts_to_embed)} messages\n\n"
                 except Exception as e:
-                    logger.warning("Embedding batch %d failed: %s", batch_num, e)
-                    yield f"data: Error in batch {batch_num}: {str(e)}\n\n"
+                    logger.warning("ChromaDB upsert batch %d failed: %s", batch_num, e)
+                    embed_errors.append(f"batch {batch_num} upsert: {type(e).__name__}: {e}")
+
+            batch_coros = [
+                _upload_embed_batch(
+                    batch_num,
+                    texts_to_embed[i : i + _EMBED_BATCH_SIZE],
+                    uuids_to_embed[i : i + _EMBED_BATCH_SIZE],
+                    metas_to_embed[i : i + _EMBED_BATCH_SIZE],
+                )
+                for batch_num, i in enumerate(
+                    range(0, len(texts_to_embed), _EMBED_BATCH_SIZE), start=1
+                )
+            ]
+
+            # Run all concurrently in the background; stream progress while waiting
+            embed_task = asyncio.create_task(asyncio.gather(*batch_coros))
+            last_reported = -1
+            while not embed_task.done():
+                await asyncio.sleep(1)
+                if embedded_count != last_reported:
+                    yield f"data: Embedded {embedded_count}/{len(texts_to_embed)} messages\n\n"
+                    last_reported = embedded_count
+            await embed_task  # surface any unhandled exceptions
+
+            # Final progress line
+            if embedded_count != last_reported:
+                yield f"data: Embedded {embedded_count}/{len(texts_to_embed)} messages\n\n"
+            for err in embed_errors:
+                yield f"data: Error: {err}\n\n"
         elif not embedding_model_available():
             yield "data: Skipping embedding (no OpenAI API key configured)\n\n"
         else:
             yield "data: No messages to embed\n\n"
 
-        _invalidate_stats_cache()
+        _invalidate_all_caches()
         yield f"data: Completed: inserted {rows_inserted}, embedded {embedded_count}\n\n"
 
     return StreamingResponse(
