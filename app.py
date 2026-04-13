@@ -20,9 +20,7 @@ import re
 import sqlite3
 import traceback
 import uuid
-from xmlrpc import client
-
-import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
@@ -33,7 +31,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Load .env file if present (ignored in production where env vars are set directly)
@@ -87,9 +85,14 @@ EMBEDDING_MODELS: dict[str, dict] = {
 
 # ─── Runtime globals ─────────────────────────────────────────────────────────
 
-openai_client: Optional[OpenAI] = None
-chroma_collections: dict[str, object] = {}   # model_id → chromadb.Collection
+openai_client:       Optional[OpenAI]      = None   # sync  — chat completions
+async_openai_client: Optional[AsyncOpenAI] = None   # async — embeddings (faster)
+chroma_collections:  dict[str, object]     = {}     # model_id → chromadb.Collection
 current_embedding_model: str = "openai"
+
+# Dedicated thread-pool for ChromaDB blocking calls.
+# Kept separate so embedding concurrency never competes with ChromaDB I/O.
+_chroma_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chroma")
 
 # ─── Background embed job registry ───────────────────────────────────────────
 # job_id → {status, embedded, total, skipped, batch_errors, error, traceback}
@@ -251,29 +254,23 @@ def safe_str(val) -> str:
 
 # ─── Embedding helpers ───────────────────────────────────────────────────────
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed a list of texts using OpenAI text-embedding-3-small.
-
-    This is a synchronous/blocking call — always invoke it via
-    ``asyncio.get_event_loop().run_in_executor(None, embed_texts, batch)``
-    inside async code so it does not freeze the event loop.
-    """
-    if not openai_client:
+async def embed_texts_async(texts: list[str]) -> list[list[float]]:
+    """Embed texts using the async OpenAI client — no threads, pure async I/O."""
+    if not async_openai_client:
         raise HTTPException(400, "OpenAI API key not configured. Set it in Settings.")
-    response = openai_client.embeddings.create(
+    response = await async_openai_client.embeddings.create(
         model="text-embedding-3-small",
         input=[t[:8191] for t in texts],
     )
     return [e.embedding for e in response.data]
 
 
-# Batch size for each individual OpenAI embedding call.
-# OpenAI accepts up to 2048 inputs per request; 500 is a safe sweet-spot.
-_EMBED_BATCH_SIZE = int(os.environ.get("EMBED_BATCH_SIZE", "500"))
+# OpenAI accepts up to 2048 inputs per embedding request.
+# Using the maximum reduces round-trips by ~4× compared to batches of 500.
+_EMBED_BATCH_SIZE = int(os.environ.get("EMBED_BATCH_SIZE", "2048"))
 
 # How many embedding API calls to fire concurrently.
-# 10 concurrent × 500 msgs ≈ 5 000 messages in-flight at once.
-# Raise via EMBED_CONCURRENCY env-var if you are on a higher OpenAI rate-limit tier.
+# Raise via EMBED_CONCURRENCY env-var for higher OpenAI rate-limit tiers.
 _EMBED_CONCURRENCY = int(os.environ.get("EMBED_CONCURRENCY", "10"))
 
 
@@ -286,18 +283,19 @@ def active_collection():
 
 
 def embedding_model_available() -> bool:
-    return openai_client is not None
+    return async_openai_client is not None
 
 
 # ─── App lifecycle ───────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global openai_client, chroma_collections, current_embedding_model
+    global openai_client, async_openai_client, chroma_collections, current_embedding_model
 
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if api_key:
-        openai_client = OpenAI(api_key=api_key)
+        openai_client       = OpenAI(api_key=api_key)
+        async_openai_client = AsyncOpenAI(api_key=api_key)
 
     def _init_chroma():
         client = chromadb.PersistentClient(path=CHROMA_PATH)
@@ -339,6 +337,9 @@ async def lifespan(app: FastAPI):
 
     logger.info("Active embedding model: %s", current_embedding_model)
     yield
+    # Graceful shutdown — close async HTTP connection pool
+    if async_openai_client:
+        await async_openai_client.close()
 
 
 app = FastAPI(title="Discord Chat Search", lifespan=lifespan)
@@ -401,11 +402,15 @@ async def index(request: Request):
 
 @app.post("/api/set-api-key")
 async def set_api_key(body: dict):
-    global openai_client
+    global openai_client, async_openai_client
     key = body.get("api_key", "").strip()
     if not key:
         raise HTTPException(400, "api_key is required")
-    openai_client = OpenAI(api_key=key)
+    # Close old async client if present to release connection pool
+    if async_openai_client:
+        await async_openai_client.close()
+    openai_client       = OpenAI(api_key=key)
+    async_openai_client = AsyncOpenAI(api_key=key)
     # NOTE: the key is intentionally NOT written to os.environ to avoid
     # leaking it into subprocess environments or log aggregators.
     return {"status": "ok", "message": "API key saved for this session"}
@@ -541,25 +546,28 @@ async def _run_embed_job(job_id: str, upload_id: str, col, all_texts: list, all_
     """
     Background coroutine: embed messages and record progress in _embed_jobs.
 
-    Resumable — skips UUIDs already present in ChromaDB.
-    Fast     — fires _EMBED_CONCURRENCY OpenAI API calls concurrently while
-               serializing ChromaDB writes with a lock to avoid conflicts.
+    Speed:      AsyncOpenAI client — pure async I/O, no thread-pool overhead.
+                _EMBED_CONCURRENCY requests fire simultaneously via asyncio.gather.
+                Batch size = 2048 (OpenAI max) — fewest round-trips possible.
+    Resumable:  UUID presence check run concurrently across batches; already-done
+                messages are skipped so re-runs pick up where they left off.
     """
-    job  = _embed_jobs[job_id]
-    loop = asyncio.get_running_loop()
+    job = _embed_jobs[job_id]
 
     try:
-        # ── 1. Resumability: find already-embedded UUIDs ──────────────────
-        def _check_existing():
-            done: set[str] = set()
-            for i in range(0, len(all_uuids), 500):
-                result = col.get(ids=all_uuids[i : i + 500], include=[])
-                done.update(result.get("ids", []))
-            return done
+        # ── 1. Concurrent resumability check ─────────────────────────────
+        # Split UUID list into 500-item sub-batches and check all in parallel.
+        async def _check_batch(batch):
+            result = await asyncio.get_running_loop().run_in_executor(
+                _chroma_executor, lambda: col.get(ids=batch, include=[])
+            )
+            return set(result.get("ids", []))
 
-        already_done = await loop.run_in_executor(None, _check_existing)
+        check_batches = [all_uuids[i : i + 500] for i in range(0, len(all_uuids), 500)]
+        check_results = await asyncio.gather(*[_check_batch(b) for b in check_batches])
+        already_done  = set().union(*check_results) if check_results else set()
+
         job["skipped"] = len(already_done)
-
         todo = [
             (t, u, m)
             for t, u, m in zip(all_texts, all_uuids, all_metas)
@@ -573,15 +581,15 @@ async def _run_embed_job(job_id: str, upload_id: str, col, all_texts: list, all_
             return
 
         # ── 2. Concurrent embedding ───────────────────────────────────────
-        # Semaphore caps concurrent OpenAI API calls; lock serializes writes.
-        sem        = asyncio.Semaphore(_EMBED_CONCURRENCY)
-        write_lock = asyncio.Lock()
+        # Semaphore caps concurrent OpenAI API calls.
+        # No write_lock needed — ChromaDB/SQLite serialises writes internally.
+        sem = asyncio.Semaphore(_EMBED_CONCURRENCY)
 
         async def _process_batch(batch_num: int, b_texts, b_uuids, b_metas):
-            # OpenAI call — concurrent up to _EMBED_CONCURRENCY
+            # ① Embed — async, no threads
             async with sem:
                 try:
-                    embeddings = await loop.run_in_executor(None, embed_texts, b_texts)
+                    embeddings = await embed_texts_async(b_texts)
                 except Exception as e:
                     tb = traceback.format_exc()
                     logger.error("Job %s batch %d API error:\n%s", job_id, batch_num, tb)
@@ -592,31 +600,30 @@ async def _run_embed_job(job_id: str, upload_id: str, col, all_texts: list, all_
                     })
                     return
 
-            # ChromaDB upsert — serialized so writes don't race
-            async with write_lock:
-                try:
-                    _e, _bt, _bu, _bm = embeddings, b_texts, b_uuids, b_metas
-                    await loop.run_in_executor(
-                        None,
-                        lambda: col.upsert(embeddings=_e, documents=_bt, ids=_bu, metadatas=_bm),
-                    )
-                except Exception as e:
-                    tb = traceback.format_exc()
-                    logger.error("Job %s batch %d upsert error:\n%s", job_id, batch_num, tb)
-                    job["batch_errors"].append({
-                        "batch": batch_num,
-                        "error": f"{type(e).__name__}: {e}",
-                        "traceback": tb,
-                    })
-                    return
+            # ② Write to ChromaDB — blocking, use dedicated executor
+            try:
+                _e, _bt, _bu, _bm = embeddings, b_texts, b_uuids, b_metas
+                await asyncio.get_running_loop().run_in_executor(
+                    _chroma_executor,
+                    lambda: col.upsert(embeddings=_e, documents=_bt, ids=_bu, metadatas=_bm),
+                )
+            except Exception as e:
+                tb = traceback.format_exc()
+                logger.error("Job %s batch %d upsert error:\n%s", job_id, batch_num, tb)
+                job["batch_errors"].append({
+                    "batch": batch_num,
+                    "error": f"{type(e).__name__}: {e}",
+                    "traceback": tb,
+                })
+                return
 
-            job["embedded"]      += len(b_texts)
-            job["current_batch"]  = batch_num
+            job["embedded"]     += len(b_texts)
+            job["current_batch"] = batch_num
 
-        # Build and fire all batch coroutines at once
+        # Fire all batches at once — semaphore throttles OpenAI calls
         batch_coros = []
         for batch_num, i in enumerate(range(0, len(todo), _EMBED_BATCH_SIZE), start=1):
-            chunk  = todo[i : i + _EMBED_BATCH_SIZE]
+            chunk = todo[i : i + _EMBED_BATCH_SIZE]
             batch_coros.append(_process_batch(
                 batch_num,
                 [x[0] for x in chunk],
@@ -922,21 +929,21 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
         embedded_count = 0
         if embedding_model_available() and texts_to_embed:
             yield f"data: Starting embedding {len(texts_to_embed)} messages with {EMBEDDING_MODELS[current_embedding_model]['label']}\n\n"
-            col = active_collection()
-            _loop = asyncio.get_running_loop()
+            col       = active_collection()
+            loop      = asyncio.get_running_loop()
             batch_num = 0
             for i in range(0, len(texts_to_embed), _EMBED_BATCH_SIZE):
                 b_texts = texts_to_embed[i : i + _EMBED_BATCH_SIZE]
                 b_uuids = uuids_to_embed[i : i + _EMBED_BATCH_SIZE]
                 b_metas = metas_to_embed[i : i + _EMBED_BATCH_SIZE]
                 batch_num += 1
-                # SSE keepalive comment — resets proxy idle timer before the blocking call
                 yield f": batch {batch_num}\n\n"
                 try:
-                    embeddings = await _loop.run_in_executor(None, embed_texts, b_texts)
-                    await _loop.run_in_executor(
-                        None,
-                        lambda: col.add(embeddings=embeddings, documents=b_texts, ids=b_uuids, metadatas=b_metas),
+                    embeddings = await embed_texts_async(b_texts)
+                    _e, _bt, _bu, _bm = embeddings, b_texts, b_uuids, b_metas
+                    await loop.run_in_executor(
+                        _chroma_executor,
+                        lambda: col.add(embeddings=_e, documents=_bt, ids=_bu, metadatas=_bm),
                     )
                     embedded_count += len(b_texts)
                     yield f"data: Embedded {embedded_count}/{len(texts_to_embed)} messages\n\n"
@@ -1217,7 +1224,7 @@ async def search_semantic(
 
     has_filters = bool(username or date_from or date_to or (suno_team != "all") or uid_list or min_words)
     fetch_n = min(n_results * 4 if has_filters else n_results, total)
-    query_emb = embed_texts([query])[0]
+    query_emb = (await embed_texts_async([query]))[0]
 
     results = col.query(query_embeddings=[query_emb], n_results=fetch_n)
     ids = results["ids"][0]
@@ -1283,13 +1290,20 @@ async def chat_endpoint(request: Request):
 
     uid_list = _parse_upload_ids(upload_ids)
 
+    # Embed the query async before entering the sync helper (no sync client needed)
+    _chat_query_emb: list[float] | None = None
+    try:
+        _chat_query_emb = (await embed_texts_async([message]))[0]
+    except Exception:
+        pass  # semantic search will be skipped if embedding fails
+
     def _semantic_search() -> list[dict]:
         rows: list[dict] = []
         try:
             col = active_collection()
-            if col.count() == 0:
+            if col.count() == 0 or _chat_query_emb is None:
                 return rows
-            query_emb = embed_texts([message])[0]
+            query_emb = _chat_query_emb
             results = col.query(query_embeddings=[query_emb], n_results=12)
             ids = results.get("ids", [[]])[0]
             distances = results.get("distances", [[]])[0]
@@ -1736,10 +1750,7 @@ async def filter_semantic(body: dict):
     uuids      = list(id_to_uuid.values())
 
     # Embed the query
-    loop = asyncio.get_running_loop()
-    query_vec = await loop.run_in_executor(
-        None, lambda: embed_texts([embed_text])[0]
-    )
+    query_vec = (await embed_texts_async([embed_text]))[0]
 
     # ── Directly fetch stored embeddings by ID (avoids ChromaDB $in filter bugs) ──
     # col.get() is reliable for any list size; col.query() with $in can silently
