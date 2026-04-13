@@ -20,6 +20,7 @@ import re
 import sqlite3
 import traceback
 import uuid
+from xmlrpc import client
 
 import numpy as np
 from contextlib import asynccontextmanager
@@ -274,6 +275,8 @@ async def lifespan(app: FastAPI):
 
     def _init_chroma():
         client = chromadb.PersistentClient(path=CHROMA_PATH)
+        logger.info("Using CHROMA_PATH: %s", CHROMA_PATH)
+        logger.info("Existing collections: %s", [c.name for c in client.list_collections()])
         cols = {}
         for model_id, cfg in EMBEDDING_MODELS.items():
             try:
