@@ -91,6 +91,12 @@ openai_client: Optional[OpenAI] = None
 chroma_collections: dict[str, object] = {}   # model_id → chromadb.Collection
 current_embedding_model: str = "openai"
 
+# ─── Background embed job registry ───────────────────────────────────────────
+# job_id → {status, embedded, total, skipped, batch_errors, error, traceback}
+_embed_jobs: dict[str, dict] = {}
+# upload_id → job_id  (only while the job is running; cleared on finish)
+_active_embed: dict[str, str] = {}
+
 
 # ─── Database helpers ────────────────────────────────────────────────────────
 
@@ -470,13 +476,92 @@ async def list_uploads():
     return result
 
 
+async def _run_embed_job(job_id: str, upload_id: str, col, all_texts: list, all_uuids: list, all_metas: list):
+    """
+    Background coroutine: embed messages and record progress in _embed_jobs.
+
+    Resumable: checks ChromaDB for already-embedded UUIDs and skips them so a
+    re-triggered job continues from where it left off rather than starting over.
+    """
+    job  = _embed_jobs[job_id]
+    loop = asyncio.get_running_loop()
+    try:
+        # ── 1. Find already-embedded messages (resumability) ──────────────
+        def _check_existing():
+            done = set()
+            for i in range(0, len(all_uuids), 500):
+                batch = all_uuids[i : i + 500]
+                result = col.get(ids=batch, include=[])
+                done.update(result.get("ids", []))
+            return done
+
+        already_done = await loop.run_in_executor(None, _check_existing)
+        skipped = len(already_done)
+        job["skipped"] = skipped
+
+        # Filter to only what still needs embedding
+        todo = [(t, u, m) for t, u, m in zip(all_texts, all_uuids, all_metas) if u not in already_done]
+        job["total"] = len(todo)
+
+        if not todo:
+            job["status"] = "completed"
+            return
+
+        # ── 2. Embed in batches ───────────────────────────────────────────
+        batch_num = 0
+        for i in range(0, len(todo), _EMBED_BATCH_SIZE):
+            batch = todo[i : i + _EMBED_BATCH_SIZE]
+            b_texts = [x[0] for x in batch]
+            b_uuids = [x[1] for x in batch]
+            b_metas = [x[2] for x in batch]
+            batch_num += 1
+            job["current_batch"] = batch_num
+            try:
+                embeddings = await loop.run_in_executor(None, embed_texts, b_texts)
+                # Capture loop vars explicitly to avoid late-binding in lambda
+                _emb, _bt, _bu, _bm = embeddings, b_texts, b_uuids, b_metas
+                await loop.run_in_executor(
+                    None,
+                    lambda: col.upsert(embeddings=_emb, documents=_bt, ids=_bu, metadatas=_bm),
+                )
+                job["embedded"] += len(b_texts)
+            except Exception as e:
+                tb = traceback.format_exc()
+                logger.error("Embed job %s batch %d failed:\n%s", job_id, batch_num, tb)
+                job["batch_errors"].append({
+                    "batch": batch_num,
+                    "error": f"{type(e).__name__}: {e}",
+                    "traceback": tb,
+                })
+
+        job["status"] = "completed"
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error("Embed job %s crashed:\n%s", job_id, tb)
+        job["status"] = "failed"
+        job["error"]     = f"{type(e).__name__}: {e}"
+        job["traceback"] = tb
+    finally:
+        _active_embed.pop(upload_id, None)
+
+
 @app.post("/api/uploads/{upload_id}/reembed")
 async def reembed_upload(upload_id: str):
-    """Re-embed an existing upload with the currently active model (upsert — safe to re-run)."""
+    """
+    Start a background embed job for an existing upload.
+
+    Returns immediately with a job_id.  Poll GET /api/jobs/{job_id} for progress.
+    If a job is already running for this upload the existing job_id is returned.
+    Re-running after completion is safe — already-embedded messages are skipped.
+    """
+    # Return existing running job rather than starting a duplicate
+    existing_jid = _active_embed.get(upload_id)
+    if existing_jid and _embed_jobs.get(existing_jid, {}).get("status") == "running":
+        return {"job_id": existing_jid, "already_running": True}
+
     conn = get_db()
-    upload = conn.execute(
-        "SELECT * FROM uploads WHERE id = ?", (upload_id,)
-    ).fetchone()
+    upload = conn.execute("SELECT * FROM uploads WHERE id = ?", (upload_id,)).fetchone()
     if not upload:
         conn.close()
         raise HTTPException(404, "Upload not found")
@@ -487,70 +572,42 @@ async def reembed_upload(upload_id: str):
     ).fetchall()
     conn.close()
 
-    if not rows:
-        async def generate():
-            yield "data: No messages to embed\n\n"
-            yield "data: Completed\n\n"
-        return StreamingResponse(generate(), media_type="text/event-stream")
-
     if not embedding_model_available():
-        raise HTTPException(
-            400,
-            "OpenAI API key is required to re-embed. Set it in Settings first."
-        )
+        raise HTTPException(400, "OpenAI API key is required to re-embed. Set it in Settings first.")
 
-    texts = [r["content"] for r in rows]
+    texts = [r["content"]  for r in rows]
     uuids = [r["msg_uuid"] for r in rows]
     metas = [{"username": r["username"], "date": r["date"], "upload_id": upload_id} for r in rows]
 
-    col = active_collection()
+    col    = active_collection()
+    job_id = str(uuid.uuid4())
 
-    async def generate():
-        try:
-            loop = asyncio.get_running_loop()
-            yield f"data: Starting embedding {len(texts)} messages with {EMBEDDING_MODELS[current_embedding_model]['label']}\n\n"
-            embedded = 0
-            batch_num = 0
-            for i in range(0, len(texts), _EMBED_BATCH_SIZE):
-                b_texts = texts[i : i + _EMBED_BATCH_SIZE]
-                b_uuids = uuids[i : i + _EMBED_BATCH_SIZE]
-                b_metas = metas[i : i + _EMBED_BATCH_SIZE]
-                batch_num += 1
-                # SSE comment — ignored by the client but sends bytes to the proxy,
-                # resetting its idle-read timer before each blocking API call.
-                yield f": batch {batch_num}\n\n"
-                try:
-                    # Run the blocking OpenAI call in a thread so the event loop
-                    # (and SSE flush) is not frozen while waiting for the API.
-                    embeddings = await loop.run_in_executor(None, embed_texts, b_texts)
-                    await loop.run_in_executor(
-                        None,
-                        lambda: col.upsert(embeddings=embeddings, documents=b_texts, ids=b_uuids, metadatas=b_metas),
-                    )
-                    embedded += len(b_texts)
-                    yield f"data: Embedded {embedded}/{len(texts)} messages\n\n"
-                except Exception as e:
-                    tb = traceback.format_exc()
-                    logger.warning("Reembed batch %d failed:\n%s", batch_num, tb)
-                    # Encode newlines so they survive as a single SSE data line,
-                    # the client decodes them back before display.
-                    detail = f"{type(e).__name__}: {e}\n\n{tb}".replace("\n", "\\n")
-                    yield f"data: Error in batch {batch_num}: {detail}\n\n"
-            yield f"data: Completed: re-embedded {embedded} messages\n\n"
-        except Exception as e:
-            tb = traceback.format_exc()
-            logger.error("Reembed generator crashed:\n%s", tb)
-            detail = f"{type(e).__name__}: {e}\n\n{tb}".replace("\n", "\\n")
-            yield f"data: Error: {detail}\n\n"
+    _embed_jobs[job_id] = {
+        "status":        "running",
+        "upload_id":     upload_id,
+        "model":         EMBEDDING_MODELS[current_embedding_model]["label"],
+        "embedded":      0,
+        "total":         len(texts),   # will be updated after skip-check
+        "skipped":       0,
+        "current_batch": 0,
+        "batch_errors":  [],
+        "error":         None,
+        "traceback":     None,
+    }
+    _active_embed[upload_id] = job_id
 
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache",
-        },
-    )
+    asyncio.create_task(_run_embed_job(job_id, upload_id, col, texts, uuids, metas))
+
+    return {"job_id": job_id, "already_running": False, "total_messages": len(texts)}
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_job(job_id: str):
+    """Poll embed job progress."""
+    job = _embed_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
 
 
 @app.delete("/api/uploads/{upload_id}")

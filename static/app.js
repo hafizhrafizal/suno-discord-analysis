@@ -507,96 +507,122 @@ function uploadCard(u) {
     </div>`;
 }
 
+// Track active poll timers so clicking Re-embed twice doesn't spawn duplicates.
+const _reembedTimers = {};
+
 async function doReembed(uploadId, filename, btn) {
-  const safeId = uploadId.replace(/[^a-zA-Z0-9-]/g, '');
+  const safeId    = uploadId.replace(/[^a-zA-Z0-9-]/g, '');
   const progressEl = document.getElementById(`reembed-progress-${safeId}`);
   const fillEl     = document.getElementById(`reembed-fill-${safeId}`);
   const labelEl    = document.getElementById(`reembed-label-${safeId}`);
 
-  btn.disabled = true;
-  btn.textContent = 'Embedding…';
-  if (progressEl) {
-    progressEl.classList.remove('hidden');
-    fillEl.style.width = '0%';
-    fillEl.classList.remove('error');
-    labelEl.textContent = 'Starting…';
-  }
-
-  // Error detail panel lives inside the progress section of this card.
-  // We use a <pre> so long tracebacks are readable; create it once if absent.
+  // Ensure the inline error <pre> exists inside the progress section.
   let errEl = document.getElementById(`reembed-err-${safeId}`);
   if (!errEl && progressEl) {
     errEl = document.createElement('pre');
-    errEl.id = `reembed-err-${safeId}`;
-    errEl.className = 'hidden mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2 max-h-48 overflow-auto whitespace-pre-wrap break-all';
+    errEl.id        = `reembed-err-${safeId}`;
+    errEl.className = 'hidden mt-2 text-xs text-red-700 bg-red-50 border border-red-200 ' +
+                      'rounded-lg p-2 max-h-48 overflow-auto whitespace-pre-wrap break-all';
     progressEl.appendChild(errEl);
   }
 
-  function showReembedError(msg) {
-    // Decode escaped newlines the server sends inside a single SSE data line.
-    const decoded = msg.replace(/\\n/g, '\n');
+  function setProgress(pct, label) {
+    if (fillEl) { fillEl.style.width = pct + '%'; fillEl.classList.remove('error'); }
+    if (labelEl) labelEl.textContent = label;
+    if (progressEl) progressEl.classList.remove('hidden');
+  }
+  function setError(msg) {
     if (fillEl) fillEl.classList.add('error');
     if (labelEl) labelEl.textContent = 'Failed — see details below';
-    if (errEl) {
-      errEl.textContent = decoded;
-      errEl.classList.remove('hidden');
-    }
+    if (errEl)  { errEl.textContent = msg; errEl.classList.remove('hidden'); }
+    if (progressEl) progressEl.classList.remove('hidden');
+  }
+  function finish() {
+    btn.disabled    = false;
+    btn.textContent = 'Re-embed';
+    clearInterval(_reembedTimers[uploadId]);
+    delete _reembedTimers[uploadId];
   }
 
+  // Don't start a second timer if one is already polling.
+  if (_reembedTimers[uploadId]) return;
+
+  btn.disabled    = true;
+  btn.textContent = 'Starting…';
+  if (errEl) errEl.classList.add('hidden');
+  setProgress(0, 'Submitting job…');
+
+  // ── 1. POST to start the background job ──────────────────────────────────
+  let jobId;
   try {
-    const response = await fetch(`/api/uploads/${enc(uploadId)}/reembed`, { method: 'POST' });
-    if (!response.ok) {
-      let detail = `HTTP ${response.status}`;
-      try { const d = await response.json(); detail = d.detail || detail; } catch {}
-      throw new Error(detail);
+    const res = await fetch(`/api/uploads/${enc(uploadId)}/reembed`, { method: 'POST' });
+    let d;
+    try { d = await res.json(); } catch {
+      throw new Error(`Server returned non-JSON (HTTP ${res.status})`);
     }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6).trim();
-
-          // Parse "Embedded X/Y messages" for progress %
-          const m = data.match(/Embedded\s+(\d+)\/(\d+)/i);
-          if (m && fillEl) {
-            const pct = Math.round((parseInt(m[1]) / parseInt(m[2])) * 100);
-            fillEl.style.width = pct + '%';
-            fillEl.parentElement.setAttribute('aria-valuenow', pct);
-            if (labelEl) labelEl.textContent = `Embedding… ${pct}% (${m[1]}/${m[2]} messages)`;
-          } else if (!data.startsWith('Error') && !data.startsWith('Completed')) {
-            if (labelEl) labelEl.textContent = data;
-          }
-
-          if (data.startsWith('Completed:')) {
-            if (fillEl) fillEl.style.width = '100%';
-            if (labelEl) labelEl.textContent = data;
-            btn.textContent = 'Re-embed';
-            setTimeout(() => {
-              if (progressEl) progressEl.classList.add('hidden');
-              if (errEl) errEl.classList.add('hidden');
-            }, 3000);
-            refreshUploads();
-            loadStats();
-          } else if (data.startsWith('Error')) {
-            showReembedError(data);
-          }
-        }
-      }
+    if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+    jobId = d.job_id;
+    if (d.already_running) {
+      setProgress(0, 'Job already running — resuming progress display…');
+    } else {
+      const skip = d.skipped || 0;
+      setProgress(0, skip > 0
+        ? `Resuming: ${skip.toLocaleString()} already embedded, checking remainder…`
+        : `Job started — ${(d.total_messages || 0).toLocaleString()} messages queued`);
     }
   } catch (e) {
-    showReembedError('Network / fetch error:\n' + e.message);
-    btn.textContent = 'Re-embed';
-  } finally {
-    btn.disabled = false;
+    setError(`Failed to start job:\n${e.message}`);
+    finish();
+    return;
   }
+
+  // ── 2. Poll GET /api/jobs/{jobId} every 1.5 s ────────────────────────────
+  btn.textContent = 'Embedding…';
+
+  _reembedTimers[uploadId] = setInterval(async () => {
+    let job;
+    try {
+      const r = await fetch(`/api/jobs/${enc(jobId)}`);
+      if (!r.ok) return;   // transient — keep polling
+      job = await r.json();
+    } catch {
+      return;              // network blip — keep polling
+    }
+
+    const embedded = job.embedded  || 0;
+    const total    = job.total     || 0;
+    const skipped  = job.skipped   || 0;
+    const pct      = total > 0 ? Math.round(embedded / total * 100) : (job.status === 'completed' ? 100 : 0);
+
+    if (job.status === 'running') {
+      const batchInfo = job.current_batch ? ` (batch ${job.current_batch})` : '';
+      const skipNote  = skipped > 0 ? ` · ${skipped.toLocaleString()} skipped` : '';
+      setProgress(pct, `Embedding… ${pct}% — ${embedded.toLocaleString()}/${total.toLocaleString()} new messages${skipNote}${batchInfo}`);
+
+    } else if (job.status === 'completed') {
+      const skipNote = skipped > 0 ? `, ${skipped.toLocaleString()} already embedded` : '';
+      const errNote  = job.batch_errors.length > 0 ? ` (${job.batch_errors.length} batch error(s) — see below)` : '';
+      setProgress(100, `Done — ${embedded.toLocaleString()} embedded${skipNote}${errNote}`);
+
+      if (job.batch_errors.length > 0) {
+        const detail = job.batch_errors.map(be =>
+          `Batch ${be.batch}:\n${be.error}\n\n${be.traceback}`
+        ).join('\n─────────────────\n');
+        setError(detail);
+      }
+      refreshUploads();
+      loadStats();
+      setTimeout(() => {
+        if (progressEl && !errEl?.textContent) progressEl.classList.add('hidden');
+      }, 4000);
+      finish();
+
+    } else if (job.status === 'failed') {
+      const detail = `${job.error || 'Unknown error'}\n\n${job.traceback || ''}`.trim();
+      setError(detail);
+      finish();
+    }
+  }, 1500);
 }
 
 /* ── Delete with confirm modal ── */
