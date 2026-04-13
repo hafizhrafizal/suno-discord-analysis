@@ -494,37 +494,43 @@ async def reembed_upload(upload_id: str):
     metas = [{"username": r["username"], "date": r["date"], "upload_id": upload_id} for r in rows]
 
     col = active_collection()
-    loop = asyncio.get_event_loop()
 
     async def generate():
-        yield f"data: Starting embedding {len(texts)} messages with {EMBEDDING_MODELS[current_embedding_model]['label']}\n\n"
-        embedded = 0
-        batch_num = 0
-        for i in range(0, len(texts), _EMBED_BATCH_SIZE):
-            b_texts = texts[i : i + _EMBED_BATCH_SIZE]
-            b_uuids = uuids[i : i + _EMBED_BATCH_SIZE]
-            b_metas = metas[i : i + _EMBED_BATCH_SIZE]
-            batch_num += 1
-            # SSE comment — ignored by the client but sends bytes to the proxy,
-            # resetting its idle-read timer before each blocking API call.
-            yield f": batch {batch_num}\n\n"
-            try:
-                # Run the blocking OpenAI call in a thread so the event loop
-                # (and SSE flush) is not frozen while waiting for the API.
-                embeddings = await loop.run_in_executor(None, embed_texts, b_texts)
-                col.upsert(embeddings=embeddings, documents=b_texts, ids=b_uuids, metadatas=b_metas)
-                embedded += len(b_texts)
-                yield f"data: Embedded {embedded}/{len(texts)} messages\n\n"
-            except Exception as e:
-                logger.warning("Reembed batch %d failed: %s", batch_num, e)
-                yield f"data: Error in batch {batch_num}: {str(e)}\n\n"
-        yield f"data: Completed: re-embedded {embedded} messages\n\n"
+        try:
+            loop = asyncio.get_running_loop()
+            yield f"data: Starting embedding {len(texts)} messages with {EMBEDDING_MODELS[current_embedding_model]['label']}\n\n"
+            embedded = 0
+            batch_num = 0
+            for i in range(0, len(texts), _EMBED_BATCH_SIZE):
+                b_texts = texts[i : i + _EMBED_BATCH_SIZE]
+                b_uuids = uuids[i : i + _EMBED_BATCH_SIZE]
+                b_metas = metas[i : i + _EMBED_BATCH_SIZE]
+                batch_num += 1
+                # SSE comment — ignored by the client but sends bytes to the proxy,
+                # resetting its idle-read timer before each blocking API call.
+                yield f": batch {batch_num}\n\n"
+                try:
+                    # Run the blocking OpenAI call in a thread so the event loop
+                    # (and SSE flush) is not frozen while waiting for the API.
+                    embeddings = await loop.run_in_executor(None, embed_texts, b_texts)
+                    await loop.run_in_executor(
+                        None,
+                        lambda: col.upsert(embeddings=embeddings, documents=b_texts, ids=b_uuids, metadatas=b_metas),
+                    )
+                    embedded += len(b_texts)
+                    yield f"data: Embedded {embedded}/{len(texts)} messages\n\n"
+                except Exception as e:
+                    logger.warning("Reembed batch %d failed: %s", batch_num, e)
+                    yield f"data: Error in batch {batch_num}: {str(e)}\n\n"
+            yield f"data: Completed: re-embedded {embedded} messages\n\n"
+        except Exception as e:
+            logger.error("Reembed generator crashed: %s", e)
+            yield f"data: Error: {str(e)}\n\n"
 
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
         headers={
-            # Tell proxies/CDNs not to buffer this response.
             "X-Accel-Buffering": "no",
             "Cache-Control": "no-cache",
         },
@@ -605,27 +611,31 @@ async def delete_upload_embeddings(upload_id: str):
     if not upload:
         conn.close()
         raise HTTPException(404, "Upload not found")
-
-    uuid_rows = conn.execute(
-        "SELECT msg_uuid FROM messages WHERE upload_id = ?", (upload_id,)
-    ).fetchall()
     conn.close()
-    msg_uuids = [r["msg_uuid"] for r in uuid_rows]
 
+    loop = asyncio.get_running_loop()
     deleted_count = 0
-    if msg_uuids:
-        for col in chroma_collections.values():
-            try:
-                batch_size = 500
-                for i in range(0, len(msg_uuids), batch_size):
-                    batch_uuids = msg_uuids[i : i + batch_size]
-                    existing = col.get(ids=batch_uuids, include=["documents"])
-                    if existing["ids"]:
-                        col.delete(ids=existing["ids"])
-                        deleted_count += len(existing["ids"])
-            except Exception as e:
-                logger.error("Chroma delete embeddings failed for upload %s: %s", upload_id, e)
-                raise HTTPException(500, f"Failed to delete vectors from ChromaDB: {str(e)}")
+
+    for col in chroma_collections.values():
+        try:
+            # Use the stored upload_id metadata to delete in one shot.
+            # Run in executor so the blocking ChromaDB call doesn't freeze
+            # the event loop (and trigger a proxy timeout).
+            def _delete_by_upload():
+                # Peek at current count so we can report how many were removed.
+                before = col.get(
+                    where={"upload_id": {"$eq": upload_id}},
+                    include=[],          # IDs only — fastest
+                ).get("ids", [])
+                if before:
+                    col.delete(where={"upload_id": {"$eq": upload_id}})
+                return len(before)
+
+            n = await loop.run_in_executor(None, _delete_by_upload)
+            deleted_count += n
+        except Exception as e:
+            logger.error("Chroma delete embeddings failed for upload %s: %s", upload_id, e)
+            raise HTTPException(500, f"Failed to delete vectors from ChromaDB: {str(e)}")
 
     return {"status": "ok", "deleted_embeddings": deleted_count}
 
@@ -680,8 +690,6 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
 
     upload_id = str(uuid.uuid4())
     now = datetime.now().isoformat()
-
-    _loop = asyncio.get_event_loop()
 
     async def generate():
         yield f"data: Processing {len(df)} rows from {file.filename}\n\n"
@@ -748,6 +756,7 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
         if embedding_model_available() and texts_to_embed:
             yield f"data: Starting embedding {len(texts_to_embed)} messages with {EMBEDDING_MODELS[current_embedding_model]['label']}\n\n"
             col = active_collection()
+            _loop = asyncio.get_running_loop()
             batch_num = 0
             for i in range(0, len(texts_to_embed), _EMBED_BATCH_SIZE):
                 b_texts = texts_to_embed[i : i + _EMBED_BATCH_SIZE]
@@ -758,11 +767,9 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
                 yield f": batch {batch_num}\n\n"
                 try:
                     embeddings = await _loop.run_in_executor(None, embed_texts, b_texts)
-                    col.add(
-                        embeddings=embeddings,
-                        documents=b_texts,
-                        ids=b_uuids,
-                        metadatas=b_metas,
+                    await _loop.run_in_executor(
+                        None,
+                        lambda: col.add(embeddings=embeddings, documents=b_texts, ids=b_uuids, metadatas=b_metas),
                     )
                     embedded_count += len(b_texts)
                     yield f"data: Embedded {embedded_count}/{len(texts_to_embed)} messages\n\n"

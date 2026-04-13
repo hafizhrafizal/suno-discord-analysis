@@ -631,8 +631,13 @@ document.getElementById('confirm-ok').onclick = async () => {
 
   try {
     const res = await fetch(url, { method: 'DELETE' });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.detail);
+    let d;
+    try {
+      d = await res.json();
+    } catch {
+      throw new Error(`Server returned a non-JSON response (HTTP ${res.status}). The operation may have timed out — check server logs.`);
+    }
+    if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
 
     progressFill.style.width = '100%';
     progressEl.querySelector('#delete-progress-label').textContent = 'Done';
