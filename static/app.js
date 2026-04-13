@@ -444,8 +444,14 @@ function renderUploadsTable() {
   container.querySelectorAll('.reembed-btn').forEach(btn => {
     btn.addEventListener('click', () => doReembed(btn.dataset.id, btn.dataset.name, btn));
   });
-  container.querySelectorAll('.delete-btn').forEach(btn => {
-    btn.addEventListener('click', () => confirmDelete(btn.dataset.id, btn.dataset.name));
+  container.querySelectorAll('.delete-db-btn').forEach(btn => {
+    btn.addEventListener('click', () => confirmDelete(btn.dataset.id, btn.dataset.name, 'sqlite'));
+  });
+  container.querySelectorAll('.delete-embed-btn').forEach(btn => {
+    btn.addEventListener('click', () => confirmDelete(btn.dataset.id, btn.dataset.name, 'embeddings'));
+  });
+  container.querySelectorAll('.delete-all-btn').forEach(btn => {
+    btn.addEventListener('click', () => confirmDelete(btn.dataset.id, btn.dataset.name, 'full'));
   });
 }
 
@@ -456,6 +462,8 @@ function uploadCard(u) {
       ? `<span class="embed-badge embed-badge-yes">${labels[mid] || mid}</span>`
       : `<span class="embed-badge embed-badge-no">${labels[mid] || mid} —</span>`;
   }).join('');
+
+  const safeId = u.id.replace(/[^a-zA-Z0-9-]/g, '');
 
   return `
     <div class="border border-gray-200 rounded-xl p-4 hover:border-indigo-200 transition-colors">
@@ -474,18 +482,46 @@ function uploadCard(u) {
                   data-id="${u.id}" data-name="${esc(u.filename)}">
             Re-embed
           </button>
-          <button class="delete-btn action-btn-danger"
+          <button class="delete-embed-btn action-btn-warning"
                   data-id="${u.id}" data-name="${esc(u.filename)}">
-            Delete
+            Delete Embedding
+          </button>
+          <button class="delete-db-btn action-btn-danger"
+                  data-id="${u.id}" data-name="${esc(u.filename)}">
+            Delete DB
+          </button>
+          <button class="delete-all-btn action-btn-danger"
+                  data-id="${u.id}" data-name="${esc(u.filename)}"
+                  style="border-color:#dc2626;background:#fff1f2;font-weight:700;">
+            Delete All
           </button>
         </div>
+      </div>
+      <!-- Inline re-embed progress -->
+      <div id="reembed-progress-${safeId}" class="hidden mt-3">
+        <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="reembed-fill-${safeId}" class="progress-fill"></div>
+        </div>
+        <p id="reembed-label-${safeId}" class="mt-1 text-xs text-gray-600" aria-live="polite">Starting…</p>
       </div>
     </div>`;
 }
 
 async function doReembed(uploadId, filename, btn) {
+  const safeId = uploadId.replace(/[^a-zA-Z0-9-]/g, '');
+  const progressEl = document.getElementById(`reembed-progress-${safeId}`);
+  const fillEl     = document.getElementById(`reembed-fill-${safeId}`);
+  const labelEl    = document.getElementById(`reembed-label-${safeId}`);
+
   btn.disabled = true;
-  btn.textContent = 'Starting…';
+  btn.textContent = 'Embedding…';
+  if (progressEl) {
+    progressEl.classList.remove('hidden');
+    fillEl.style.width = '0%';
+    fillEl.classList.remove('error');
+    labelEl.textContent = 'Starting…';
+  }
+
   try {
     const response = await fetch(`/api/uploads/${enc(uploadId)}/reembed`, { method: 'POST' });
     if (!response.ok) {
@@ -504,14 +540,27 @@ async function doReembed(uploadId, filename, btn) {
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           const data = line.slice(6).trim();
+          if (labelEl) labelEl.textContent = data;
+
+          // Parse "Embedded X/Y messages" for progress %
+          const m = data.match(/Embedded\s+(\d+)\/(\d+)/i);
+          if (m && fillEl) {
+            const pct = Math.round((parseInt(m[1]) / parseInt(m[2])) * 100);
+            fillEl.style.width = pct + '%';
+            fillEl.parentElement.setAttribute('aria-valuenow', pct);
+          }
+
           if (data.startsWith('Completed:')) {
+            if (fillEl) fillEl.style.width = '100%';
             btn.textContent = 'Re-embed';
+            setTimeout(() => {
+              if (progressEl) progressEl.classList.add('hidden');
+            }, 2000);
             refreshUploads();
             loadStats();
           } else if (data.startsWith('Error')) {
+            if (fillEl) fillEl.classList.add('error');
             showErrorPopup(data);
-          } else {
-            btn.textContent = data;
           }
         }
       }
@@ -519,25 +568,45 @@ async function doReembed(uploadId, filename, btn) {
   } catch (e) {
     showErrorPopup('Re-embed failed: ' + e.message);
     btn.textContent = 'Re-embed';
+    if (fillEl) fillEl.classList.add('error');
+    if (labelEl) labelEl.textContent = 'Failed — ' + e.message;
+    setTimeout(() => { if (progressEl) progressEl.classList.add('hidden'); }, 3000);
   } finally {
     btn.disabled = false;
   }
 }
 
 /* ── Delete with confirm modal ── */
-let _pendingDeleteId = null;
-function confirmDelete(uploadId, filename) {
-  _pendingDeleteId = uploadId;
-  document.getElementById('confirm-msg').textContent =
-    `Delete "${filename}" and all its messages? This cannot be undone.`;
+let _pendingDeleteId   = null;
+let _pendingDeleteType = null; // 'full' | 'sqlite' | 'embeddings'
+
+function confirmDelete(uploadId, filename, type) {
+  _pendingDeleteId   = uploadId;
+  _pendingDeleteType = type;
+
+  const titleEl = document.getElementById('confirm-modal-title');
+  const msgEl   = document.getElementById('confirm-msg');
+
+  if (type === 'sqlite') {
+    titleEl.textContent = 'Delete from Database';
+    msgEl.textContent   = `Remove "${filename}" messages from SQLite only. Embeddings will be preserved. This cannot be undone.`;
+  } else if (type === 'embeddings') {
+    titleEl.textContent = 'Delete Embeddings';
+    msgEl.textContent   = `Remove all vector embeddings for "${filename}" from the vector store. Messages in the database will be preserved.`;
+  } else {
+    titleEl.textContent = 'Delete Upload';
+    msgEl.textContent   = `Delete "${filename}" and all its messages from both the database and the vector store? This cannot be undone.`;
+  }
   document.getElementById('confirm-modal').classList.remove('hidden');
 }
+
 document.getElementById('confirm-cancel').onclick = () => {
   document.getElementById('confirm-modal').classList.add('hidden');
   document.getElementById('delete-progress').classList.add('hidden');
   document.getElementById('delete-status').classList.add('hidden');
   document.getElementById('confirm-ok').disabled = false;
-  _pendingDeleteId = null;
+  _pendingDeleteId   = null;
+  _pendingDeleteType = null;
 };
 document.getElementById('confirm-ok').onclick = async () => {
   if (!_pendingDeleteId) return;
@@ -545,24 +614,42 @@ document.getElementById('confirm-ok').onclick = async () => {
   const statusEl = document.getElementById('delete-status');
   const progressEl = document.getElementById('delete-progress');
   const progressFill = document.getElementById('delete-progress-fill');
-  
+
   btn.disabled = true;
   progressEl.classList.remove('hidden');
   statusEl.classList.add('hidden');
   progressFill.classList.remove('error');
-  
+
+  let url;
+  if (_pendingDeleteType === 'sqlite') {
+    url = `/api/uploads/${enc(_pendingDeleteId)}/sqlite`;
+  } else if (_pendingDeleteType === 'embeddings') {
+    url = `/api/uploads/${enc(_pendingDeleteId)}/embeddings`;
+  } else {
+    url = `/api/uploads/${enc(_pendingDeleteId)}`;
+  }
+
   try {
-    const res = await fetch(`/api/uploads/${enc(_pendingDeleteId)}`, {method:'DELETE'});
+    const res = await fetch(url, { method: 'DELETE' });
     const d = await res.json();
     if (!res.ok) throw new Error(d.detail);
-    
+
     progressFill.style.width = '100%';
-    progressEl.querySelector('#delete-progress-label').textContent = 'Deleted successfully';
-    statusEl.textContent = `Removed ${d.deleted_messages} messages and all embeddings.`;
+    progressEl.querySelector('#delete-progress-label').textContent = 'Done';
+
+    if (_pendingDeleteType === 'sqlite') {
+      statusEl.textContent = `Removed ${d.deleted_messages} messages from the database. Embeddings untouched.`;
+    } else if (_pendingDeleteType === 'embeddings') {
+      statusEl.textContent = `Removed ${d.deleted_embeddings} embeddings from the vector store. Database untouched.`;
+    } else {
+      statusEl.textContent = `Removed ${d.deleted_messages} messages and all embeddings.`;
+    }
     statusEl.className = 'bg-green-50 text-green-700 border border-green-200 rounded-lg p-3 text-sm';
     statusEl.classList.remove('hidden');
-    
-    selectedUploadIds.delete(_pendingDeleteId);
+
+    if (_pendingDeleteType !== 'embeddings') {
+      selectedUploadIds.delete(_pendingDeleteId);
+    }
     setTimeout(() => {
       document.getElementById('confirm-modal').classList.add('hidden');
       refreshUploads();
@@ -570,13 +657,14 @@ document.getElementById('confirm-ok').onclick = async () => {
   } catch (e) {
     progressFill.style.width = '100%';
     progressFill.classList.add('error');
-    progressEl.querySelector('#delete-progress-label').textContent = 'Deletion failed';
+    progressEl.querySelector('#delete-progress-label').textContent = 'Failed';
     statusEl.textContent = `Error: ${e.message}`;
     statusEl.className = 'bg-red-50 text-red-700 border border-red-200 rounded-lg p-3 text-sm';
     statusEl.classList.remove('hidden');
   }
   btn.disabled = false;
-  _pendingDeleteId = null;
+  _pendingDeleteId   = null;
+  _pendingDeleteType = null;
 };
 
 document.getElementById('refresh-data-btn').onclick = refreshUploads;
