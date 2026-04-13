@@ -4,11 +4,12 @@ Production: uvicorn app:app --host 0.0.0.0 --port 8000 --workers 2
 Development: uvicorn app:app --reload --port 8000
 
 Environment variables (set in .env or shell):
-  DB_PATH          Path to the SQLite database file   (default: discord_data.db)
-  CHROMA_PATH      Path to the ChromaDB directory     (default: ./chroma_db)
-  MAX_UPLOAD_MB    Maximum CSV upload size in MB       (default: 50)
-  API_SECRET       Bearer token to protect all /api/* endpoints (optional)
-  OPENAI_API_KEY   Pre-load an OpenAI key at startup   (optional)
+  DB_PATH          Path to the SQLite database file              (default: discord_data.db)
+  QDRANT_URL       Qdrant cluster HTTP endpoint                  (required)
+  QDRANT_API_KEY   Qdrant API key                                (required)
+  MAX_UPLOAD_MB    Maximum CSV upload size in MB                 (default: 50)
+  API_SECRET       Bearer token to protect all /api/* endpoints  (optional)
+  OPENAI_API_KEY   Pre-load an OpenAI key at startup             (optional)
 """
 
 import asyncio
@@ -25,8 +26,19 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
-import chromadb
+import numpy as np
 import pandas as pd
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    FilterSelector,
+    MatchValue,
+    PointIdsList,
+    PointStruct,
+    VectorParams,
+)
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -46,7 +58,8 @@ logger = logging.getLogger(__name__)
 
 # ─── Configuration from environment ─────────────────────────────────────────
 DB_PATH          = os.environ.get("DB_PATH", "discord_data.db")
-CHROMA_PATH      = os.environ.get("CHROMA_PATH", "./chroma_db")
+QDRANT_URL       = os.environ.get("QDRANT_URL", "").strip()
+QDRANT_API_KEY   = os.environ.get("QDRANT_API_KEY", "").strip()
 MAX_UPLOAD_MB    = int(os.environ.get("MAX_UPLOAD_MB", "50"))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1_048_576
 # Optional bearer token — if set, all /api/* requests require Authorization: Bearer <token>
@@ -71,7 +84,7 @@ _VALID_CHAT_MODELS: frozenset[str] = frozenset({
 })
 
 # ─── Embedding model registry ────────────────────────────────────────────────
-# Each model gets its own ChromaDB collection so vectors are never mixed.
+# Each model gets its own Qdrant collection so vectors are never mixed.
 
 EMBEDDING_MODELS: dict[str, dict] = {
     "openai": {
@@ -83,16 +96,120 @@ EMBEDDING_MODELS: dict[str, dict] = {
     },
 }
 
+# ─── Qdrant collection wrapper ───────────────────────────────────────────────
+
+class QdrantCollectionWrapper:
+    """
+    Thin wrapper around QdrantClient that exposes the same interface as the
+    ChromaDB Collection object used throughout this app.  Keeps all call-site
+    changes minimal — only this class and the initialisation code need to know
+    about the Qdrant SDK.
+    """
+
+    def __init__(self, client: QdrantClient, collection_name: str):
+        self._client = client
+        self._name   = collection_name
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _where_to_filter(where: dict) -> Filter:
+        """Convert a ChromaDB-style where dict to a Qdrant Filter."""
+        conditions = []
+        for key, condition in where.items():
+            value = condition.get("$eq", condition) if isinstance(condition, dict) else condition
+            conditions.append(FieldCondition(key=key, match=MatchValue(value=value)))
+        return Filter(must=conditions)
+
+    # ── public API ───────────────────────────────────────────────────────────
+
+    def count(self) -> int:
+        try:
+            return self._client.count(self._name).count
+        except Exception:
+            return 0
+
+    def get(self, ids=None, where=None, limit=None, include=None):
+        """Return dict with 'ids' (and optionally 'embeddings') keys."""
+        include       = include or []
+        want_vectors  = "embeddings" in include
+
+        if ids is not None:
+            records = self._client.retrieve(
+                self._name,
+                ids=ids,
+                with_payload=False,
+                with_vectors=want_vectors,
+            )
+            result = {"ids": [str(r.id) for r in records]}
+            if want_vectors:
+                result["embeddings"] = [r.vector for r in records]
+            return result
+
+        if where is not None:
+            qdrant_filter  = self._where_to_filter(where)
+            effective_limit = limit if limit else 10_000
+            points, _      = self._client.scroll(
+                self._name,
+                scroll_filter=qdrant_filter,
+                limit=effective_limit,
+                with_payload=False,
+                with_vectors=want_vectors,
+            )
+            result = {"ids": [str(p.id) for p in points]}
+            if want_vectors:
+                result["embeddings"] = [p.vector for p in points]
+            return result
+
+        return {"ids": []}
+
+    def upsert(self, embeddings, documents, ids, metadatas):
+        points = [
+            PointStruct(
+                id=pid,
+                vector=emb,
+                payload={**meta, "document": doc},
+            )
+            for emb, doc, pid, meta in zip(embeddings, documents, ids, metadatas)
+        ]
+        self._client.upsert(self._name, points=points)
+
+    def query(self, query_embeddings, n_results):
+        """Return ChromaDB-compatible dict with nested ids/distances lists."""
+        hits = self._client.search(
+            self._name,
+            query_vector=query_embeddings[0],
+            limit=n_results,
+            with_payload=False,
+            with_vectors=False,
+        )
+        ids       = [str(h.id) for h in hits]
+        distances = [round(1.0 - h.score, 6) for h in hits]   # score→distance
+        return {"ids": [ids], "distances": [distances]}
+
+    def delete(self, ids=None, where=None):
+        if ids is not None:
+            self._client.delete(
+                self._name,
+                points_selector=PointIdsList(points=ids),
+            )
+        elif where is not None:
+            self._client.delete(
+                self._name,
+                points_selector=FilterSelector(filter=self._where_to_filter(where)),
+            )
+
+
 # ─── Runtime globals ─────────────────────────────────────────────────────────
 
 openai_client:       Optional[OpenAI]      = None   # sync  — chat completions
 async_openai_client: Optional[AsyncOpenAI] = None   # async — embeddings (faster)
-chroma_collections:  dict[str, object]     = {}     # model_id → chromadb.Collection
+chroma_collections:  dict[str, object]     = {}     # model_id → QdrantCollectionWrapper
 current_embedding_model: str = "openai"
 
-# Dedicated thread-pool for ChromaDB blocking calls.
-# Kept separate so embedding concurrency never competes with ChromaDB I/O.
-_chroma_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chroma")
+# Dedicated thread-pool for Qdrant blocking calls.
+# Kept separate so embedding concurrency never competes with vector-store I/O.
+_chroma_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="qdrant")
 
 # ─── Background embed job registry ───────────────────────────────────────────
 # job_id → {status, embedded, total, skipped, batch_errors, error, traceback}
@@ -101,7 +218,7 @@ _embed_jobs: dict[str, dict] = {}
 _active_embed: dict[str, str] = {}
 
 # ─── Stats / uploads cache ───────────────────────────────────────────────────
-# ChromaDB .count() and per-upload presence checks are slow; cache both.
+# Qdrant .count() and per-upload presence checks add latency; cache both.
 import time as _time
 _stats_cache: dict | None   = None
 _stats_cache_ts: float      = 0.0
@@ -200,7 +317,7 @@ def init_db():
         );
 
         -- Tracks which uploads have been embedded per model.
-        -- Replaces O(n_uploads × n_docs) ChromaDB scans with O(1) SQLite index lookups.
+        -- Replaces O(n_uploads × n_docs) Qdrant scans with O(1) SQLite index lookups.
         CREATE TABLE IF NOT EXISTS embedded_uploads (
             upload_id   TEXT NOT NULL REFERENCES uploads(id) ON DELETE CASCADE,
             model_id    TEXT NOT NULL,
@@ -332,8 +449,8 @@ _EMBED_BATCH_SIZE = int(os.environ.get("EMBED_BATCH_SIZE", "2048"))
 _EMBED_CONCURRENCY = int(os.environ.get("EMBED_CONCURRENCY", "10"))
 
 
-def active_collection():
-    """Return the ChromaDB collection for the currently selected model."""
+def active_collection() -> QdrantCollectionWrapper:
+    """Return the Qdrant collection wrapper for the currently selected model."""
     col = chroma_collections.get(current_embedding_model)
     if col is None:
         raise HTTPException(503, "Vector store not ready — restart the server and try again.")
@@ -355,35 +472,43 @@ async def lifespan(app: FastAPI):
         openai_client       = OpenAI(api_key=api_key)
         async_openai_client = AsyncOpenAI(api_key=api_key)
 
-    def _init_chroma():
-        client = chromadb.PersistentClient(path=CHROMA_PATH)
-        logger.info("Using CHROMA_PATH: %s", CHROMA_PATH)
+    def _init_qdrant():
+        if not QDRANT_URL:
+            logger.error("QDRANT_URL is not set — vector store will be unavailable.")
+            return {}
+        client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY or None, timeout=60)
+        logger.info("Connecting to Qdrant: %s", QDRANT_URL)
         try:
-            existing = client.list_collections()
-            logger.info("Existing collections: %s", [c.name for c in existing])
+            existing = {c.name for c in client.get_collections().collections}
+            logger.info("Existing Qdrant collections: %s", existing)
         except Exception as e:
-            logger.error("Failed to list collections: %s", e)
+            logger.error("Failed to list Qdrant collections: %s", e)
+            existing = set()
 
         cols = {}
         for model_id, cfg in EMBEDDING_MODELS.items():
+            cname = cfg["collection"]
             try:
-                cols[model_id] = client.get_or_create_collection(
-                    name=cfg["collection"],
-                    metadata={"hnsw:space": "cosine"},
-                )
+                if cname not in existing:
+                    client.create_collection(
+                        collection_name=cname,
+                        vectors_config=VectorParams(size=cfg["dims"], distance=Distance.COSINE),
+                    )
+                    logger.info("Created Qdrant collection: %s", cname)
+                cols[model_id] = QdrantCollectionWrapper(client, cname)
             except Exception as exc:
-                logger.error("Failed to init ChromaDB collection %s: %s", cfg["collection"], exc)
+                logger.error("Failed to init Qdrant collection %s: %s", cname, exc)
         return cols
 
     loop = asyncio.get_running_loop()
     try:
-        chroma_cols, _ = await asyncio.gather(
-            loop.run_in_executor(None, _init_chroma),
+        qdrant_cols, _ = await asyncio.gather(
+            loop.run_in_executor(None, _init_qdrant),
             loop.run_in_executor(None, init_db),
         )
-        chroma_collections = chroma_cols
+        chroma_collections = qdrant_cols
     except Exception as exc:
-        logger.error("Startup error (ChromaDB or DB init failed): %s", exc)
+        logger.error("Startup error (Qdrant or DB init failed): %s", exc)
         chroma_collections = {}
 
     # Restore saved model preference
@@ -393,7 +518,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("Active embedding model: %s", current_embedding_model)
 
-    # ── One-time migration: populate embedded_uploads from ChromaDB ──────────
+    # ── One-time migration: populate embedded_uploads from Qdrant ────────────
     # Runs only when the tracking table is empty (first startup after upgrade).
     # Uses limit=1 per upload_id — tiny memory footprint, safe in production.
     # Runs in a background thread so it never blocks server startup or requests.
@@ -620,7 +745,7 @@ async def list_uploads():
         _uploads_cache_ts = now
         return uploads
 
-    # Pure SQLite lookup — O(1) indexed query, no ChromaDB scan.
+    # Pure SQLite lookup — O(1) indexed query, no Qdrant scan.
     embedded_state = await loop.run_in_executor(None, get_all_embedded_uploads)
     mid_list = list(EMBEDDING_MODELS)
 
@@ -644,6 +769,7 @@ async def _run_embed_job(job_id: str, upload_id: str, col, all_texts: list, all_
                 Batch size = 2048 (OpenAI max) — fewest round-trips possible.
     Resumable:  UUID presence check run concurrently across batches; already-done
                 messages are skipped so re-runs pick up where they left off.
+    Storage:    Vectors are written to Qdrant Cloud via QdrantCollectionWrapper.
     """
     job = _embed_jobs[job_id]
 
@@ -651,7 +777,7 @@ async def _run_embed_job(job_id: str, upload_id: str, col, all_texts: list, all_
         # ── 1. Concurrent resumability check ─────────────────────────────
         # Split UUID list into 500-item sub-batches and check all in parallel.
         # Use a semaphore matching _chroma_executor capacity so we don't flood
-        # its queue (which would later starve the upsert phase).
+        # the Qdrant connection pool (which would later starve the upsert phase).
         job["phase"] = "checking"
         check_sem     = asyncio.Semaphore(4)
         check_batches = [all_uuids[i : i + 500] for i in range(0, len(all_uuids), 500)]
@@ -686,7 +812,7 @@ async def _run_embed_job(job_id: str, upload_id: str, col, all_texts: list, all_
 
         # ── 2. Concurrent embedding ───────────────────────────────────────
         # Semaphore caps concurrent OpenAI API calls.
-        # No write_lock needed — ChromaDB/SQLite serialises writes internally.
+        # No write_lock needed — Qdrant/SQLite serialise writes internally.
         sem = asyncio.Semaphore(_EMBED_CONCURRENCY)
 
         async def _process_batch(batch_num: int, b_texts, b_uuids, b_metas):
@@ -704,7 +830,7 @@ async def _run_embed_job(job_id: str, upload_id: str, col, all_texts: list, all_
                     })
                     return
 
-            # ② Write to ChromaDB — blocking, use dedicated executor
+            # ② Write to Qdrant — blocking, use dedicated executor
             try:
                 _e, _bt, _bu, _bm = embeddings, b_texts, b_uuids, b_metas
                 await asyncio.get_running_loop().run_in_executor(
@@ -818,7 +944,7 @@ async def get_job(job_id: str):
 
 @app.delete("/api/uploads/{upload_id}")
 async def delete_upload(upload_id: str):
-    """Delete an upload and all its messages from SQLite and every ChromaDB collection."""
+    """Delete an upload and all its messages from SQLite and every Qdrant collection."""
     conn = get_db()
     upload = conn.execute(
         "SELECT * FROM uploads WHERE id = ?", (upload_id,)
@@ -833,20 +959,20 @@ async def delete_upload(upload_id: str):
     ).fetchall()
     msg_uuids = [r["msg_uuid"] for r in uuid_rows]
 
-    # Remove from every ChromaDB collection
+    # Remove from every Qdrant collection
     if msg_uuids:
         for col in chroma_collections.values():
             try:
-                # Batch delete to avoid "too many SQL variables" error
+                # Batch deletes to avoid oversized requests
                 batch_size = 500
                 for i in range(0, len(msg_uuids), batch_size):
                     batch_uuids = msg_uuids[i : i + batch_size]
-                    existing = col.get(ids=batch_uuids, include=["documents"])
+                    existing = col.get(ids=batch_uuids, include=[])
                     if existing["ids"]:
                         col.delete(ids=existing["ids"])
             except Exception as e:
-                logger.error("Chroma delete failed for upload %s: %s", upload_id, e)
-                raise HTTPException(500, f"Failed to delete vectors from ChromaDB: {str(e)}")
+                logger.error("Qdrant delete failed for upload %s: %s", upload_id, e)
+                raise HTTPException(500, f"Failed to delete vectors from Qdrant: {str(e)}")
 
     # Remove from SQLite (embedded_uploads cascade-deletes via FK)
     conn.execute("DELETE FROM messages WHERE upload_id = ?", (upload_id,))
@@ -882,7 +1008,7 @@ async def delete_upload_sqlite(upload_id: str):
 
 @app.delete("/api/uploads/{upload_id}/embeddings")
 async def delete_upload_embeddings(upload_id: str):
-    """Delete embeddings for an upload from every ChromaDB collection — SQLite untouched."""
+    """Delete embeddings for an upload from every Qdrant collection — SQLite untouched."""
     conn = get_db()
     upload = conn.execute(
         "SELECT * FROM uploads WHERE id = ?", (upload_id,)
@@ -898,7 +1024,7 @@ async def delete_upload_embeddings(upload_id: str):
     for col in chroma_collections.values():
         try:
             # Use the stored upload_id metadata to delete in one shot.
-            # Run in executor so the blocking ChromaDB call doesn't freeze
+            # Run in executor so the blocking Qdrant call doesn't freeze
             # the event loop (and trigger a proxy timeout).
             def _delete_by_upload():
                 # Peek at current count so we can report how many were removed.
@@ -913,8 +1039,8 @@ async def delete_upload_embeddings(upload_id: str):
             n = await loop.run_in_executor(None, _delete_by_upload)
             deleted_count += n
         except Exception as e:
-            logger.error("Chroma delete embeddings failed for upload %s: %s", upload_id, e)
-            raise HTTPException(500, f"Failed to delete vectors from ChromaDB: {str(e)}")
+            logger.error("Qdrant delete embeddings failed for upload %s: %s", upload_id, e)
+            raise HTTPException(500, f"Failed to delete vectors from Qdrant: {str(e)}")
 
     # Remove embedding records from SQLite tracking table
     unmark_upload_embedded(upload_id)  # all models
@@ -1057,7 +1183,7 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
                     )
                     embedded_count += len(b_texts)
                 except Exception as e:
-                    logger.warning("ChromaDB write batch %d failed: %s", batch_num, e)
+                    logger.warning("Qdrant write batch %d failed: %s", batch_num, e)
 
             # Build all batch coroutines upfront
             all_batches = [
@@ -1884,9 +2010,9 @@ async def filter_semantic(body: dict):
     # Embed the query
     query_vec = (await embed_texts_async([embed_text]))[0]
 
-    # ── Directly fetch stored embeddings by ID (avoids ChromaDB $in filter bugs) ──
-    # col.get() is reliable for any list size; col.query() with $in can silently
-    # drop results when the candidate list is large.
+    # ── Directly fetch stored embeddings by ID ──────────────────────────────
+    # col.get() is reliable for any list size; using vector search with an ID
+    # filter can drop results when the candidate list is large.
     stored = col.get(ids=uuids, include=["embeddings"])
     stored_ids  = stored.get("ids") or []
     stored_embs = stored.get("embeddings")
