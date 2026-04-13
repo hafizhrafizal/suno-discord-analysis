@@ -595,9 +595,17 @@ async function doReembed(uploadId, filename, btn) {
     const pct      = total > 0 ? Math.round(embedded / total * 100) : (job.status === 'completed' ? 100 : 0);
 
     if (job.status === 'running') {
-      const batchInfo = job.current_batch ? ` (batch ${job.current_batch})` : '';
-      const skipNote  = skipped > 0 ? ` · ${skipped.toLocaleString()} skipped` : '';
-      setProgress(pct, `Embedding… ${pct}% — ${embedded.toLocaleString()}/${total.toLocaleString()} new messages${skipNote}${batchInfo}`);
+      if (job.phase === 'checking') {
+        // During the skip-check phase: show how many are already embedded (grows over time)
+        const checkLabel = skipped > 0
+          ? `Checking… ${skipped.toLocaleString()} already embedded so far`
+          : 'Checking which messages are already embedded…';
+        setProgress(0, checkLabel);
+      } else {
+        const batchInfo = job.current_batch ? ` (batch ${job.current_batch})` : '';
+        const skipNote  = skipped > 0 ? ` · ${skipped.toLocaleString()} skipped` : '';
+        setProgress(pct, `Embedding… ${pct}% — ${embedded.toLocaleString()}/${total.toLocaleString()} new messages${skipNote}${batchInfo}`);
+      }
 
     } else if (job.status === 'completed') {
       const skipNote = skipped > 0 ? `, ${skipped.toLocaleString()} already embedded` : '';
