@@ -6,8 +6,9 @@ uvicorn[standard]>=0.30.0,<1.0.0
 pandas>=2.2.0,<3.0.0
 numpy>=1.26.0,<3.0.0
 
-# Vector database
-qdrant-client>=1.9.0
+# Vector databases — install the one(s) you need based on VECTOR_DB in .env
+qdrant-client>=1.9.0      # required for VECTOR_DB=qdrant
+chromadb>=0.5.0           # required for VECTOR_DB=chroma_persistent or chroma_http
 
 # OpenAI client
 openai>=1.40.0,<2.0.0
