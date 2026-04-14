@@ -47,11 +47,11 @@ class QdrantCollectionWrapper:
 
     def __init__(self, client: QdrantClient, collection_name: str):
         self._client = client
-        self._name   = collection_name
+        self._name = collection_name
 
     @staticmethod
     def _where_to_filter(where: dict) -> Filter:
-        """Convert a ChromaDB-style where dict to a Qdrant Filter."""
+        """Convert a Chroma-style where dict to a Qdrant Filter."""
         conditions = []
         for key, condition in where.items():
             value = condition.get("$eq", condition) if isinstance(condition, dict) else condition
@@ -60,20 +60,24 @@ class QdrantCollectionWrapper:
 
     def count(self) -> int:
         try:
-            return self._client.count(self._name).count
+            return self._client.count(collection_name=self._name).count
         except Exception:
             return 0
 
     def get(self, ids=None, where=None, limit=None, include=None):
-        """Return dict with 'ids' (and optionally 'embeddings') keys."""
-        include      = include or []
+        """
+        Return a Chroma-like dict with keys such as:
+        - ids
+        - embeddings (optional)
+        """
+        include = include or []
         want_vectors = "embeddings" in include
 
         if ids is not None:
             records = self._client.retrieve(
-                self._name,
+                collection_name=self._name,
                 ids=ids,
-                with_payload=False,
+                with_payload=True,
                 with_vectors=want_vectors,
             )
             result = {"ids": [str(r.id) for r in records]}
@@ -82,13 +86,13 @@ class QdrantCollectionWrapper:
             return result
 
         if where is not None:
-            qdrant_filter   = self._where_to_filter(where)
-            effective_limit = limit if limit else 10_000
-            points, _       = self._client.scroll(
-                self._name,
-                scroll_filter=qdrant_filter,
+            qfilter = self._where_to_filter(where)
+            effective_limit = limit if limit is not None else 10_000
+            points, _ = self._client.scroll(
+                collection_name=self._name,
+                scroll_filter=qfilter,
                 limit=effective_limit,
-                with_payload=False,
+                with_payload=True,
                 with_vectors=want_vectors,
             )
             result = {"ids": [str(p.id) for p in points]}
@@ -96,44 +100,67 @@ class QdrantCollectionWrapper:
                 result["embeddings"] = [p.vector for p in points]
             return result
 
-        return {"ids": []}
+        # fallback: return first N points if requested without filters
+        effective_limit = limit if limit is not None else 10_000
+        points, _ = self._client.scroll(
+            collection_name=self._name,
+            limit=effective_limit,
+            with_payload=True,
+            with_vectors=want_vectors,
+        )
+        result = {"ids": [str(p.id) for p in points]}
+        if want_vectors:
+            result["embeddings"] = [p.vector for p in points]
+        return result
 
     def upsert(self, embeddings, documents, ids, metadatas):
-        points = [
-            PointStruct(
-                id=pid,
-                vector=emb,
-                payload={**meta, "document": doc},
+        points = []
+        for emb, doc, pid, meta in zip(embeddings, documents, ids, metadatas):
+            payload = dict(meta or {})
+            payload["document"] = doc
+            points.append(
+                PointStruct(
+                    id=str(pid),
+                    vector=emb,
+                    payload=payload,
+                )
             )
-            for emb, doc, pid, meta in zip(embeddings, documents, ids, metadatas)
-        ]
-        self._client.upsert(self._name, points=points)
+
+        self._client.upsert(
+            collection_name=self._name,
+            points=points,
+            wait=True,
+        )
 
     def query(self, query_embeddings, n_results):
-        """Return dict with nested ids/distances lists (ChromaDB-compatible)."""
-        hits      = self._client.search(
-            self._name,
+        """
+        Return a Chroma-compatible shape:
+        {"ids": [[...]], "distances": [[...]]}
+        """
+        hits = self._client.search(
+            collection_name=self._name,
             query_vector=query_embeddings[0],
             limit=n_results,
             with_payload=False,
             with_vectors=False,
         )
-        ids       = [str(h.id) for h in hits]
-        distances = [round(1.0 - h.score, 6) for h in hits]
+        ids = [str(h.id) for h in hits]
+        distances = [round(1.0 - float(h.score), 6) for h in hits]
         return {"ids": [ids], "distances": [distances]}
 
     def delete(self, ids=None, where=None):
         if ids is not None:
             self._client.delete(
-                self._name,
-                points_selector=PointIdsList(points=ids),
+                collection_name=self._name,
+                points_selector=PointIdsList(points=[str(i) for i in ids]),
+                wait=True,
             )
         elif where is not None:
             self._client.delete(
-                self._name,
+                collection_name=self._name,
                 points_selector=FilterSelector(filter=self._where_to_filter(where)),
+                wait=True,
             )
-
 
 # ── ChromaDB wrapper (persistent + HTTP share the same Collection API) ────────
 
@@ -184,8 +211,14 @@ def _init_qdrant() -> dict:
     if not QDRANT_URL:
         logger.error("QDRANT_URL is not set — set it in .env to use the Qdrant backend.")
         return {}
-    client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY or None, timeout=60)
-    logger.info("Vector backend: Qdrant  (%s)", QDRANT_URL)
+
+    try:
+        client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY or None, timeout=60)
+        logger.info("Vector backend: Qdrant (%s)", QDRANT_URL)
+    except Exception as exc:
+        logger.error("Failed to connect to Qdrant: %s", exc)
+        return {}
+
     try:
         existing = {c.name for c in client.get_collections().collections}
         logger.info("Existing Qdrant collections: %s", existing)
@@ -200,12 +233,17 @@ def _init_qdrant() -> dict:
             if cname not in existing:
                 client.create_collection(
                     collection_name=cname,
-                    vectors_config=VectorParams(size=cfg["dims"], distance=Distance.COSINE),
+                    vectors_config=VectorParams(
+                        size=cfg["dims"],
+                        distance=Distance.COSINE,
+                    ),
                 )
                 logger.info("Created Qdrant collection: %s", cname)
+
             cols[model_id] = QdrantCollectionWrapper(client, cname)
         except Exception as exc:
             logger.error("Failed to init Qdrant collection %s: %s", cname, exc)
+
     return cols
 
 
