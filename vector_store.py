@@ -136,14 +136,28 @@ class QdrantCollectionWrapper:
         """
         Return a Chroma-compatible shape:
         {"ids": [[...]], "distances": [[...]]}
+
+        Supports both qdrant-client ≥ 1.7 (query_points) and older (search).
         """
-        hits = self._client.search(
-            collection_name=self._name,
-            query_vector=query_embeddings[0],
-            limit=n_results,
-            with_payload=False,
-            with_vectors=False,
-        )
+        if hasattr(self._client, "query_points"):
+            # qdrant-client >= 1.7 — query_points returns QueryResponse with .points
+            result = self._client.query_points(
+                collection_name=self._name,
+                query=query_embeddings[0],
+                limit=n_results,
+                with_payload=False,
+                with_vectors=False,
+            )
+            hits = result.points
+        else:
+            # qdrant-client < 1.7 — search returns List[ScoredPoint] directly
+            hits = self._client.search(
+                collection_name=self._name,
+                query_vector=query_embeddings[0],
+                limit=n_results,
+                with_payload=False,
+                with_vectors=False,
+            )
         ids = [str(h.id) for h in hits]
         distances = [round(1.0 - float(h.score), 6) for h in hits]
         return {"ids": [ids], "distances": [distances]}
