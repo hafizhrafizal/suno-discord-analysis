@@ -26,6 +26,13 @@ def active_collection():
     """Return the vector-store wrapper for the currently selected model."""
     col = state.vector_collections.get(state.current_embedding_model)
     if col is None:
+        logger.error(
+            "active_collection: no collection for model '%s'. "
+            "vector_collections keys: %s  VECTOR_DB=%s",
+            state.current_embedding_model,
+            list(state.vector_collections.keys()),
+            __import__("config").VECTOR_DB,
+        )
         raise HTTPException(503, "Vector store not ready — restart the server and try again.")
     return col
 

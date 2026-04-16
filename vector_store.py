@@ -229,8 +229,12 @@ def _init_qdrant() -> dict:
     cols: dict = {}
     for model_id, cfg in EMBEDDING_MODELS.items():
         cname = cfg["collection"]
-        try:
-            if cname not in existing:
+        if cname not in existing:
+            # Collection may not exist yet — try to create it.
+            # If it already exists (e.g. get_collections() failed transiently and
+            # returned an empty set), the create call will fail; that is fine —
+            # we still wrap the existing collection below.
+            try:
                 client.create_collection(
                     collection_name=cname,
                     vectors_config=VectorParams(
@@ -239,10 +243,25 @@ def _init_qdrant() -> dict:
                     ),
                 )
                 logger.info("Created Qdrant collection: %s", cname)
+            except Exception as exc:
+                logger.warning(
+                    "Could not create Qdrant collection %s (%s) — "
+                    "assuming it already exists and continuing.",
+                    cname, exc,
+                )
 
-            cols[model_id] = QdrantCollectionWrapper(client, cname)
+        # Always wrap the collection — even if create_collection() failed above,
+        # the collection likely exists from a previous run or migration.
+        try:
+            wrapper = QdrantCollectionWrapper(client, cname)
+            n = wrapper.count()
+            cols[model_id] = wrapper
+            logger.info(
+                "Registered Qdrant collection: %s → model '%s'  (%d vectors)",
+                cname, model_id, n,
+            )
         except Exception as exc:
-            logger.error("Failed to init Qdrant collection %s: %s", cname, exc)
+            logger.error("Failed to wrap Qdrant collection %s: %s", cname, exc)
 
     return cols
 
