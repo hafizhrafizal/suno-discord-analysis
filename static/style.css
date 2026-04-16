@@ -374,3 +374,26 @@ mark {
 .markdown-body td     { border: 1px solid #d1d5db; padding: 0.4rem 0.65rem; text-align: left; }
 /* #111827 on #f1f5f9 → 17.1:1 ✓ */
 .markdown-body th     { background: #f1f5f9; font-weight: 700; color: #111827; }
+
+/* ── Process / pipeline log entries ────────────────────────────────────── */
+.log-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+.log-entry:nth-child(odd) { background: #f8fafc; }
+.log-icon { font-size: 0.85rem; flex-shrink: 0; }
+.log-label { font-weight: 700; white-space: nowrap; min-width: 9rem; }
+.log-msg   { color: #4b5563; }
+
+.log-step-filter   .log-label { color: #1d4ed8; }
+.log-step-retrieval .log-label { color: #7c3aed; }
+.log-step-dedup    .log-label { color: #0891b2; }
+.log-step-cluster  .log-label { color: #059669; }
+.log-step-sample   .log-label { color: #d97706; }
+.log-step-llm      .log-label { color: #dc2626; }
+.log-step-fallback .log-label { color: #9ca3af; }
