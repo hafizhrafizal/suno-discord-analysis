@@ -309,6 +309,9 @@ async def chat_endpoint(request: Request):
         rows: list = []
         try:
             col = active_collection()
+            if col is None:
+                logger.warning("/api/chat semantic retrieval: no active vector collection")
+                return rows
             if col.count() == 0 or _chat_query_emb is None:
                 return rows
             results   = col.query(query_embeddings=[_chat_query_emb], n_results=12)
@@ -338,13 +341,13 @@ async def chat_endpoint(request: Request):
                 row["_score"] = score
                 rows.append(row)
         except Exception as exc:
-            logger.warning("/api/chat semantic retrieval error: %s", exc)
+            logger.error("/api/chat semantic retrieval error: %s", exc, exc_info=True)
         return rows
 
     import asyncio
     loop = asyncio.get_running_loop()
     semantic_rows, keyword_rows = await asyncio.gather(
-        loop.run_in_executor(None, _semantic_search),
+        loop.run_in_executor(state.vector_executor, _semantic_search),
         keyword_search(keyword=message, upload_ids=upload_ids, limit=10),
     )
 
@@ -491,67 +494,74 @@ async def summarize_endpoint(request: Request):
     _log_vector_ok: bool = False       # True when vector retrieval ran successfully
 
     if query_embedding is not None:
-        try:
-            col = active_collection()
-            _log_total_in_store = col.count()
+        import asyncio as _asyncio
+        _sum_loop = _asyncio.get_running_loop()
 
-            if _log_total_in_store > 0:
-                # Overfetch from the vector store so the post-filter intersection
-                # yields enough candidates.  We fetch 3× the target, capped at 800
-                # or total collection size.
-                _log_overfetch_n = min(
+        def _vector_retrieval_sync() -> tuple:
+            """Run all blocking vector-store calls in a thread (safe for Qdrant HTTP)."""
+            try:
+                col = active_collection()
+                if col is None:
+                    logger.warning("summarize: no active vector collection")
+                    return 0, 0, [], [], False
+                total = col.count()
+                if total == 0:
+                    return total, 0, [], [], True
+                overfetch = min(
                     max(n_filtered * 3, _SUMMARY_CANDIDATE_TARGET * 3),
-                    min(_log_total_in_store, 800),
+                    min(total, 800),
                 )
                 results = col.query(
-                    query_embeddings=[query_embedding], n_results=_log_overfetch_n
+                    query_embeddings=[query_embedding], n_results=overfetch
                 )
                 result_ids   = results.get("ids",      [[]])[0]
                 result_dists = results.get("distances", [[]])[0]
 
-                # Intersect vector results with the metadata-filtered UUID set
                 scored: list = []
                 for uid, dist in zip(result_ids, result_dists):
                     if uid in filtered_map:
                         score = round(1.0 - float(dist), 4) if dist is not None else 0.0
                         scored.append((score, uid))
-
-                # Sort by semantic score descending, keep top CANDIDATE_TARGET
                 scored.sort(key=lambda x: -x[0])
                 top_uuids = [uid for _, uid in scored[:_SUMMARY_CANDIDATE_TARGET]]
 
+                rows_out: list = []
+                embs_out: list = []
                 if top_uuids:
-                    # Fetch stored embeddings for the candidate UUIDs.
-                    # Reuses existing vectors — no re-embedding needed.
                     emb_result = col.get(ids=top_uuids, include=["embeddings"])
                     emb_ids    = emb_result.get("ids", [])
                     emb_vecs   = emb_result.get("embeddings", [])
-
-                    # Build uid → vector map (get() order may differ from request)
                     emb_map: dict = {
                         eid: evec
                         for eid, evec in zip(emb_ids, emb_vecs)
                         if evec is not None
                     }
-
-                    # Build score lookup for annotation
                     score_map: dict = {uid: s for s, uid in scored}
-
                     for uid in top_uuids:
                         if uid in emb_map and uid in filtered_map:
                             row = dict(filtered_map[uid])
                             row["_score"] = score_map.get(uid)
-                            candidate_rows.append(row)
-                            candidate_embs_raw.append(emb_map[uid])
+                            rows_out.append(row)
+                            embs_out.append(emb_map[uid])
 
-                _log_vector_ok = True
-                logger.info(
-                    "summarize: filtered=%d  overfetch=%d  candidates=%d",
-                    n_filtered, _log_overfetch_n, len(candidate_rows),
-                )
+                return total, overfetch, rows_out, embs_out, True
+            except Exception as exc:
+                logger.error("summarize: vector retrieval error (%s) — using fallback", exc, exc_info=True)
+                return 0, 0, [], [], False
 
-        except Exception as exc:
-            logger.warning("summarize: vector retrieval error (%s) — using fallback", exc)
+        (
+            _log_total_in_store,
+            _log_overfetch_n,
+            candidate_rows,
+            candidate_embs_raw,
+            _log_vector_ok,
+        ) = await _sum_loop.run_in_executor(state.vector_executor, _vector_retrieval_sync)
+
+        if _log_vector_ok:
+            logger.info(
+                "summarize: filtered=%d  overfetch=%d  candidates=%d",
+                n_filtered, _log_overfetch_n, len(candidate_rows),
+            )
 
     # ── Steps 3-6: Dedup → Cluster → Sample → Assemble ───────────────────────
     # If we got a meaningful candidate set, run the full pipeline.
@@ -794,14 +804,22 @@ async def summarize_followup_endpoint(request: Request):
     candidate_embs_raw: list = []
 
     if query_embedding is not None:
-        try:
-            col = active_collection()
-            total_in_store = col.count()
+        import asyncio as _asyncio
+        _fu_loop = _asyncio.get_running_loop()
 
-            if total_in_store > 0:
+        def _fu_vector_retrieval_sync() -> tuple:
+            """Run all blocking vector-store calls in a thread (safe for Qdrant HTTP)."""
+            try:
+                col = active_collection()
+                if col is None:
+                    logger.warning("summarize/followup: no active vector collection")
+                    return 0, 0, [], []
+                total = col.count()
+                if total == 0:
+                    return total, 0, [], []
                 overfetch_n = min(
                     max(n_filtered * 3, _FOLLOWUP_CANDIDATE_TARGET * 3),
-                    min(total_in_store, 600),
+                    min(total, 600),
                 )
                 results      = col.query(
                     query_embeddings=[query_embedding], n_results=overfetch_n
@@ -817,6 +835,8 @@ async def summarize_followup_endpoint(request: Request):
                 scored.sort(key=lambda x: -x[0])
                 top_uuids = [uid for _, uid in scored[:_FOLLOWUP_CANDIDATE_TARGET]]
 
+                rows_out: list = []
+                embs_out: list = []
                 if top_uuids:
                     emb_result = col.get(ids=top_uuids, include=["embeddings"])
                     emb_map: dict = {
@@ -831,15 +851,22 @@ async def summarize_followup_endpoint(request: Request):
                         if uid in emb_map and uid in filtered_map:
                             row = dict(filtered_map[uid])
                             row["_score"] = score_map.get(uid)
-                            candidate_rows.append(row)
-                            candidate_embs_raw.append(emb_map[uid])
+                            rows_out.append(row)
+                            embs_out.append(emb_map[uid])
 
-                logger.info(
-                    "summarize/followup: filtered=%d  overfetch=%d  candidates=%d",
-                    n_filtered, overfetch_n, len(candidate_rows),
-                )
-        except Exception as exc:
-            logger.warning("summarize/followup: vector retrieval error (%s)", exc)
+                return total, overfetch_n, rows_out, embs_out
+            except Exception as exc:
+                logger.error("summarize/followup: vector retrieval error (%s)", exc, exc_info=True)
+                return 0, 0, [], []
+
+        _fu_total, _fu_overfetch, candidate_rows, candidate_embs_raw = \
+            await _fu_loop.run_in_executor(state.vector_executor, _fu_vector_retrieval_sync)
+
+        if _fu_total > 0:
+            logger.info(
+                "summarize/followup: filtered=%d  overfetch=%d  candidates=%d",
+                n_filtered, _fu_overfetch, len(candidate_rows),
+            )
 
     # ── Steps 3-6: Dedup → Cluster → Sample → Assemble ────────────────────────
     # Use max_evidence=40 for follow-up: tight, focused evidence beats breadth.
