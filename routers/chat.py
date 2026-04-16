@@ -492,6 +492,7 @@ async def summarize_endpoint(request: Request):
     _log_total_in_store: int = 0
     _log_overfetch_n: int = 0
     _log_vector_ok: bool = False       # True when vector retrieval ran successfully
+    _log_vector_err: str = ""          # non-empty when retrieval failed
 
     if query_embedding is not None:
         import asyncio as _asyncio
@@ -501,12 +502,9 @@ async def summarize_endpoint(request: Request):
             """Run all blocking vector-store calls in a thread (safe for Qdrant HTTP)."""
             try:
                 col = active_collection()
-                if col is None:
-                    logger.warning("summarize: no active vector collection")
-                    return 0, 0, [], [], False
                 total = col.count()
                 if total == 0:
-                    return total, 0, [], [], True
+                    return total, 0, [], [], True, ""
                 overfetch = min(
                     max(n_filtered * 3, _SUMMARY_CANDIDATE_TARGET * 3),
                     min(total, 800),
@@ -544,10 +542,11 @@ async def summarize_endpoint(request: Request):
                             rows_out.append(row)
                             embs_out.append(emb_map[uid])
 
-                return total, overfetch, rows_out, embs_out, True
+                return total, overfetch, rows_out, embs_out, True, ""
             except Exception as exc:
-                logger.error("summarize: vector retrieval error (%s) — using fallback", exc, exc_info=True)
-                return 0, 0, [], [], False
+                err_msg = f"{type(exc).__name__}: {exc}"
+                logger.error("summarize: vector retrieval error (%s) — using fallback", err_msg, exc_info=True)
+                return 0, 0, [], [], False, err_msg
 
         (
             _log_total_in_store,
@@ -555,6 +554,7 @@ async def summarize_endpoint(request: Request):
             candidate_rows,
             candidate_embs_raw,
             _log_vector_ok,
+            _log_vector_err,
         ) = await _sum_loop.run_in_executor(state.vector_executor, _vector_retrieval_sync)
 
         if _log_vector_ok:
@@ -647,7 +647,11 @@ Do NOT output plain paragraphs. Every section must use the Markdown elements abo
     elif not _log_vector_ok:
         pipeline_log.append({
             "type": "log", "step": "fallback", "label": "Vector fallback",
-            "msg": "Embedding unavailable — using all filtered messages",
+            "msg": (
+                f"Vector retrieval failed ({_log_vector_err}) — using all filtered messages"
+                if _log_vector_err else
+                "Embedding unavailable — using all filtered messages"
+            ),
         })
     elif _log_total_in_store == 0:
         pipeline_log.append({
