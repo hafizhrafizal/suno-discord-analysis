@@ -43,11 +43,19 @@ class QdrantCollectionWrapper:
     """
     Thin wrapper around QdrantClient that exposes a uniform collection
     interface (count / get / upsert / query / delete).
+
+    Supports qdrant-client + Qdrant server version mismatches:
+    - New client (≥1.9) + new server (≥1.7): uses query_points()
+    - New client (≥1.9) + OLD server (<1.7): falls back to REST /search
+    - Old client (<1.7): uses search()
     """
 
-    def __init__(self, client: QdrantClient, collection_name: str):
+    def __init__(self, client: QdrantClient, collection_name: str,
+                 url: str = "", api_key: str = ""):
         self._client = client
         self._name = collection_name
+        self._url = url.rstrip("/")    # stored for REST fallback
+        self._api_key = api_key
 
     @staticmethod
     def _where_to_filter(where: dict) -> Filter:
@@ -132,21 +140,87 @@ class QdrantCollectionWrapper:
             wait=True,
         )
 
+    def _search_via_rest(self, vector: list, n_results: int) -> dict:
+        """
+        Call the classic POST /collections/{name}/points/search endpoint directly.
+        Works on ALL Qdrant server versions and bypasses qdrant-client versioning.
+        Uses httpx (already a qdrant-client dependency) for reliable HTTP.
+        """
+        import httpx
+        headers: dict = {}
+        if self._api_key:
+            headers["api-key"] = self._api_key
+        url = f"{self._url}/collections/{self._name}/points/search"
+        with httpx.Client(timeout=15.0, verify=False) as client:
+            resp = client.post(url, json={
+                "vector": vector,
+                "limit": n_results,
+                "with_payload": False,
+                "with_vector": False,
+            }, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        hits = data.get("result", [])
+        ids = [str(h["id"]) for h in hits]
+        distances = [round(1.0 - float(h["score"]), 6) for h in hits]
+        return {"ids": [ids], "distances": [distances]}
+
     def query(self, query_embeddings, n_results):
         """
         Return a Chroma-compatible shape:
         {"ids": [[...]], "distances": [[...]]}
+
+        Fallback chain:
+          1. query_points()  — qdrant-client ≥1.7, Qdrant server ≥1.7
+          2. search()        — qdrant-client <1.7 (legacy)
+          3. REST /search    — new client + old server (server <1.7, returns 404 on /query)
         """
-        hits = self._client.search(
-            collection_name=self._name,
-            query_vector=query_embeddings[0],
-            limit=n_results,
-            with_payload=False,
-            with_vectors=False,
+        vector = list(query_embeddings[0])
+
+        # ── Attempt 1: modern query_points (client ≥ 1.7) ────────────────────
+        if hasattr(self._client, "query_points"):
+            try:
+                result = self._client.query_points(
+                    collection_name=self._name,
+                    query=vector,
+                    limit=n_results,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+                hits = result.points
+                ids = [str(h.id) for h in hits]
+                distances = [round(1.0 - float(h.score), 6) for h in hits]
+                return {"ids": [ids], "distances": [distances]}
+            except Exception as exc:
+                # 404 = server too old for /query endpoint → fall through
+                if "404" not in str(exc) and "Not Found" not in str(exc):
+                    raise
+                logger.warning(
+                    "query_points() got 404 — Qdrant server is older than 1.7. "
+                    "Falling back to REST /search. Consider upgrading your Qdrant server."
+                )
+
+        # ── Attempt 2: legacy search() (client < 1.7) ─────────────────────────
+        if hasattr(self._client, "search"):
+            hits = self._client.search(
+                collection_name=self._name,
+                query_vector=vector,
+                limit=n_results,
+                with_payload=False,
+                with_vectors=False,
+            )
+            ids = [str(h.id) for h in hits]
+            distances = [round(1.0 - float(h.score), 6) for h in hits]
+            return {"ids": [ids], "distances": [distances]}
+
+        # ── Attempt 3: direct REST /search (works on all server versions) ─────
+        if self._url:
+            return self._search_via_rest(vector, n_results)
+
+        raise RuntimeError(
+            "Cannot perform vector search: qdrant-client has neither query_points() "
+            "nor search(), and no QDRANT_URL is available for a REST fallback."
         )
-        ids = [str(h.id) for h in hits]
-        distances = [round(1.0 - float(h.score), 6) for h in hits]
-        return {"ids": [ids], "distances": [distances]}
 
     def delete(self, ids=None, where=None):
         if ids is not None:
@@ -253,7 +327,11 @@ def _init_qdrant() -> dict:
         # Always wrap the collection — even if create_collection() failed above,
         # the collection likely exists from a previous run or migration.
         try:
-            wrapper = QdrantCollectionWrapper(client, cname)
+            wrapper = QdrantCollectionWrapper(
+                client, cname,
+                url=QDRANT_URL,
+                api_key=QDRANT_API_KEY or "",
+            )
             n = wrapper.count()
             cols[model_id] = wrapper
             logger.info(
