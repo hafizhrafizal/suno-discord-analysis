@@ -124,7 +124,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3v-3z"/>
           </svg>
-          <span class="hidden sm:inline">Chat</span>
+          <span class="hidden sm:inline">Hybrid Summary</span>
         </button>
         <button id="nav-bookmarks" class="nav-tab" data-page="bookmarks">
           <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -533,86 +533,55 @@
 
     </div><!-- /page-settings -->
     <!-- ════════════════════════════════════════
-         CHAT PAGE
+         HYBRID SUMMARY PAGE
     ════════════════════════════════════════ -->
-    <div id="page-chat" class="hidden space-y-4">
+    <div id="page-chat" class="hidden">
 
-      <!-- Sub-tabs -->
-      <div class="flex border-b bg-white rounded-t-2xl shadow px-5 pt-4" role="tablist" aria-label="Chat mode">
-        <button class="chat-sub-tab tab-active" data-ctab="rag" role="tab" aria-selected="true" aria-controls="ctab-rag">RAG Chat</button>
-        <button class="chat-sub-tab" data-ctab="summarize" role="tab" aria-selected="false" aria-controls="ctab-summarize">Summarize</button>
-      </div>
+      <!-- ── Sticky form panel ── -->
+      <div id="sum-form-panel" class="sticky top-[57px] z-20 mb-4">
 
-      <!-- ── RAG Chat Panel ── -->
-      <div id="ctab-rag" class="chat-subpanel" role="tabpanel" aria-labelledby="">
-        <section class="bg-white rounded-b-2xl rounded-tr-2xl shadow p-5">
-          <div class="flex items-center justify-between mb-3">
-            <p class="text-xs text-gray-600">Ask questions about the Suno Discord conversations. The assistant retrieves relevant messages from the vector database to answer.</p>
-            <button id="chat-clear-btn"
-                    class="text-xs font-semibold text-red-700 hover:text-red-900 border border-red-300 hover:border-red-500 px-3 py-1 rounded-lg transition-colors whitespace-nowrap ml-3
-                           focus-visible:outline focus-visible:outline-3 focus-visible:outline-red-700 focus-visible:outline-offset-2">
-              Clear chat
+        <!-- Compact bar (shown when form is collapsed, hidden initially) -->
+        <div id="sum-form-compact" class="hidden bg-white rounded-2xl shadow border border-indigo-100 px-4 py-2.5 flex items-center gap-3 flex-wrap">
+          <span class="text-xs font-semibold text-indigo-800 shrink-0">Hybrid Summary</span>
+          <span id="sum-compact-info" class="text-xs text-gray-500 flex-1 min-w-0 truncate">—</span>
+          <div class="flex gap-2 items-center shrink-0">
+            <button id="sum-export-pdf"
+                    class="text-xs font-semibold text-indigo-700 hover:text-indigo-900
+                           border border-indigo-300 hover:border-indigo-500
+                           px-3 py-1.5 rounded-lg transition-colors
+                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700">
+              Export PDF
+            </button>
+            <button id="sum-form-expand"
+                    class="text-xs font-semibold text-gray-600 hover:text-gray-900
+                           border border-gray-300 hover:border-gray-500
+                           px-3 py-1.5 rounded-lg transition-colors
+                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-600">
+              &#9660; Filters
+            </button>
+          </div>
+        </div>
+
+        <!-- Full form (shown by default) -->
+        <div id="sum-form-full" class="bg-white rounded-2xl shadow p-5">
+
+          <!-- Header -->
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="text-base font-semibold text-indigo-800">Hybrid Summary</h2>
+              <p class="text-xs text-gray-500 mt-0.5">Semantic retrieval + clustering over your filtered messages.</p>
+            </div>
+            <button id="sum-form-collapse" class="hidden text-xs font-semibold text-gray-500 hover:text-gray-800
+                           border border-gray-300 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors
+                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-600">
+              &#9650; Collapse
             </button>
           </div>
 
-          <!-- Chat history -->
-          <div id="chat-history" class="space-y-3 mb-4 max-h-[28rem] overflow-y-auto pr-1" aria-live="polite" aria-label="Chat history"></div>
-
-          <!-- Input row -->
-          <div class="flex gap-2 items-end">
-            <label for="chat-input" class="sr-only">Chat message</label>
-            <textarea id="chat-input" rows="2"
-              placeholder="Ask about Suno Discord conversations…"
-              class="search-input flex-1 resize-none min-w-0"></textarea>
-            <button id="chat-send-btn" class="search-btn self-end shrink-0">Send</button>
-          </div>
-          <div class="flex flex-wrap items-center gap-2 mt-2">
-            <label for="chat-model" class="text-xs font-medium text-gray-700 shrink-0">Model</label>
-            <select id="chat-model" class="search-input text-xs py-1 flex-1 min-w-[10rem] max-w-xs">
-              <optgroup label="GPT-5.4">
-                <option value="gpt-5.4" selected>GPT-5.4</option>
-                <option value="gpt-5.4-pro">GPT-5.4 pro</option>
-                <option value="gpt-5.4-mini">GPT-5.4 mini</option>
-                <option value="gpt-5.4-nano">GPT-5.4 nano</option>
-              </optgroup>
-              <optgroup label="GPT-5">
-                <option value="gpt-5">GPT-5</option>
-                <option value="gpt-5-mini">GPT-5 mini</option>
-                <option value="gpt-5-nano">GPT-5 nano</option>
-              </optgroup>
-              <optgroup label="GPT-4.1">
-                <option value="gpt-4.1">GPT-4.1</option>
-                <option value="gpt-4.1-mini">GPT-4.1 mini</option>
-                <option value="gpt-4.1-nano">GPT-4.1 nano</option>
-              </optgroup>
-              <optgroup label="GPT-4o">
-                <option value="gpt-4o">GPT-4o</option>
-                <option value="gpt-4o-mini">GPT-4o mini</option>
-              </optgroup>
-              <optgroup label="o-series (reasoning)">
-                <option value="o4-mini">o4 mini</option>
-                <option value="o3">o3</option>
-                <option value="o3-mini">o3 mini</option>
-                <option value="o1">o1</option>
-                <option value="o1-mini">o1 mini</option>
-              </optgroup>
-            </select>
-            <p class="text-xs text-gray-600">Press Ctrl+Enter or click Send.</p>
-          </div>
-        </section>
-      </div>
-
-      <!-- ── Summarize Panel ── -->
-      <div id="ctab-summarize" class="chat-subpanel hidden" role="tabpanel">
-        <section class="bg-white rounded-b-2xl rounded-tr-2xl shadow p-5">
-          <p class="text-xs text-gray-600 mb-4">Filter messages by username and date range, then generate an AI summary.</p>
-
-          <!-- Filters -->
+          <!-- Filters row 1: username + date mode toggle -->
           <div class="flex flex-wrap gap-2 items-center mb-3">
             <label for="sum-username" class="filter-label">Username</label>
             <input id="sum-username" type="text" placeholder="Optional username…" class="search-input w-44" />
-
-            <!-- Date mode toggle -->
             <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden" role="group" aria-label="Date input mode">
               <button id="sum-mode-exact" class="range-mode-btn range-mode-active" type="button" aria-pressed="true">Exact Date</button>
               <button id="sum-mode-month" class="range-mode-btn" type="button" aria-pressed="false">By Month</button>
@@ -635,9 +604,11 @@
             <input id="sum-month-to" type="month" class="search-input" />
           </div>
 
+          <!-- Filters row 3: min-words + suno team -->
           <div class="flex flex-wrap gap-2 items-center mb-3">
             <label for="sum-min-words" class="sr-only">Minimum word count</label>
-            <input id="sum-min-words" type="number" value="0" min="0" class="search-input w-24" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+            <input id="sum-min-words" type="number" value="0" min="0" class="search-input w-24"
+                   placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
             <label for="sum-suno" class="filter-label">Suno Team</label>
             <select id="sum-suno" class="search-input">
               <option value="all">All</option>
@@ -646,13 +617,14 @@
             </select>
           </div>
 
-          <!-- Prompt -->
-          <label for="sum-prompt" class="block text-xs font-semibold text-gray-700 mb-1">Custom instructions (optional)</label>
+          <!-- Custom instructions / focus query -->
+          <label for="sum-prompt" class="block text-xs font-semibold text-gray-700 mb-1">Custom instructions / focus (optional)</label>
           <textarea id="sum-prompt" rows="2"
             placeholder="e.g. Focus on feature requests and bug reports. Bullet-point format."
             class="search-input w-full resize-none mb-3"></textarea>
 
-          <div class="flex flex-wrap items-center gap-2 mb-3">
+          <!-- Model + submit in one row -->
+          <div class="flex flex-wrap items-center gap-2">
             <label for="sum-model" class="text-xs font-semibold text-gray-700 shrink-0">Model</label>
             <select id="sum-model" class="search-input text-xs py-1 flex-1 min-w-[10rem] max-w-xs">
               <optgroup label="GPT-5.4">
@@ -683,13 +655,63 @@
                 <option value="o1-mini">o1 mini</option>
               </optgroup>
             </select>
+            <button id="sum-btn" class="search-btn">Generate Hybrid Summary</button>
           </div>
-          <button id="sum-btn" class="search-btn">Summarize</button>
 
-          <!-- Result -->
-          <div id="sum-result" class="hidden mt-4 bg-slate-50 border border-slate-300 rounded-xl p-4 text-sm text-gray-900 markdown-body" aria-live="polite"></div>
+        </div><!-- /sum-form-full -->
+      </div><!-- /sum-form-panel -->
+
+      <!-- ── Results panel (scrolls freely below sticky form) ── -->
+      <div id="sum-results-panel" class="hidden space-y-4 pb-8">
+
+        <!-- Process log panel -->
+        <section class="bg-white rounded-2xl shadow p-5">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Retrieval &amp; Pipeline Log</h3>
+            <button id="sum-log-toggle"
+                    class="text-xs font-semibold text-gray-500 hover:text-gray-800
+                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-600 rounded">
+              &#9650; Hide
+            </button>
+          </div>
+          <div id="sum-process-log" class="space-y-0.5" aria-live="polite" aria-label="Pipeline log"></div>
         </section>
-      </div>
+
+        <!-- Summary result -->
+        <div id="sum-result"
+             class="bg-white rounded-2xl shadow p-5 text-sm text-gray-900 markdown-body"
+             aria-live="polite"></div>
+
+        <!-- Follow-up Q&A -->
+        <section id="sum-followup-section" class="hidden bg-white rounded-2xl shadow p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-gray-700">Follow-up Questions</h3>
+            <button id="sum-followup-clear"
+                    class="text-xs font-semibold text-red-700 hover:text-red-900
+                           border border-red-300 hover:border-red-500 px-3 py-1 rounded-lg
+                           transition-colors
+                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-700">
+              Clear Q&amp;A
+            </button>
+          </div>
+
+          <div id="sum-followup-history"
+               class="space-y-3 mb-3 max-h-[28rem] overflow-y-auto pr-1"
+               aria-live="polite" aria-label="Follow-up chat history"></div>
+
+          <div class="flex gap-2 items-end">
+            <label for="sum-followup-input" class="sr-only">Follow-up question</label>
+            <textarea id="sum-followup-input" rows="2"
+              placeholder="Ask a follow-up question about the summary…"
+              class="search-input flex-1 resize-none min-w-0"></textarea>
+            <button id="sum-followup-send" class="search-btn self-end shrink-0">Ask</button>
+          </div>
+          <p class="text-xs text-gray-500 mt-1.5">
+            Press Ctrl+Enter or click Ask · retrieves fresh evidence for each question
+          </p>
+        </section>
+
+      </div><!-- /sum-results-panel -->
 
     </div><!-- /page-chat -->
 

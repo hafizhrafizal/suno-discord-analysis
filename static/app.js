@@ -1880,20 +1880,10 @@ document.getElementById('bm-filter-user').addEventListener('input', () => {
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
-   CHAT PAGE
+   HYBRID SUMMARY PAGE
 ══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Chat sub-tab switching ── */
-document.querySelectorAll('.chat-sub-tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.chat-sub-tab').forEach(b => b.classList.remove('tab-active'));
-    btn.classList.add('tab-active');
-    document.querySelectorAll('.chat-subpanel').forEach(p => p.classList.add('hidden'));
-    document.getElementById('ctab-' + btn.dataset.ctab).classList.remove('hidden');
-  });
-});
-
-/* ── Summarize date mode toggle ── */
+/* ── Date mode toggle ── */
 document.getElementById('sum-mode-exact').addEventListener('click', () => {
   document.getElementById('sum-mode-exact').classList.add('range-mode-active');
   document.getElementById('sum-mode-month').classList.remove('range-mode-active');
@@ -1907,152 +1897,113 @@ document.getElementById('sum-mode-month').addEventListener('click', () => {
   document.getElementById('sum-exact-inputs').classList.add('hidden');
 });
 
-/* ══════════════════════════════════════════════════════════════════════════
-   RAG CHAT
-══════════════════════════════════════════════════════════════════════════ */
-let chatHistory = []; // [{role:'user'|'assistant', content:'...'}]
+/* ── Follow-up chat state ── */
+// Index 0 is always the initial summary (assistant turn).
+// Subsequent turns are user/assistant pairs for follow-up Q&A.
+let sumFollowUpHistory = [];
+// Filter params stored after a successful summary so follow-up
+// can search the same filtered message pool.
+let sumLastFilterParams = null;
 
-function appendAssistantBubble(text) {
-  const container = document.getElementById('chat-history');
-  let inner = container.querySelector('.flex.flex-col');
-  if (!inner) {
-    container.innerHTML = '';
-    inner = document.createElement('div');
-    inner.className = 'flex flex-col gap-3';
-    container.appendChild(inner);
+/* ── Form collapse / expand ── */
+function _buildCompactInfo(p) {
+  if (!p) return '—';
+  const parts = [];
+  if (p.date_from || p.date_to) {
+    parts.push(`${p.date_from || '…'} → ${p.date_to || '…'}`);
   }
-  const wrap = document.createElement('div');
-  wrap.className = 'flex justify-start';
-  const bubble = document.createElement('div');
-  bubble.className = 'chat-bubble-assistant markdown-body';
-  bubble.textContent = text;
-  wrap.appendChild(bubble);
-  inner.appendChild(wrap);
-  container.scrollTop = container.scrollHeight;
-  return bubble;
+  if (p.username) parts.push(`@${p.username}`);
+  if (p.min_words) parts.push(`≥${p.min_words} words`);
+  if (p.suno_team !== 'all') parts.push(p.suno_team === 'only' ? 'Suno Team only' : 'excl. Suno Team');
+  return parts.length ? parts.join(' · ') : 'All messages';
 }
 
-function appendUserBubble(text) {
-  const container = document.getElementById('chat-history');
-  let inner = container.querySelector('.flex.flex-col');
-  if (!inner) {
-    container.innerHTML = '';
-    inner = document.createElement('div');
-    inner.className = 'flex flex-col gap-3';
-    container.appendChild(inner);
-  }
+function collapseSumForm(filterParams) {
+  document.getElementById('sum-compact-info').textContent = _buildCompactInfo(filterParams);
+  document.getElementById('sum-form-full').classList.add('hidden');
+  document.getElementById('sum-form-compact').classList.remove('hidden');
+}
+
+function expandSumForm() {
+  document.getElementById('sum-form-compact').classList.add('hidden');
+  document.getElementById('sum-form-full').classList.remove('hidden');
+}
+
+document.getElementById('sum-form-expand').addEventListener('click', expandSumForm);
+document.getElementById('sum-form-collapse').addEventListener('click', () => collapseSumForm(sumLastFilterParams));
+
+/* ── Process log ── */
+const LOG_ICONS = {
+  filter:    '🔍',
+  retrieval: '📡',
+  dedup:     '🧹',
+  cluster:   '🔮',
+  sample:    '🎯',
+  llm:       '✨',
+  fallback:  '⚠️',
+};
+
+function renderProcessLogEntry(entry) {
+  const logEl = document.getElementById('sum-process-log');
+  const div = document.createElement('div');
+  div.className = `log-entry log-step-${entry.step || 'fallback'}`;
+  const icon  = LOG_ICONS[entry.step] || '•';
+  const label = entry.label || entry.step || '';
+  const msg   = entry.msg   || '';
+  div.innerHTML =
+    `<span class="log-icon">${icon}</span>` +
+    `<span class="log-label">${esc(label)}</span>` +
+    `<span class="log-msg">${esc(msg)}</span>`;
+  logEl.appendChild(div);
+}
+
+/* ── Log panel toggle ── */
+document.getElementById('sum-log-toggle').addEventListener('click', () => {
+  const logEl    = document.getElementById('sum-process-log');
+  const toggleEl = document.getElementById('sum-log-toggle');
+  const hidden   = logEl.classList.toggle('hidden');
+  toggleEl.innerHTML = hidden ? '&#9660; Show' : '&#9650; Hide';
+});
+
+/* ── Follow-up bubble helpers ── */
+function appendFollowUpUserBubble(text) {
+  const container = document.getElementById('sum-followup-history');
   const wrap = document.createElement('div');
   wrap.className = 'flex justify-end';
   const bubble = document.createElement('div');
   bubble.className = 'chat-bubble-user';
   bubble.textContent = text;
   wrap.appendChild(bubble);
-  inner.appendChild(wrap);
+  container.appendChild(wrap);
   container.scrollTop = container.scrollHeight;
 }
 
-async function sendChatMessage() {
-  const input = document.getElementById('chat-input');
-  const sendBtn = document.getElementById('chat-send-btn');
-  const message = input.value.trim();
-  if (!message) return;
-
-  input.value = '';
-  input.disabled = true;
-  sendBtn.disabled = true;
-  sendBtn.textContent = '...';
-
-  chatHistory.push({ role: 'user', content: message });
-  appendUserBubble(message);
-
-  const bubble = appendAssistantBubble('');
-  let assistantText = '';
-  const scope = getScopeParam();
-
-  try {
-    const chatModel = document.getElementById('chat-model').value;
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message,
-        history: chatHistory.slice(0, -1),
-        upload_ids: scope ? scope.split(',') : [],
-        model: chatModel,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
-      throw new Error(err.detail || 'Request failed');
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const raw = line.slice(6).trim();
-        if (raw === '[DONE]') break;
-        try {
-          const delta = JSON.parse(raw);
-          if (delta.content) {
-            assistantText += delta.content;
-            bubble.innerHTML = marked.parse(assistantText);
-            document.getElementById('chat-history').scrollTop =
-              document.getElementById('chat-history').scrollHeight;
-          } else if (delta.error) {
-            throw new Error(delta.error);
-          }
-        } catch (parseErr) {
-          if (!(parseErr instanceof SyntaxError)) throw parseErr;
-        }
-      }
-    }
-
-    chatHistory.push({ role: 'assistant', content: assistantText });
-  } catch (e) {
-    bubble.remove();
-    chatHistory.pop();
-    showErrorPopup(e.message);
-  } finally {
-    input.disabled = false;
-    sendBtn.disabled = false;
-    sendBtn.textContent = 'Send';
-    input.focus();
-  }
+function appendFollowUpAssistantBubble(text) {
+  const container = document.getElementById('sum-followup-history');
+  const wrap = document.createElement('div');
+  wrap.className = 'flex justify-start';
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble-assistant markdown-body';
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  container.appendChild(wrap);
+  container.scrollTop = container.scrollHeight;
+  return bubble; // caller streams content into bubble.innerHTML
 }
 
-document.getElementById('chat-send-btn').addEventListener('click', sendChatMessage);
-document.getElementById('chat-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); sendChatMessage(); }
-});
-document.getElementById('chat-clear-btn').addEventListener('click', () => {
-  chatHistory = [];
-  document.getElementById('chat-history').innerHTML =
-    '<p class="text-center text-gray-400 text-sm py-8">No messages yet. Ask a question above.</p>';
-});
-
-/* ══════════════════════════════════════════════════════════════════════════
-   SUMMARIZE
-══════════════════════════════════════════════════════════════════════════ */
+/* ── Generate Hybrid Summary ── */
 async function doSummarize() {
-  const btn = document.getElementById('sum-btn');
+  const btn      = document.getElementById('sum-btn');
   const resultEl = document.getElementById('sum-result');
+  const logEl    = document.getElementById('sum-process-log');
 
-  const username = document.getElementById('sum-username').value.trim();
+  const username    = document.getElementById('sum-username').value.trim();
   const isMonthMode = document.getElementById('sum-mode-month').classList.contains('range-mode-active');
-  const minW = parseInt(document.getElementById('sum-min-words').value) || 0;
-  const suno = document.getElementById('sum-suno').value;
-  const prompt = document.getElementById('sum-prompt').value.trim();
-  const scope = getScopeParam();
+  const minW        = parseInt(document.getElementById('sum-min-words').value) || 0;
+  const suno        = document.getElementById('sum-suno').value;
+  const prompt      = document.getElementById('sum-prompt').value.trim();
+  const scope       = getScopeParam();
+  const sumModel    = document.getElementById('sum-model').value;
 
   let dateFrom = '', dateTo = '';
   if (isMonthMode) {
@@ -2070,27 +2021,40 @@ async function doSummarize() {
   }
 
   btn.disabled = true;
-  btn.textContent = 'Summarizing...';
-  resultEl.classList.remove('hidden');
-  resultEl.textContent = '';
-  resultEl.style.background = '';
-  resultEl.style.color = '';
+  btn.textContent = 'Summarizing…';
+
+  // Show results panel and reset its contents
+  document.getElementById('sum-results-panel').classList.remove('hidden');
+  logEl.innerHTML = '';
+  resultEl.innerHTML = '';
+  // Make sure log panel is visible
+  logEl.classList.remove('hidden');
+  document.getElementById('sum-log-toggle').innerHTML = '&#9650; Hide';
+
+  // Reset follow-up section whenever a new summary starts
+  document.getElementById('sum-followup-section').classList.add('hidden');
+  document.getElementById('sum-followup-history').innerHTML = '';
+  sumFollowUpHistory = [];
+  sumLastFilterParams = null;
+
+  // Show collapse button while generating
+  document.getElementById('sum-form-collapse').classList.remove('hidden');
 
   try {
-    const sumModel = document.getElementById('sum-model').value;
+    const currentParams = {
+      username:   username  || null,
+      date_from:  dateFrom  || null,
+      date_to:    dateTo    || null,
+      upload_ids: scope ? scope.split(',') : [],
+      min_words:  minW,
+      suno_team:  suno,
+      model:      sumModel,
+    };
+
     const res = await fetch('/api/summarize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: username || null,
-        date_from: dateFrom || null,
-        date_to: dateTo || null,
-        prompt: prompt || null,
-        upload_ids: scope ? scope.split(',') : [],
-        min_words: minW,
-        suno_team: suno,
-        model: sumModel,
-      }),
+      body: JSON.stringify({ ...currentParams, prompt: prompt || null }),
     });
 
     if (!res.ok) {
@@ -2098,7 +2062,7 @@ async function doSummarize() {
       throw new Error(err.detail || 'Request failed');
     }
 
-    const reader = res.body.getReader();
+    const reader  = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let summaryText = '';
@@ -2115,7 +2079,9 @@ async function doSummarize() {
         if (raw === '[DONE]') break;
         try {
           const delta = JSON.parse(raw);
-          if (delta.content) {
+          if (delta.type === 'log') {
+            renderProcessLogEntry(delta);
+          } else if (delta.content) {
             summaryText += delta.content;
             resultEl.innerHTML = marked.parse(summaryText);
           } else if (delta.error) {
@@ -2126,20 +2092,233 @@ async function doSummarize() {
         }
       }
     }
+
     if (!summaryText) {
-      resultEl.classList.add('hidden');
       showErrorPopup('No response received from the model. The model may be unavailable or the request was rejected. Check your API key and selected model.');
+      return;
     }
+
+    // Persist filter params for follow-up retrieval against the same pool
+    sumLastFilterParams = currentParams;
+    // Seed history with the summary so follow-up LLM has full context
+    sumFollowUpHistory = [{ role: 'assistant', content: summaryText }];
+
+    // Reveal follow-up section
+    document.getElementById('sum-followup-section').classList.remove('hidden');
+
+    // Collapse the form so results are easily readable
+    collapseSumForm(currentParams);
+
   } catch (e) {
-    resultEl.classList.add('hidden');
     showErrorPopup(e.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Summarize';
+    btn.textContent = 'Generate Hybrid Summary';
   }
 }
 
 document.getElementById('sum-btn').addEventListener('click', doSummarize);
+
+/* ── Follow-up Q&A ── */
+async function sendSumFollowUp() {
+  const input    = document.getElementById('sum-followup-input');
+  const sendBtn  = document.getElementById('sum-followup-send');
+  const question = input.value.trim();
+
+  if (!question) return;
+  if (!sumLastFilterParams) {
+    showErrorPopup('Generate a summary first before asking follow-up questions.');
+    return;
+  }
+
+  input.value     = '';
+  input.disabled  = true;
+  sendBtn.disabled = true;
+  sendBtn.textContent = '…';
+
+  sumFollowUpHistory.push({ role: 'user', content: question });
+  appendFollowUpUserBubble(question);
+
+  const bubble = appendFollowUpAssistantBubble('');
+  let answerText = '';
+
+  try {
+    const res = await fetch('/api/summarize/followup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question,
+        // History excludes the current question (already in 'question' field)
+        history: sumFollowUpHistory.slice(0, -1),
+        ...sumLastFilterParams,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+      throw new Error(err.detail || 'Request failed');
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') break;
+        try {
+          const delta = JSON.parse(raw);
+          if (delta.type === 'log') {
+            // Follow-up log events are silently consumed (not shown in main log)
+          } else if (delta.content) {
+            answerText += delta.content;
+            bubble.innerHTML = marked.parse(answerText);
+            document.getElementById('sum-followup-history').scrollTop =
+              document.getElementById('sum-followup-history').scrollHeight;
+          } else if (delta.error) {
+            throw new Error(delta.error);
+          }
+        } catch (parseErr) {
+          if (!(parseErr instanceof SyntaxError)) throw parseErr;
+        }
+      }
+    }
+
+    sumFollowUpHistory.push({ role: 'assistant', content: answerText });
+
+  } catch (e) {
+    bubble.remove();
+    sumFollowUpHistory.pop(); // roll back the user turn
+    showErrorPopup(e.message);
+  } finally {
+    input.disabled   = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Ask';
+    input.focus();
+  }
+}
+
+document.getElementById('sum-followup-send').addEventListener('click', sendSumFollowUp);
+document.getElementById('sum-followup-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); sendSumFollowUp(); }
+});
+document.getElementById('sum-followup-clear').addEventListener('click', () => {
+  // Keep index-0 (initial summary) so follow-up context is preserved
+  const init = sumFollowUpHistory[0];
+  sumFollowUpHistory = init ? [init] : [];
+  document.getElementById('sum-followup-history').innerHTML = '';
+});
+
+/* ── PDF Export ── */
+function exportSummaryPDF() {
+  const summaryHTML = document.getElementById('sum-result').innerHTML;
+  const dateStr     = new Date().toLocaleDateString('en-US', {
+    year: 'numeric', month: 'long', day: 'numeric',
+  });
+
+  // Build Q&A section from history (skip index 0 = initial summary)
+  let qaHTML = '';
+  const qaHistory = sumFollowUpHistory.slice(1);
+  for (const turn of qaHistory) {
+    if (turn.role === 'user') {
+      const safe = turn.content
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      qaHTML += `<div class="q-block"><span class="q-label">Question</span>${safe}</div>`;
+    } else {
+      qaHTML += `<div class="a-block">${marked.parse(turn.content)}</div>`;
+    }
+  }
+
+  // Build a self-contained HTML string and open it via a Blob URL so we
+  // avoid the deprecated document.write() API entirely.
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hybrid Summary \u2013 ${dateStr}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  max-width: 820px; margin: 40px auto; padding: 0 28px;
+  color: #1e293b; line-height: 1.65; font-size: 14px;
+}
+h1  { font-size: 1.5rem; color: #3730a3; padding-bottom: 10px;
+      border-bottom: 2px solid #e2e8f0; margin-bottom: 6px; }
+.meta { font-size: 0.75rem; color: #6b7280; margin-bottom: 1.75rem; }
+h2  { font-size: 1.15rem; font-weight: 700; color: #1e293b; margin-top: 2rem;
+      border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 1rem; }
+h3  { font-size: 1rem; font-weight: 600; color: #374151; margin: 1rem 0 0.4rem; }
+h4  { font-size: 0.9rem; font-weight: 600; margin: 0.8rem 0 0.3rem; }
+p   { margin-bottom: 0.65rem; }
+ul, ol { padding-left: 1.4rem; margin-bottom: 0.65rem; }
+li  { margin-bottom: 0.2rem; }
+blockquote {
+  border-left: 3px solid #6366f1; margin: 0.75rem 0;
+  padding: 6px 14px; background: #f5f3ff; color: #3730a3;
+  border-radius: 0 6px 6px 0; font-style: italic;
+}
+code {
+  background: #f1f5f9; border-radius: 4px;
+  padding: 1px 5px; font-size: 0.82em; font-family: monospace;
+}
+pre  {
+  background: #1e293b; color: #e2e8f0; border-radius: 6px;
+  padding: 12px; overflow-x: auto; margin-bottom: 0.65rem;
+}
+pre code { background: none; padding: 0; color: inherit; }
+hr   { border: none; border-top: 1px solid #e2e8f0; margin: 1.25rem 0; }
+strong { font-weight: 700; }
+em     { font-style: italic; }
+a      { color: #3730a3; text-decoration: underline; }
+table  { border-collapse: collapse; width: 100%; margin-bottom: 0.65rem; font-size: 0.85rem; }
+th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
+th     { background: #f8fafc; font-weight: 700; }
+.q-block {
+  background: #eef2ff; border-radius: 10px 10px 10px 2px;
+  padding: 10px 14px; margin: 14px 0 4px; color: #1e1b4b; font-weight: 600;
+}
+.q-label {
+  display: block; font-size: 0.68rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: #6366f1; margin-bottom: 4px;
+}
+.a-block {
+  background: #f8fafc; border-left: 3px solid #94a3b8;
+  border-radius: 0 10px 10px 0; padding: 10px 14px; margin: 4px 0 14px;
+}
+@media print { body { margin: 16px 28px; } }
+</style>
+</head>
+<body>
+<h1>Hybrid Summary</h1>
+<p class="meta">Exported ${dateStr}</p>
+<div class="summary-body">${summaryHTML}</div>
+${qaHTML ? '<h2>Follow-up Q&amp;A</h2><div class="qa-body">' + qaHTML + '</div>' : ''}
+<script>window.onload = function() { window.print(); };<\/script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url  = URL.createObjectURL(blob);
+  const win  = window.open(url, '_blank', 'width=920,height=750');
+  if (!win) {
+    URL.revokeObjectURL(url);
+    showErrorPopup('Pop-up blocked. Please allow pop-ups for this page, then try again.');
+    return;
+  }
+  // Release the object URL once the new window has loaded the document
+  win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+}
+
+document.getElementById('sum-export-pdf').addEventListener('click', exportSummaryPDF);
 
 /* ══════════════════════════════════════════════════════════════════════════
    INIT
