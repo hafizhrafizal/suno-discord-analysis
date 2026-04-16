@@ -144,21 +144,22 @@ class QdrantCollectionWrapper:
         """
         Call the classic POST /collections/{name}/points/search endpoint directly.
         Works on ALL Qdrant server versions and bypasses qdrant-client versioning.
+        Uses httpx (already a qdrant-client dependency) for reliable HTTP.
         """
-        import urllib.request, urllib.error, json as _json
-        payload = _json.dumps({
-            "vector": vector,
-            "limit": n_results,
-            "with_payload": False,
-            "with_vector": False,
-        }).encode()
-        headers = {"Content-Type": "application/json"}
+        import httpx
+        headers: dict = {}
         if self._api_key:
             headers["api-key"] = self._api_key
         url = f"{self._url}/collections/{self._name}/points/search"
-        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = _json.loads(resp.read())
+        with httpx.Client(timeout=15.0, verify=False) as client:
+            resp = client.post(url, json={
+                "vector": vector,
+                "limit": n_results,
+                "with_payload": False,
+                "with_vector": False,
+            }, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
         hits = data.get("result", [])
         ids = [str(h["id"]) for h in hits]
         distances = [round(1.0 - float(h["score"]), 6) for h in hits]
