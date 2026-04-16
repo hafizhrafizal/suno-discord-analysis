@@ -128,9 +128,14 @@ async def search_semantic(
     suno_team:  str           = "all",
     min_words:  int           = 0,
 ):
+    import asyncio as _asyncio
     uid_list = _parse_upload_ids(upload_ids)
     col      = active_collection()
-    total    = col.count()
+    if col is None:
+        raise HTTPException(400, "Vector store is not initialised — check server logs.")
+
+    _sem_loop = _asyncio.get_running_loop()
+    total = await _sem_loop.run_in_executor(state.vector_executor, col.count)
     if total == 0:
         raise HTTPException(
             400,
@@ -143,9 +148,10 @@ async def search_semantic(
     fetch_n     = min(n_results * 4 if has_filters else n_results, total)
     query_emb   = (await embed_texts_async([query]))[0]
 
-    results   = col.query(query_embeddings=[query_emb], n_results=fetch_n)
-    ids       = results["ids"][0]
-    distances = results["distances"][0]
+    _query_fn   = lambda: col.query(query_embeddings=[query_emb], n_results=fetch_n)
+    results     = await _sem_loop.run_in_executor(state.vector_executor, _query_fn)
+    ids         = results["ids"][0]
+    distances   = results["distances"][0]
 
     conn         = get_db()
     uuid_to_dist = dict(zip(ids, distances))

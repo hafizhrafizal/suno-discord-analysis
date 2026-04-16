@@ -1114,7 +1114,7 @@ function setFilterMode(mode) {
 
   document.getElementById('results-filter').placeholder =
     mode === 'exact'
-      ? 'Exact: substring match, multi-word scores by relevance…'
+      ? 'Exact: whole-word match, multi-word phrase scores highest…'
       : 'Semantic: re-rank results by embedding similarity…';
 }
 
@@ -1152,26 +1152,41 @@ function _resetToAllResults() {
 }
 
 /* ── Exact filter (instant, client-side) ── */
+function _escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
 function _applyExactFilter(term) {
   if (!term) { _resetToAllResults(); return; }
 
-  const words  = term.split(/\s+/).filter(Boolean);
-  // tokens for scoring: individual words only
-  // tokens for highlighting: phrase first (if multi-word), then words — longest-first so phrase wins
-  const scoreTokens = words;
+  const words = term.split(/\s+/).filter(Boolean);
+  // Tokens for highlighting: phrase first (if multi-word), then individual words
   activeFilterTokens = words.length > 1 ? [term, ...words] : words;
+
+  // Word-boundary regex per token — "cat" won't match "category"
+  const tokenRegexes = words.map(w =>
+    new RegExp('\\b' + _escapeRegex(w) + '\\b', 'i')
+  );
+  // Phrase regex: full sequence with word boundaries (multi-word only)
+  const phraseRegex = words.length > 1
+    ? new RegExp('\\b' + words.map(_escapeRegex).join('\\s+') + '\\b', 'i')
+    : null;
 
   const scored = currentResults
     .map(m => {
-      const user    = (m.username || '').toLowerCase();
-      const content = (m.content  || '').toLowerCase();
-      const hay     = user + ' ' + content;
-      // Phrase match scores highest; otherwise sum per-word matches
-      if (hay.includes(term)) return { m, s: 1000 + (user.includes(term) ? 500 : 0) };
+      const user    = m.username || '';
+      const content = m.content  || '';
+
+      // Exact phrase match (multi-word) — scores highest
+      if (phraseRegex) {
+        const inUser    = phraseRegex.test(user);
+        const inContent = phraseRegex.test(content);
+        if (inUser || inContent) return { m, s: 1000 + (inUser ? 500 : 0) };
+      }
+
+      // Per-token whole-word matches
       let s = 0;
-      for (const tok of scoreTokens) {
-        if (user.includes(tok))    s += 20;
-        if (content.includes(tok)) s += 10;
+      for (const rx of tokenRegexes) {
+        if (rx.test(user))    s += 20;
+        if (rx.test(content)) s += 10;
       }
       return { m, s };
     })
@@ -1583,6 +1598,15 @@ function _renderBmLabelPanel(bookmarkId) {
 function _filterBookmarks(bms) {
   const userTerm = (document.getElementById('bm-filter-user').value || '').trim().toLowerCase();
   const sunoMode = document.getElementById('bm-filter-suno').value;
+  const textRaw  = (document.getElementById('bm-filter-text').value || '').trim();
+
+  // Build whole-word regexes for the text search term
+  const textWords   = textRaw ? textRaw.split(/\s+/).filter(Boolean) : [];
+  const textRegexes = textWords.map(w => new RegExp('\\b' + _escapeRegex(w) + '\\b', 'i'));
+  const textPhrase  = textWords.length > 1
+    ? new RegExp('\\b' + textWords.map(_escapeRegex).join('\\s+') + '\\b', 'i')
+    : null;
+
   return bms.filter(bm => {
     if (userTerm && !(bm.username || '').toLowerCase().includes(userTerm)) return false;
     if (sunoMode === 'only'    && !truthy(bm.is_suno_team)) return false;
@@ -1591,6 +1615,14 @@ function _filterBookmarks(bms) {
       const bmLabelIds = new Set((bm.labels || []).map(l => l.id));
       const hasMatch = [..._bmLabelFilter].some(id => bmLabelIds.has(id));
       if (!hasMatch) return false;
+    }
+    if (textRegexes.length > 0) {
+      const hay = (bm.username || '') + ' ' + (bm.content || '');
+      // Phrase match or all individual words must match
+      const ok = textPhrase
+        ? textPhrase.test(hay)
+        : textRegexes.every(rx => rx.test(hay));
+      if (!ok) return false;
     }
     return true;
   });
@@ -1874,6 +1906,15 @@ let _bmUserFilterDebounce = null;
 document.getElementById('bm-filter-user').addEventListener('input', () => {
   clearTimeout(_bmUserFilterDebounce);
   _bmUserFilterDebounce = setTimeout(() => {
+    _collapseAllBmContext();
+    _renderBookmarksSorted();
+  }, 250);
+});
+
+let _bmTextFilterDebounce = null;
+document.getElementById('bm-filter-text').addEventListener('input', () => {
+  clearTimeout(_bmTextFilterDebounce);
+  _bmTextFilterDebounce = setTimeout(() => {
     _collapseAllBmContext();
     _renderBookmarksSorted();
   }, 250);
