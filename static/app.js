@@ -53,6 +53,13 @@ function _errorPopupEscHandler(e) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   APP MODE
+══════════════════════════════════════════════════════════════════════════ */
+const APP_MODE     = document.querySelector('meta[name="app-mode"]')?.content    || 'single';
+const CURRENT_USER = document.querySelector('meta[name="current-user"]')?.content || '';
+let   currentUserIsAdmin = APP_MODE !== 'multi';  // single mode = always admin
+
+/* ══════════════════════════════════════════════════════════════════════════
    STATE
 ══════════════════════════════════════════════════════════════════════════ */
 let currentResults   = [];
@@ -117,8 +124,10 @@ function navigateTo(page) {
   document.getElementById('page-settings').classList.toggle('hidden', page !== 'settings');
   document.getElementById('page-chat').classList.toggle('hidden', page !== 'chat');
   document.getElementById('page-bookmarks').classList.toggle('hidden', page !== 'bookmarks');
-  if (page === 'settings') loadSettingsPage();
+  document.getElementById('page-admin')?.classList.toggle('hidden', page !== 'admin');
+  if (page === 'settings')  loadSettingsPage();
   if (page === 'bookmarks') loadBookmarksPage();
+  if (page === 'admin')     loadAdminPage();
 }
 
 document.querySelectorAll('.nav-tab').forEach(btn => {
@@ -270,10 +279,18 @@ function showApiKeyPopup(dismissable = false) {
   const input     = document.getElementById('apikey-popup-input');
   const skipBtn   = document.getElementById('apikey-popup-skip');
   const errorEl   = document.getElementById('apikey-popup-error');
+  const descEl    = document.getElementById('apikey-popup-desc');
 
-  // Pre-fill if a key is already stored
-  const stored = localStorage.getItem(STORAGE_KEY) || '';
-  input.value = stored;
+  // In multi mode, key is stored server-side; in single mode, use localStorage
+  if (APP_MODE === 'multi') {
+    input.value = '';
+    if (descEl) descEl.innerHTML = 'Stored securely <strong>on the server</strong>, tied to your account. Never shared with third parties.';
+  } else {
+    const stored = localStorage.getItem(STORAGE_KEY) || '';
+    input.value = stored;
+    if (descEl) descEl.innerHTML = 'Stored in <strong>browser localStorage</strong> and restored on each visit. Sent only to your own server — never to third parties.';
+  }
+
   errorEl.textContent = '';
   errorEl.classList.add('hidden');
 
@@ -296,17 +313,23 @@ function hideApiKeyPopup() {
 
 function _apiKeyEscHandler(e) {
   if (e.key !== 'Escape') return;
-  // Only dismiss on Esc if a key is already saved (popup is dismissable)
-  if (localStorage.getItem(STORAGE_KEY)) hideApiKeyPopup();
+  // Only dismiss on Esc if dismissable
+  if (APP_MODE === 'multi' || localStorage.getItem(STORAGE_KEY)) hideApiKeyPopup();
 }
 
-function updateSettingsKeyStatus() {
+function updateSettingsKeyStatus(apiKeySet) {
   const statusEl = document.getElementById('settings-key-status');
   if (!statusEl) return;
-  const stored = localStorage.getItem(STORAGE_KEY);
-  statusEl.textContent = stored
-    ? 'API key saved in your browser (localStorage).'
-    : 'No API key set. Click "Change Key" to add one.';
+  if (APP_MODE === 'multi') {
+    statusEl.textContent = apiKeySet
+      ? 'API key saved on the server for your account.'
+      : 'No API key set. Click "Change Key" to add one.';
+  } else {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    statusEl.textContent = stored
+      ? 'API key saved in your browser (localStorage).'
+      : 'No API key set. Click "Change Key" to add one.';
+  }
 }
 
 // Save button
@@ -330,9 +353,9 @@ document.getElementById('apikey-popup-save').onclick = async () => {
 
   try {
     await _sendKeyToServer(key);
-    localStorage.setItem(STORAGE_KEY, key);
+    if (APP_MODE !== 'multi') localStorage.setItem(STORAGE_KEY, key);
     hideApiKeyPopup();
-    updateSettingsKeyStatus();
+    updateSettingsKeyStatus(true);
     loadStats();
   } catch (e) {
     errorEl.textContent = e.message;
@@ -509,7 +532,8 @@ function uploadCard(u) {
           <p class="text-xs text-gray-400 font-mono mt-0.5" title="Upload ID">${u.id}</p>
           <div class="flex flex-wrap gap-1.5 mt-2">${modelBadges}</div>
         </div>
-        <div class="flex flex-col gap-2 shrink-0">
+        ${currentUserIsAdmin ? `
+        <div class="upload-actions-col flex flex-col gap-2 shrink-0">
           <button class="reembed-btn action-btn-primary"
                   data-id="${u.id}" data-name="${esc(u.filename)}">
             Re-embed
@@ -527,7 +551,7 @@ function uploadCard(u) {
                   style="border-color:#dc2626;background:#fff1f2;font-weight:700;">
             Delete All
           </button>
-        </div>
+        </div>` : ''}
       </div>
       <!-- Inline re-embed progress -->
       <div id="reembed-progress-${safeId}" class="hidden mt-3">
@@ -764,13 +788,183 @@ document.getElementById('confirm-ok').onclick = async () => {
 document.getElementById('refresh-data-btn').onclick = refreshUploads;
 document.getElementById('refresh-suno-btn').onclick = renderSunoTeamTable;
 
+function applyAdminUI() {
+  // Show/hide Config sections that are admin-only
+  const uploadSection  = document.getElementById('section-upload');
+  const sunoSection    = document.getElementById('section-suno-team');
+  if (uploadSection) uploadSection.classList.toggle('hidden', !currentUserIsAdmin);
+  if (sunoSection)   sunoSection.classList.toggle('hidden', !currentUserIsAdmin);
+
+  // Show Admin dropdown item for admins
+  const adminMenuItem = document.getElementById('user-menu-admin');
+  if (adminMenuItem) adminMenuItem.classList.toggle('hidden', !currentUserIsAdmin);
+
+  // Account section — visible in multi mode only
+  const accountSection = document.getElementById('section-account');
+  if (accountSection && APP_MODE === 'multi') {
+    accountSection.classList.remove('hidden');
+    const nameEl   = document.getElementById('account-username');
+    const roleEl   = document.getElementById('account-role');
+    const avatarEl = document.getElementById('account-avatar');
+    if (nameEl && CURRENT_USER) {
+      nameEl.textContent   = CURRENT_USER;
+      if (avatarEl) avatarEl.textContent = CURRENT_USER.charAt(0).toUpperCase();
+    }
+    if (roleEl) roleEl.textContent = currentUserIsAdmin ? 'Administrator' : 'User';
+  }
+
+  // Refresh uploads table so action buttons reflect admin status
+  if (!document.getElementById('page-settings').classList.contains('hidden')) {
+    renderUploadsTable();
+    if (currentUserIsAdmin) renderSunoTeamTable();
+  }
+}
+
+// Settings-page logout button (multi mode)
+document.getElementById('settings-logout-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('settings-logout-btn');
+  btn.disabled    = true;
+  btn.textContent = 'Logging out…';
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+  window.location.href = '/login';
+});
+
 async function loadSettingsPage() {
+  applyAdminUI();
   loadModelOptions();
   renderUploadsTable();
   renderLabelManager();
-  renderSunoTeamTable();
-  updateSettingsKeyStatus();
+  if (currentUserIsAdmin) renderSunoTeamTable();
+  try {
+    const d = await apiFetch('/api/stats');
+    updateSettingsKeyStatus(d.api_key_set);
+  } catch (_) {
+    updateSettingsKeyStatus(false);
+  }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ADMIN PAGE
+══════════════════════════════════════════════════════════════════════════ */
+
+function _adminMsg(text, type) {
+  const el = document.getElementById('admin-msg');
+  if (!el) return;
+  el.textContent = text;
+  el.className   = `text-xs mb-3 rounded-lg px-3 py-2 ${
+    type === 'error' ? 'bg-red-50 text-red-700 border border-red-200'
+                     : 'bg-green-50 text-green-700 border border-green-200'
+  }`;
+  el.classList.remove('hidden');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.add('hidden'), 4000);
+}
+
+async function loadAdminPage() {
+  const table = document.getElementById('admin-users-table');
+  if (!table) return;
+  table.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">Loading…</p>';
+  try {
+    const users = await apiFetch('/api/admin/users');
+    _renderAdminTable(users);
+  } catch (e) {
+    table.innerHTML = `<p class="text-sm text-red-500 text-center py-6">Failed to load: ${esc(e.message)}</p>`;
+  }
+}
+
+function _renderAdminTable(users) {
+  const table = document.getElementById('admin-users-table');
+  if (!users.length) {
+    table.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">No users found.</p>';
+    return;
+  }
+
+  // Identify self by matching CURRENT_USER name (id not exposed in meta tag)
+  table.innerHTML = `
+    <table class="w-full text-sm border-collapse">
+      <thead>
+        <tr class="bg-gray-50 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          <th class="px-3 py-2.5 border-b border-gray-200">Username</th>
+          <th class="px-3 py-2.5 border-b border-gray-200">Role</th>
+          <th class="px-3 py-2.5 border-b border-gray-200">Joined</th>
+          <th class="px-3 py-2.5 border-b border-gray-200 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${users.map(u => {
+          const isSelf = u.username.toLowerCase() === CURRENT_USER.toLowerCase();
+          const roleBadge = u.is_admin
+            ? '<span class="inline-flex items-center gap-1 text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase tracking-wide">Admin</span>'
+            : '<span class="inline-flex items-center gap-1 text-[10px] font-medium bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full uppercase tracking-wide">User</span>';
+          const selfTag = isSelf
+            ? '<span class="text-[10px] text-gray-400 ml-1">(you)</span>'
+            : '';
+          const actions = isSelf
+            ? '<span class="text-xs text-gray-400 italic">—</span>'
+            : `<div class="flex gap-2 justify-end flex-wrap">
+                 <button class="admin-toggle-btn action-btn-primary text-xs py-1 px-2.5"
+                         data-id="${u.id}" data-admin="${u.is_admin ? 1 : 0}">
+                   ${u.is_admin ? 'Remove Admin' : 'Make Admin'}
+                 </button>
+                 <button class="admin-delete-btn action-btn-danger text-xs py-1 px-2.5"
+                         data-id="${u.id}" data-name="${esc(u.username)}">
+                   Delete
+                 </button>
+               </div>`;
+          return `
+            <tr class="border-b border-gray-100 hover:bg-gray-50" id="admin-user-row-${u.id}">
+              <td class="px-3 py-2.5">
+                <span class="font-medium text-gray-900">${esc(u.username)}</span>${selfTag}
+              </td>
+              <td class="px-3 py-2.5">${roleBadge}</td>
+              <td class="px-3 py-2.5 text-gray-500 text-xs">${(u.created_at || '').slice(0, 10)}</td>
+              <td class="px-3 py-2.5 text-right">${actions}</td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+
+  // Toggle admin
+  table.querySelectorAll('.admin-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const uid       = parseInt(btn.dataset.id, 10);
+      const wasAdmin  = btn.dataset.admin === '1';
+      btn.disabled    = true;
+      btn.textContent = '…';
+      try {
+        const res = await apiFetch(`/api/admin/users/${uid}/toggle-admin`, { method: 'POST' });
+        _adminMsg(`${res.username} is now ${res.is_admin ? 'an Admin' : 'a regular User'}.`, 'ok');
+        await loadAdminPage();
+      } catch (e) {
+        _adminMsg(e.message, 'error');
+        btn.disabled    = false;
+        btn.textContent = wasAdmin ? 'Remove Admin' : 'Make Admin';
+      }
+    });
+  });
+
+  // Delete user
+  table.querySelectorAll('.admin-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const uid  = parseInt(btn.dataset.id, 10);
+      const name = btn.dataset.name;
+      if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
+      btn.disabled    = true;
+      btn.textContent = 'Deleting…';
+      try {
+        await apiFetch(`/api/admin/users/${uid}`, { method: 'DELETE' });
+        _adminMsg(`User "${name}" deleted.`, 'ok');
+        document.getElementById(`admin-user-row-${uid}`)?.remove();
+      } catch (e) {
+        _adminMsg(e.message, 'error');
+        btn.disabled    = false;
+        btn.textContent = 'Delete';
+      }
+    });
+  });
+}
+
+document.getElementById('admin-refresh-btn')?.addEventListener('click', loadAdminPage);
 
 async function renderLabelManager() {
   await loadAllLabels();   // refreshes _allLabels + filter chips if bookmark page was open
@@ -861,10 +1055,10 @@ async function renderSunoTeamTable() {
                 </td>
                 <td class="px-3 py-2 text-right text-gray-600 tabular-nums">${m.msg_count.toLocaleString()}</td>
                 <td class="px-3 py-2 text-right">
-                  <button class="suno-remove action-btn-danger"
+                  ${currentUserIsAdmin ? `<button class="suno-remove action-btn-danger"
                           data-username="${esc(m.username)}">
                     Remove from team
-                  </button>
+                  </button>` : ''}
                 </td>
               </tr>`).join('')}
           </tbody>
@@ -2145,7 +2339,7 @@ async function loadAllLabels() {
 function renderBmLabelFilterChips() {
   const container = document.getElementById('bm-label-filter-chips');
   if (!_allLabels.length) {
-    container.innerHTML = '<span class="text-xs text-gray-400">No labels yet. Create labels in Config → Manage Labels.</span>';
+    container.innerHTML = '<span class="text-xs text-gray-400">No labels yet. Create labels in Settings → Manage Labels.</span>';
     return;
   }
   container.innerHTML = _allLabels.map(l => {
@@ -4245,25 +4439,121 @@ document.addEventListener('keydown', e => {
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
+   MULTI-USER: avatar menu (dropdown with Config + Logout)
+══════════════════════════════════════════════════════════════════════════ */
+if (APP_MODE === 'multi' && CURRENT_USER) {
+  const menu        = document.getElementById('user-menu');
+  const avatarBtn   = document.getElementById('user-avatar-btn');
+  const dropdown    = document.getElementById('user-dropdown');
+  const initialEl   = document.getElementById('user-avatar-initial');
+  const nameEl      = document.getElementById('user-dropdown-name');
+  const adminBtn    = document.getElementById('user-menu-admin');
+  const configBtn   = document.getElementById('user-menu-config');
+  const logoutBtn   = document.getElementById('logout-btn');
+
+  // Populate avatar
+  if (initialEl) initialEl.textContent = CURRENT_USER.charAt(0).toUpperCase();
+  if (nameEl)    nameEl.textContent    = CURRENT_USER;
+
+  // Show the avatar menu; hide the standalone Config nav tab (replaced by dropdown)
+  menu.classList.remove('hidden');
+  menu.classList.add('block');
+  const navSettings = document.getElementById('nav-settings');
+  if (navSettings) navSettings.classList.add('hidden');
+
+  // Toggle dropdown open/closed
+  function _openMenu() {
+    dropdown.classList.remove('hidden');
+    avatarBtn.setAttribute('aria-expanded', 'true');
+  }
+  function _closeMenu() {
+    dropdown.classList.add('hidden');
+    avatarBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  avatarBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    dropdown.classList.contains('hidden') ? _openMenu() : _closeMenu();
+  });
+
+  // Close when clicking outside
+  document.addEventListener('click', e => {
+    if (!menu.contains(e.target)) _closeMenu();
+  });
+
+  // Close on Escape
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') _closeMenu();
+  });
+
+  // Admin → navigate to admin page
+  if (adminBtn) {
+    adminBtn.addEventListener('click', () => {
+      _closeMenu();
+      navigateTo('admin');
+    });
+  }
+
+  // Config → navigate to settings page
+  if (configBtn) {
+    configBtn.addEventListener('click', () => {
+      _closeMenu();
+      navigateTo('settings');
+    });
+  }
+
+  // Log Out
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      logoutBtn.disabled    = true;
+      logoutBtn.textContent = 'Logging out…';
+      try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+      window.location.href = '/login';
+    });
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    INIT
 ══════════════════════════════════════════════════════════════════════════ */
 (async () => {
   await refreshUploads();   // loads allUploads, renders scope chips, stats
   await loadBookmarkIds();  // populate bookmarkedIds set + badge
 
-  // Restore API key from localStorage → send to server, then check stats.
-  // If no key is stored yet, show the popup so the user can enter one.
-  const storedKey = localStorage.getItem(STORAGE_KEY);
-  if (storedKey) {
+  if (APP_MODE === 'multi') {
+    // Resolve admin status, then apply UI visibility rules.
     try {
-      await _sendKeyToServer(storedKey);
-      loadStats();
-    } catch (_) {
-      // Stored key is invalid/rejected — clear it and prompt again
-      localStorage.removeItem(STORAGE_KEY);
+      const me = await apiFetch('/api/auth/me');
+      currentUserIsAdmin = !!me.is_admin;
+    } catch (_) {}
+    applyAdminUI();
+
+    // Load stats and prompt for API key if not set.
+    try {
+      const d = await apiFetch('/api/stats');
+      document.getElementById('stats-bar').innerHTML =
+        `${d.total_messages.toLocaleString()} msgs &bull; ` +
+        `${d.total_uploads} uploads &bull; ` +
+        `${d.embedded_messages.toLocaleString()} embedded &bull; ` +
+        `<span style="color:#c4b5fd">${esc(d.current_model_label)}</span>` +
+        (d.api_key_set ? ' &bull; <span style="color:#86efac">API key ✓</span>' : '');
+      if (!d.api_key_set) showApiKeyPopup(true);
+    } catch (_) {}
+  } else {
+    // Single mode: restore API key from localStorage → send to server.
+    // If no key is stored yet, show the popup so the user can enter one.
+    const storedKey = localStorage.getItem(STORAGE_KEY);
+    if (storedKey) {
+      try {
+        await _sendKeyToServer(storedKey);
+        loadStats();
+      } catch (_) {
+        // Stored key is invalid/rejected — clear it and prompt again
+        localStorage.removeItem(STORAGE_KEY);
+        showApiKeyPopup(false);
+      }
+    } else {
       showApiKeyPopup(false);
     }
-  } else {
-    showApiKeyPopup(false);
   }
 })();

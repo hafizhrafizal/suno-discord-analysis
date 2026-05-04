@@ -5,15 +5,55 @@ All modules that need to read or write the live OpenAI clients,
 vector-store collections, embed-job registry, or response caches
 import from here.  Using module-level variables keeps references
 consistent: `state.openai_client = x` is visible to every importer.
+
+Multi-user mode uses ContextVar to inject per-request OpenAI clients.
+`get_openai_client()` / `get_async_openai_client()` are the preferred
+accessors — they return the request-scoped client when set, else the
+global fallback.
 """
 
 import time as _time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from contextvars import ContextVar
+from typing import Optional, Tuple
 
+# ── App mode ──────────────────────────────────────────────────────────────────
+# Set at startup from APP_MODE env or the "app_mode" DB setting.
+# Values: "single" | "multi" | "pending_onboarding"
+app_mode: str = ""
+
+# ── Global OpenAI clients (single mode / env-key startup) ────────────────────
 # Populated during lifespan startup; None until then.
 openai_client:        Optional[object] = None   # openai.OpenAI  (sync — chat completions)
 async_openai_client:  Optional[object] = None   # openai.AsyncOpenAI (async — embeddings)
+
+# ── Per-user client cache (multi mode) ───────────────────────────────────────
+# user_id → (sync OpenAI client, async OpenAI client)
+user_clients: dict = {}
+
+# ── Per-request ContextVar (multi mode) ──────────────────────────────────────
+# Holds (sync_client, async_client) for the duration of a single HTTP request.
+# Set by _SessionAuthMiddleware; reset after call_next completes.
+_current_clients: ContextVar[Optional[Tuple[object, object]]] = ContextVar(
+    "_current_clients", default=None
+)
+
+
+def get_openai_client():
+    """Return the sync OpenAI client for the current request (multi) or global (single)."""
+    pair = _current_clients.get()
+    return pair[0] if pair is not None else openai_client
+
+
+def get_async_openai_client():
+    """Return the async OpenAI client for the current request (multi) or global (single)."""
+    pair = _current_clients.get()
+    return pair[1] if pair is not None else async_openai_client
+
+
+def set_request_clients(sync_c, async_c) -> object:
+    """Set per-request clients; returns the ContextVar token for later reset."""
+    return _current_clients.set((sync_c, async_c))
 
 # model_id → *CollectionWrapper (Qdrant or Chroma)
 vector_collections: dict[str, object] = {}

@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime
 
 import pandas as pd
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 import state
@@ -35,6 +35,7 @@ from embeddings import (
     embedding_model_available,
     run_embed_job,
 )
+from routers.deps import require_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -77,7 +78,7 @@ async def list_uploads():
 # ── CSV upload + streaming embed ──────────────────────────────────────────────
 
 @router.post("/api/upload")
-async def upload_csv(request: Request, file: UploadFile = File(...)):
+async def upload_csv(request: Request, file: UploadFile = File(...), _: dict = Depends(require_admin)):
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "Only .csv files are supported")
 
@@ -238,7 +239,7 @@ async def upload_csv(request: Request, file: UploadFile = File(...)):
 # ── Re-embed ──────────────────────────────────────────────────────────────────
 
 @router.post("/api/uploads/{upload_id}/reembed")
-async def reembed_upload(upload_id: str):
+async def reembed_upload(upload_id: str, _: dict = Depends(require_admin)):
     """
     Start a background embed job for an existing upload.
     Returns immediately with a job_id.  Poll GET /api/jobs/{job_id} for progress.
@@ -302,7 +303,7 @@ async def get_job(job_id: str):
 # ── Delete endpoints ──────────────────────────────────────────────────────────
 
 @router.delete("/api/uploads/{upload_id}")
-async def delete_upload(upload_id: str):
+async def delete_upload(upload_id: str, _: dict = Depends(require_admin)):
     """Delete an upload and all its messages from SQLite and every vector-store collection."""
     conn   = get_db()
     upload = conn.execute("SELECT * FROM uploads WHERE id = ?", (upload_id,)).fetchone()
@@ -337,7 +338,7 @@ async def delete_upload(upload_id: str):
 
 
 @router.delete("/api/uploads/{upload_id}/sqlite")
-async def delete_upload_sqlite(upload_id: str):
+async def delete_upload_sqlite(upload_id: str, _: dict = Depends(require_admin)):
     """Delete an upload and its messages from SQLite only — embeddings are preserved."""
     conn   = get_db()
     upload = conn.execute("SELECT * FROM uploads WHERE id = ?", (upload_id,)).fetchone()
@@ -358,7 +359,7 @@ async def delete_upload_sqlite(upload_id: str):
 
 
 @router.delete("/api/uploads/{upload_id}/embeddings")
-async def delete_upload_embeddings(upload_id: str):
+async def delete_upload_embeddings(upload_id: str, _: dict = Depends(require_admin)):
     """Delete embeddings for an upload from every vector-store collection — SQLite untouched."""
     conn   = get_db()
     upload = conn.execute("SELECT * FROM uploads WHERE id = ?", (upload_id,)).fetchone()

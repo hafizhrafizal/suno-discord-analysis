@@ -487,3 +487,56 @@ mark {
 }
 #users-table tbody tr:hover .users-td { background: #f5f3ff; }
 .sort-ind { font-size: 0.7rem; color: #9ca3af; font-weight: 400; }
+
+/* ── Mobile responsive overrides ── */
+@media (max-width: 639px) {
+  /* Tighter nav tabs */
+  .nav-tab {
+    padding: 0.3rem 0.5rem;
+    gap: 0;
+  }
+
+  /* Sub-tabs scroll horizontally instead of wrapping */
+  .subtab-btn {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.75rem;
+  }
+
+  /* Search/filter rows: ensure inputs don't overflow */
+  .search-input {
+    max-width: 100%;
+  }
+
+  /* Log label: collapse min-width on mobile */
+  .log-label { min-width: 6rem; }
+  .fu-log-label { min-width: 5.5rem; }
+
+  /* Range mode buttons: tighter */
+  .range-mode-btn {
+    padding: 0.3rem 0.65rem;
+    font-size: 0.75rem;
+  }
+
+  /* Chat bubbles: allow full width on narrow screens */
+  .chat-bubble-user      { max-width: 95%; }
+  .chat-bubble-assistant { max-width: 98%; }
+}
+
+/* ── Admin table: horizontal scroll on small screens ── */
+#admin-users-table { overflow-x: auto; }
+
+/* ── Upload action button column: stack on mobile ── */
+@media (max-width: 479px) {
+  /* Upload card: move action buttons below info, full-width */
+  .upload-actions-col {
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .upload-actions-col .action-btn-primary,
+  .upload-actions-col .action-btn-warning,
+  .upload-actions-col .action-btn-danger {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+}

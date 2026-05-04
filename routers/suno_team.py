@@ -5,9 +5,10 @@ routers/suno_team.py — Suno-team member management.
   DELETE /api/suno-team/{username}
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from database import get_db
+from routers.deps import require_admin
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ async def get_suno_team():
 
 
 @router.delete("/api/suno-team/{username}")
-async def remove_suno_team(username: str):
+async def remove_suno_team(username: str, _: dict = Depends(require_admin)):
     """Mark all messages by this username as non-Suno-Team."""
     conn   = get_db()
     result = conn.execute(

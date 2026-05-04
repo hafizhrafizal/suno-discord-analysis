@@ -11,35 +11,55 @@ routers/bookmarks.py — bookmark management and label assignment.
 """
 
 from datetime import datetime
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
-from database import get_db
+import state
+from database import get_db, get_session_user
 
 router = APIRouter()
 
 
+def _uid(request: Request) -> Optional[int]:
+    """Return the authenticated user's id in multi mode, else None."""
+    if state.app_mode != "multi":
+        return None
+    token = request.cookies.get("session")
+    if not token:
+        return None
+    user = get_session_user(token)
+    return user["id"] if user else None
+
+
 @router.post("/api/bookmarks")
-async def add_bookmark(body: dict):
+async def add_bookmark(body: dict, request: Request):
     msg_id = body.get("msg_id")
     if not isinstance(msg_id, int):
         raise HTTPException(400, "msg_id (int) is required")
     ctx_before = int(body.get("ctx_before", 5))
     ctx_after  = int(body.get("ctx_after",  5))
     note       = str(body.get("note", ""))
+    user_id    = _uid(request)
     conn = get_db()
     try:
         row = conn.execute("SELECT id FROM messages WHERE id=?", (msg_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Message not found")
-        existing = conn.execute(
-            "SELECT id FROM bookmarks WHERE msg_id=?", (msg_id,)
-        ).fetchone()
+        # Check for existing bookmark scoped to this user (or global in single mode)
+        if user_id is not None:
+            existing = conn.execute(
+                "SELECT id FROM bookmarks WHERE msg_id=? AND user_id=?", (msg_id, user_id)
+            ).fetchone()
+        else:
+            existing = conn.execute(
+                "SELECT id FROM bookmarks WHERE msg_id=?", (msg_id,)
+            ).fetchone()
         if existing:
             return {"status": "exists", "bookmark_id": existing["id"]}
         cur = conn.execute(
-            "INSERT INTO bookmarks (msg_id, ctx_before, ctx_after, note, created_at) VALUES (?,?,?,?,?)",
-            (msg_id, ctx_before, ctx_after, note, datetime.utcnow().isoformat()),
+            "INSERT INTO bookmarks (msg_id, ctx_before, ctx_after, note, created_at, user_id) VALUES (?,?,?,?,?,?)",
+            (msg_id, ctx_before, ctx_after, note, datetime.utcnow().isoformat(), user_id),
         )
         conn.commit()
         return {"status": "created", "bookmark_id": cur.lastrowid}
@@ -48,20 +68,39 @@ async def add_bookmark(body: dict):
 
 
 @router.get("/api/bookmarks")
-async def list_bookmarks():
+async def list_bookmarks(request: Request):
+    user_id = _uid(request)
     conn = get_db()
-    rows = conn.execute(
-        """SELECT b.id AS bookmark_id, b.ctx_before, b.ctx_after, b.note, b.created_at,
-                  m.*
-           FROM bookmarks b
-           JOIN messages m ON m.id = b.msg_id
-           ORDER BY b.created_at DESC"""
-    ).fetchall()
-    label_rows = conn.execute(
-        """SELECT bl.bookmark_id, l.id, l.name, l.color
-           FROM bookmark_labels bl
-           JOIN labels l ON l.id = bl.label_id"""
-    ).fetchall()
+    if user_id is not None:
+        rows = conn.execute(
+            """SELECT b.id AS bookmark_id, b.ctx_before, b.ctx_after, b.note, b.created_at,
+                      m.*
+               FROM bookmarks b
+               JOIN messages m ON m.id = b.msg_id
+               WHERE b.user_id = ?
+               ORDER BY b.created_at DESC""",
+            (user_id,),
+        ).fetchall()
+        label_rows = conn.execute(
+            """SELECT bl.bookmark_id, l.id, l.name, l.color
+               FROM bookmark_labels bl
+               JOIN labels l ON l.id = bl.label_id
+               WHERE bl.bookmark_id IN (SELECT id FROM bookmarks WHERE user_id = ?)""",
+            (user_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT b.id AS bookmark_id, b.ctx_before, b.ctx_after, b.note, b.created_at,
+                      m.*
+               FROM bookmarks b
+               JOIN messages m ON m.id = b.msg_id
+               ORDER BY b.created_at DESC"""
+        ).fetchall()
+        label_rows = conn.execute(
+            """SELECT bl.bookmark_id, l.id, l.name, l.color
+               FROM bookmark_labels bl
+               JOIN labels l ON l.id = bl.label_id"""
+        ).fetchall()
     conn.close()
 
     labels_by_bm: dict = {}
@@ -78,18 +117,30 @@ async def list_bookmarks():
 
 
 @router.get("/api/bookmarks/ids")
-async def list_bookmark_ids():
+async def list_bookmark_ids(request: Request):
     """Return only the bookmarked message IDs — cheap check for UI state."""
+    user_id = _uid(request)
     conn = get_db()
-    rows = conn.execute("SELECT msg_id FROM bookmarks").fetchall()
+    if user_id is not None:
+        rows = conn.execute(
+            "SELECT msg_id FROM bookmarks WHERE user_id = ?", (user_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT msg_id FROM bookmarks").fetchall()
     conn.close()
     return [r["msg_id"] for r in rows]
 
 
 @router.delete("/api/bookmarks/{bookmark_id}")
-async def delete_bookmark(bookmark_id: int):
+async def delete_bookmark(bookmark_id: int, request: Request):
+    user_id = _uid(request)
     conn = get_db()
-    cur  = conn.execute("DELETE FROM bookmarks WHERE id=?", (bookmark_id,))
+    if user_id is not None:
+        cur = conn.execute(
+            "DELETE FROM bookmarks WHERE id=? AND user_id=?", (bookmark_id, user_id)
+        )
+    else:
+        cur = conn.execute("DELETE FROM bookmarks WHERE id=?", (bookmark_id,))
     conn.commit()
     conn.close()
     if cur.rowcount == 0:
@@ -98,9 +149,15 @@ async def delete_bookmark(bookmark_id: int):
 
 
 @router.delete("/api/bookmarks/by-msg/{msg_id}")
-async def delete_bookmark_by_msg(msg_id: int):
+async def delete_bookmark_by_msg(msg_id: int, request: Request):
+    user_id = _uid(request)
     conn = get_db()
-    cur  = conn.execute("DELETE FROM bookmarks WHERE msg_id=?", (msg_id,))
+    if user_id is not None:
+        cur = conn.execute(
+            "DELETE FROM bookmarks WHERE msg_id=? AND user_id=?", (msg_id, user_id)
+        )
+    else:
+        cur = conn.execute("DELETE FROM bookmarks WHERE msg_id=?", (msg_id,))
     conn.commit()
     conn.close()
     return {"status": "deleted", "affected": cur.rowcount}
