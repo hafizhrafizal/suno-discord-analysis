@@ -49,7 +49,7 @@ from openai import AsyncOpenAI, OpenAI
 from starlette.middleware.base import BaseHTTPMiddleware
 
 import state
-from config import API_SECRET, APP_MODE, EMBEDDING_MODELS, VECTOR_DB
+from config import API_SECRET, APP_MODE, EMBEDDING_MODELS, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, VECTOR_DB
 from database import (
     ensure_admin_user,
     get_db,
@@ -340,7 +340,10 @@ async def login_page(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="login.html",
-        context={"first_run": no_users},
+        context={
+            "first_run":      no_users,
+            "google_enabled": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
+        },
     )
 
 

@@ -9,7 +9,8 @@
 </head>
 <body class="bg-slate-100 text-gray-900 min-h-screen flex flex-col items-center justify-center p-4">
 
-  <div class="w-full max-w-xl">
+  <!-- ── Step 1: Choose mode ─────────────────────────────────────────────── -->
+  <div id="step1" class="w-full max-w-xl">
 
     <!-- Header -->
     <div class="text-center mb-8">
@@ -104,21 +105,88 @@
 
   </div>
 
+  <!-- ── Step 2: Create first admin (multi mode, no users yet) ──────────── -->
+  <div id="step2" class="hidden w-full max-w-sm">
+
+    <!-- Header -->
+    <div class="text-center mb-6">
+      <div class="inline-flex items-center justify-center w-12 h-12 bg-indigo-700 rounded-2xl mb-3 shadow-lg">
+        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+        </svg>
+      </div>
+      <h1 class="text-xl font-bold text-gray-900 tracking-tight">Create Admin Account</h1>
+      <p class="text-sm text-gray-500 mt-1">
+        Multi-user mode is enabled. You're the first user — set up your admin account to continue.
+      </p>
+    </div>
+
+    <!-- Form card -->
+    <div class="bg-white rounded-2xl shadow-lg p-6 space-y-4">
+      <div>
+        <label for="admin-username" class="block text-xs font-semibold text-gray-700 mb-1">Username</label>
+        <input id="admin-username" type="text" autocomplete="username" placeholder="choose a username"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900
+                      focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600" />
+        <p class="text-xs text-gray-400 mt-1">2–40 characters.</p>
+      </div>
+      <div>
+        <label for="admin-password" class="block text-xs font-semibold text-gray-700 mb-1">Password</label>
+        <input id="admin-password" type="password" autocomplete="new-password" placeholder="at least 8 characters"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900
+                      focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600" />
+      </div>
+      <div>
+        <label for="admin-confirm" class="block text-xs font-semibold text-gray-700 mb-1">Confirm Password</label>
+        <input id="admin-confirm" type="password" autocomplete="new-password" placeholder="repeat password"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900
+                      focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600" />
+      </div>
+      <p id="admin-error" class="hidden text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2" role="alert"></p>
+      <button id="admin-btn"
+              class="w-full bg-indigo-700 text-white rounded-lg py-2 text-sm font-semibold
+                     hover:bg-indigo-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+                     focus-visible:outline focus-visible:outline-3 focus-visible:outline-indigo-900 focus-visible:outline-offset-2">
+        Create Admin &amp; Enter
+      </button>
+    </div>
+
+    <p class="text-xs text-gray-400 text-center mt-4">
+      You can add more users from the Admin panel after logging in.
+    </p>
+
+  </div>
+
   <script>
     async function chooseMode(mode) {
-      const btns = document.querySelectorAll('.mode-card');
-      btns.forEach(b => { b.disabled = true; b.classList.add('opacity-60'); });
+      const btns    = document.querySelectorAll('.mode-card');
       const errorEl = document.getElementById('error-msg');
+      btns.forEach(b => { b.disabled = true; b.classList.add('opacity-60'); });
       errorEl.classList.add('hidden');
 
       try {
-        const res = await fetch('/api/auth/set-mode', {
-          method: 'POST',
+        const res  = await fetch('/api/auth/set-mode', {
+          method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode }),
+          body:    JSON.stringify({ mode }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Failed to set mode.');
+
+        if (mode === 'multi') {
+          // Check whether any users already exist.
+          // If not, show the first-admin creation step instead of /login.
+          const uRes  = await fetch('/api/auth/users-exist');
+          const uData = await uRes.json();
+          if (!uData.exists) {
+            document.getElementById('step1').classList.add('hidden');
+            document.getElementById('step2').classList.remove('hidden');
+            document.getElementById('admin-username').focus();
+            return;
+          }
+        }
+
         window.location.href = data.redirect || '/';
       } catch (e) {
         errorEl.textContent = e.message;
@@ -127,8 +195,56 @@
       }
     }
 
+    async function createAdmin() {
+      const username = document.getElementById('admin-username').value.trim();
+      const password = document.getElementById('admin-password').value;
+      const confirm  = document.getElementById('admin-confirm').value;
+      const errorEl  = document.getElementById('admin-error');
+      const btn      = document.getElementById('admin-btn');
+      errorEl.classList.add('hidden');
+
+      if (!username) {
+        errorEl.textContent = 'Username is required.';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+      if (!password || password.length < 8) {
+        errorEl.textContent = 'Password must be at least 8 characters.';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+      if (password !== confirm) {
+        errorEl.textContent = 'Passwords do not match.';
+        errorEl.classList.remove('hidden');
+        return;
+      }
+
+      btn.disabled    = true;
+      btn.textContent = 'Creating account…';
+      try {
+        const res  = await fetch('/api/auth/first-admin', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to create admin.');
+        window.location.href = data.redirect || '/';
+      } catch (e) {
+        errorEl.textContent = e.message;
+        errorEl.classList.remove('hidden');
+        btn.disabled    = false;
+        btn.textContent = 'Create Admin & Enter';
+      }
+    }
+
     document.getElementById('btn-single').addEventListener('click', () => chooseMode('single'));
     document.getElementById('btn-multi').addEventListener('click',  () => chooseMode('multi'));
+    document.getElementById('admin-btn').addEventListener('click',  createAdmin);
+
+    ['admin-username','admin-password','admin-confirm'].forEach(id => {
+      document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') createAdmin(); });
+    });
   </script>
 </body>
 </html>

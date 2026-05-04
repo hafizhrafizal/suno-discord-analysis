@@ -39,6 +39,16 @@ CHROMA_PORT       = int(os.environ.get("CHROMA_PORT", "8001"))
 CHROMA_SSL        = os.environ.get("CHROMA_SSL", "false").strip().lower() == "true"
 CHROMA_AUTH_TOKEN = os.environ.get("CHROMA_AUTH_TOKEN", "").strip()
 
+# ── Google OAuth ─────────────────────────────────────────────────────────────
+# Create credentials at https://console.cloud.google.com/ → APIs & Services → Credentials
+# Authorised redirect URI must match GOOGLE_REDIRECT_URI exactly.
+GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID",     "").strip()
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+GOOGLE_REDIRECT_URI  = os.environ.get(
+    "GOOGLE_REDIRECT_URI",
+    "http://localhost:8000/api/auth/google/callback",
+).strip()
+
 # ── Application mode ─────────────────────────────────────────────────────────
 # "single" — one user, API key in localStorage; no login system.
 # "multi"  — user accounts with login/signup; each user stores their own API key.
