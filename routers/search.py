@@ -1,16 +1,20 @@
 """
 routers/search.py — message search endpoints.
 
-  GET /api/search/username
-  GET /api/search/keyword
-  GET /api/search/range
-  GET /api/search/semantic
+  GET  /api/search/username
+  GET  /api/search/keyword
+  GET  /api/search/range
+  GET  /api/search/semantic
+  GET  /api/search/users-in-range
+  GET  /api/search/user-messages
+  POST /api/search/bulk-context
 """
 
 import logging
+from datetime import date as _date, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 import state
 from config import EMBEDDING_MODELS
@@ -190,3 +194,156 @@ async def search_semantic(
             break
 
     return messages
+
+
+@router.get("/api/search/users-in-range")
+async def search_users_in_range(
+    upload_ids: Optional[str] = None,
+    date_from:  Optional[str] = None,
+    date_to:    Optional[str] = None,
+    suno_team:  str           = "all",
+    min_words:  int           = 0,
+):
+    uid_list              = _parse_upload_ids(upload_ids)
+    uid_sql, uid_params   = _sql_upload_ids_clause(uid_list)
+    date_sql, date_params = sql_date_clauses(date_from, date_to)
+    words_sql, words_params = sql_min_words_clause(min_words)
+
+    sql = """
+        SELECT
+            username,
+            COUNT(*) AS total_messages,
+            MIN(date) AS first_message_date,
+            MAX(date) AS last_message_date,
+            ROUND(AVG(
+                CASE WHEN TRIM(COALESCE(content,'')) = '' THEN 0
+                     ELSE LENGTH(TRIM(COALESCE(content,'')))
+                          - LENGTH(REPLACE(TRIM(COALESCE(content,'')), ' ', ''))
+                          + 1
+                END
+            ), 1) AS avg_word_count,
+            COUNT(DISTINCT strftime('%Y-%W', date)) AS weeks_with_messages,
+            MAX(is_suno_team) AS is_suno_team
+        FROM messages
+        WHERE 1=1
+    """
+    sql += uid_sql + _suno_sql(suno_team) + date_sql + words_sql
+    sql += " GROUP BY LOWER(username) ORDER BY total_messages DESC"
+
+    conn = get_db()
+    rows = conn.execute(
+        sql, uid_params + date_params + words_params
+    ).fetchall()
+    conn.close()
+
+    # Compute total distinct weeks in the requested date range.
+    total_weeks_in_range: Optional[int] = None
+    if date_from and date_to:
+        try:
+            d0 = _date.fromisoformat(date_from)
+            d1 = _date.fromisoformat(date_to)
+            if d0 <= d1:
+                seen: set = set()
+                cur = d0
+                while cur <= d1:
+                    seen.add(cur.strftime("%Y-%W"))
+                    cur += timedelta(days=7)
+                seen.add(d1.strftime("%Y-%W"))
+                total_weeks_in_range = len(seen)
+        except ValueError:
+            pass
+
+    result = []
+    for r in rows:
+        row = dict(r)
+        weeks_with = row.get("weeks_with_messages") or 0
+        if total_weeks_in_range and total_weeks_in_range > 0:
+            row["pct_weeks_active"] = round(weeks_with / total_weeks_in_range * 100, 1)
+        else:
+            row["pct_weeks_active"] = None
+        row["total_weeks_in_range"] = total_weeks_in_range
+        result.append(row)
+
+    return result
+
+
+@router.get("/api/search/user-messages")
+async def search_user_messages(
+    username:   str,
+    upload_ids: Optional[str] = None,
+    date_from:  Optional[str] = None,
+    date_to:    Optional[str] = None,
+    keyword:    Optional[str] = None,
+    suno_team:  str           = "all",
+    min_words:  int           = 0,
+    limit:      int           = 0,
+):
+    uid_list              = _parse_upload_ids(upload_ids)
+    uid_sql, uid_params   = _sql_upload_ids_clause(uid_list)
+    date_sql, date_params = sql_date_clauses(date_from, date_to)
+    words_sql, words_params = sql_min_words_clause(min_words)
+
+    params: list = [username]
+    sql = (
+        "SELECT * FROM messages WHERE LOWER(username) = LOWER(?)"
+        + uid_sql + _suno_sql(suno_team) + date_sql + words_sql
+    )
+    params += uid_params + date_params + words_params
+
+    if keyword:
+        sql += " AND LOWER(content) LIKE LOWER(?)"
+        params.append(f"%{keyword}%")
+
+    sql += " ORDER BY date, row_index"
+    if limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+
+    conn = get_db()
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@router.post("/api/search/bulk-context")
+async def bulk_context(request: Request):
+    """
+    Fetch conversation context for multiple messages in one round-trip.
+
+    Request body:
+      msg_ids – list of integer message IDs
+      before  – messages before each target (default 5, max 50)
+      after   – messages after each target  (default 5, max 50)
+
+    Returns { "<msg_id>": [context_rows...], ... }
+    Each row has is_target=True on the target message.
+    """
+    body    = await request.json()
+    msg_ids = [int(i) for i in (body.get("msg_ids") or [])]
+    before  = max(0, min(int(body.get("before", 5)), 50))
+    after   = max(0, min(int(body.get("after",  5)), 50))
+
+    if not msg_ids:
+        return {}
+
+    conn = get_db()
+    result: dict = {}
+    for msg_id in msg_ids:
+        target = conn.execute(
+            "SELECT * FROM messages WHERE id = ?", (msg_id,)
+        ).fetchone()
+        if not target:
+            continue
+        t = dict(target)
+        rows = conn.execute(
+            """SELECT * FROM messages
+               WHERE upload_id = ? AND row_index BETWEEN ? AND ?
+               ORDER BY row_index""",
+            (t["upload_id"], max(0, t["row_index"] - before), t["row_index"] + after),
+        ).fetchall()
+        result[str(msg_id)] = [
+            {**dict(r), "is_target": r["id"] == msg_id}
+            for r in rows
+        ]
+    conn.close()
+    return result

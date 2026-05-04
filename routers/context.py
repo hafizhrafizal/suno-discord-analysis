@@ -75,8 +75,8 @@ def _prepare_filter_query(raw: str) -> tuple[str, float]:
     """
     Return (text_to_embed, threshold).
 
-    Question queries: strip stop/question words → lower threshold (0.30).
-    Plain queries:    embed as-is → standard threshold (0.45).
+    Question queries: strip stop/question words → lower threshold (0.20).
+    Plain queries:    embed as-is → standard threshold (0.30).
     """
     is_question = bool(_QUESTION_RE.match(raw.strip())) or raw.strip().endswith("?")
 
@@ -84,10 +84,10 @@ def _prepare_filter_query(raw: str) -> tuple[str, float]:
         tokens     = re.findall(r"\b\w+\b", raw.lower())
         core       = [t for t in tokens if t not in _FILTER_STOP and len(t) > 1]
         embed_text = " ".join(core) if core else raw
-        threshold  = 0.30
+        threshold  = 0.20
     else:
         embed_text = raw
-        threshold  = 0.45
+        threshold  = 0.30
 
     return embed_text, threshold
 
@@ -100,7 +100,7 @@ async def filter_semantic(body: dict):
     if not query:
         raise HTTPException(400, "query is required")
     if not raw_ids:
-        return {"results": [], "threshold": 0.45, "query_used": query}
+        return {"results": [], "threshold": 0.30, "query_used": query}
 
     try:
         msg_ids = [int(x) for x in raw_ids]

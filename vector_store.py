@@ -238,10 +238,20 @@ class QdrantCollectionWrapper:
 
 # ── ChromaDB wrapper (persistent + HTTP share the same Collection API) ────────
 
+# SQLite (used by ChromaDB persistent) caps bind variables at 999.
+# Stay well clear of the limit for both query and bulk-get operations.
+_CHROMA_SAFE_BATCH = 900
+
+
 class ChromaCollectionWrapper:
     """
     Thin wrapper around a native ChromaDB Collection.
     Exposes the same interface as QdrantCollectionWrapper.
+
+    SQLite safety: ChromaDB persistent uses SQLite internally, which raises
+    "too many SQL variables" when n_results or an id list exceeds ~999.
+    query() caps n_results at _CHROMA_SAFE_BATCH; get() chunks large id lists
+    and merges the results transparently.
     """
 
     def __init__(self, col):
@@ -254,11 +264,30 @@ class ChromaCollectionWrapper:
             return 0
 
     def get(self, ids=None, where=None, limit=None, include=None):
+        include = include or []
+        # Chunk large id lists to avoid SQLite variable limit
+        if ids is not None and len(ids) > _CHROMA_SAFE_BATCH:
+            want_vectors = "embeddings" in include
+            merged_ids: list = []
+            merged_embs: list = []
+            for i in range(0, len(ids), _CHROMA_SAFE_BATCH):
+                chunk = ids[i : i + _CHROMA_SAFE_BATCH]
+                r = self._col.get(ids=chunk, include=include)
+                merged_ids.extend(r.get("ids") or [])
+                if want_vectors:
+                    embs = r.get("embeddings")
+                    if embs is not None:
+                        merged_embs.extend(embs)
+            result: dict = {"ids": merged_ids}
+            if want_vectors:
+                result["embeddings"] = merged_embs
+            return result
+
         kwargs: dict = {}
         if ids     is not None: kwargs["ids"]     = ids
         if where   is not None: kwargs["where"]   = where
         if limit   is not None: kwargs["limit"]   = limit
-        if include is not None: kwargs["include"] = include
+        if include:             kwargs["include"] = include
         return self._col.get(**kwargs)
 
     def upsert(self, embeddings, documents, ids, metadatas):
@@ -270,7 +299,9 @@ class ChromaCollectionWrapper:
         )
 
     def query(self, query_embeddings, n_results):
-        return self._col.query(query_embeddings=query_embeddings, n_results=n_results)
+        # Cap n_results to avoid SQLite "too many SQL variables" in persistent backend
+        safe_n = min(n_results, _CHROMA_SAFE_BATCH)
+        return self._col.query(query_embeddings=query_embeddings, n_results=safe_n)
 
     def delete(self, ids=None, where=None):
         kwargs: dict = {}

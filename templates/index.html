@@ -124,7 +124,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3v-3z"/>
           </svg>
-          <span class="hidden sm:inline">Hybrid Summary</span>
+          <span class="hidden sm:inline">Chat Summary</span>
         </button>
         <button id="nav-bookmarks" class="nav-tab" data-page="bookmarks">
           <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -203,14 +203,15 @@
         <h2 id="search-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">Search</h2>
 
         <div class="flex border-b mb-4 overflow-x-auto" role="tablist" aria-label="Search type">
-          <button class="search-tab tab-active whitespace-nowrap" data-tab="username" role="tab" aria-selected="true" aria-controls="tab-username">By Username</button>
-          <button class="search-tab whitespace-nowrap" data-tab="keyword" role="tab" aria-selected="false" aria-controls="tab-keyword">Keyword</button>
+          <button class="search-tab tab-active whitespace-nowrap" data-tab="keyword" role="tab" aria-selected="true" aria-controls="tab-keyword">Keyword</button>
+          <button class="search-tab whitespace-nowrap" data-tab="username" role="tab" aria-selected="false" aria-controls="tab-username">By Username</button>
           <button class="search-tab whitespace-nowrap" data-tab="semantic" role="tab" aria-selected="false" aria-controls="tab-semantic">Semantic</button>
           <button class="search-tab whitespace-nowrap" data-tab="range" role="tab" aria-selected="false" aria-controls="tab-range">Date Range</button>
+          <button class="search-tab whitespace-nowrap" data-tab="users" role="tab" aria-selected="false" aria-controls="tab-users">Users in Range</button>
         </div>
 
         <!-- Username Tab -->
-        <div id="tab-username" class="search-panel" role="tabpanel" aria-labelledby="">
+        <div id="tab-username" class="search-panel hidden" role="tabpanel" aria-labelledby="">
           <div class="flex flex-wrap gap-2 mb-2">
             <label for="username-input" class="sr-only">Username</label>
             <input id="username-input" type="text" placeholder="Username or partial match…" class="search-input flex-1 min-w-[8rem]" />
@@ -238,7 +239,7 @@
         </div>
 
         <!-- Keyword Tab -->
-        <div id="tab-keyword" class="search-panel hidden" role="tabpanel">
+        <div id="tab-keyword" class="search-panel" role="tabpanel">
           <div class="flex flex-wrap gap-2 mb-2">
             <label for="keyword-input" class="sr-only">Keyword or phrase</label>
             <input id="keyword-input" type="text" placeholder="Keyword or phrase…" class="search-input flex-1 min-w-[8rem]" />
@@ -293,6 +294,12 @@
               <option value="only">Only Suno Team</option>
               <option value="exclude">Exclude Suno Team</option>
             </select>
+            <label for="semantic-sort" class="filter-label">Sort</label>
+            <select id="semantic-sort" class="search-input">
+              <option value="score">Similarity ↓</option>
+              <option value="date_asc">Date ↑</option>
+              <option value="date_desc">Date ↓</option>
+            </select>
           </div>
           <p class="text-xs text-gray-600 mt-1.5">
             Requires embedded data. Vectors are content-only — author &amp; date filter after retrieval.
@@ -338,6 +345,103 @@
           <p class="text-xs text-gray-600 mt-1.5">Returns all messages in the selected range. At least one date is required.</p>
         </div>
 
+        <!-- Users in Range Tab -->
+        <div id="tab-users" class="search-panel hidden" role="tabpanel">
+          <div class="flex flex-wrap gap-2 items-center mb-2">
+            <label for="users-date-from" class="filter-label">From</label>
+            <input id="users-date-from" type="date" class="search-input" />
+            <label for="users-date-to" class="filter-label">To</label>
+            <input id="users-date-to" type="date" class="search-input" />
+            <label for="users-suno" class="filter-label">Suno Team</label>
+            <select id="users-suno" class="search-input">
+              <option value="all">All</option>
+              <option value="only">Only Suno Team</option>
+              <option value="exclude">Exclude Suno Team</option>
+            </select>
+            <label for="users-min-words" class="filter-label">Min Words</label>
+            <input id="users-min-words" type="number" value="0" min="0" class="search-input w-20" />
+            <button id="users-search-btn" class="search-btn">Search</button>
+          </div>
+          <p class="text-xs text-gray-600 mt-1.5">
+            Returns all users active in the selected date range with message statistics.
+            Leave dates empty to include all data. Click a username to view their full profile.
+          </p>
+
+          <!-- Users results table -->
+          <div id="users-results" class="hidden mt-4">
+            <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
+              <span id="users-result-count" class="text-xs text-gray-500 font-medium"></span>
+              <input id="users-filter-input" type="text" placeholder="Filter by username…"
+                     class="search-input text-xs py-1 w-52" aria-label="Filter table by username" />
+            </div>
+
+            <!-- Table refine filters (client-side) -->
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3 px-3 py-2.5
+                        bg-gray-50 rounded-xl border border-gray-200 text-xs">
+              <span class="font-semibold text-gray-500 uppercase tracking-wide shrink-0">Refine</span>
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <label for="users-month-from" class="filter-label">First msg in</label>
+                <input id="users-month-from" type="month" class="search-input text-xs py-1"
+                       aria-label="First message in month" />
+                <label for="users-month-to" class="filter-label">Last msg from</label>
+                <input id="users-month-to" type="month" class="search-input text-xs py-1"
+                       aria-label="Last message from month (inclusive)" />
+              </div>
+              <div class="w-px h-4 bg-gray-200 hidden sm:block"></div>
+              <div class="flex items-center gap-1.5">
+                <label for="users-min-msgs" class="filter-label">Min messages</label>
+                <input id="users-min-msgs" type="number" min="1" placeholder="any"
+                       class="search-input text-xs py-1 w-20" aria-label="Minimum message count" />
+              </div>
+              <div class="w-px h-4 bg-gray-200 hidden sm:block"></div>
+              <div class="flex items-center gap-1.5">
+                <label for="users-min-weeks" class="filter-label">Min weeks active</label>
+                <input id="users-min-weeks" type="number" min="1" placeholder="any"
+                       class="search-input text-xs py-1 w-20" aria-label="Minimum weeks active" />
+              </div>
+              <div class="w-px h-4 bg-gray-200 hidden sm:block"></div>
+              <div class="flex items-center gap-1.5">
+                <label for="users-min-avg-words" class="filter-label">Avg words ≥</label>
+                <input id="users-min-avg-words" type="number" min="0" placeholder="any"
+                       class="search-input text-xs py-1 w-20" aria-label="Minimum average word count" />
+                <label for="users-max-avg-words" class="filter-label">≤</label>
+                <input id="users-max-avg-words" type="number" min="0" placeholder="any"
+                       class="search-input text-xs py-1 w-20" aria-label="Maximum average word count" />
+              </div>
+              <div class="ml-auto flex items-center gap-1.5">
+                <button id="users-refine-apply"
+                        class="text-xs font-semibold bg-indigo-600 text-white px-3 py-1 rounded-lg
+                               hover:bg-indigo-700 transition-colors
+                               focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700">
+                  Apply
+                </button>
+                <button id="users-refine-clear"
+                        class="text-xs text-gray-400 hover:text-gray-700 px-2 py-1 rounded
+                               focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-500">
+                  ✕ Clear
+                </button>
+              </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
+              <table id="users-table" class="w-full text-xs text-left">
+                <thead class="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th class="users-th" data-col="username">Username<span class="sort-ind"> ↕</span></th>
+                    <th class="users-th text-right" data-col="total_messages">Messages<span class="sort-ind"> ↕</span></th>
+                    <th class="users-th" data-col="first_message_date">First Message<span class="sort-ind"> ↕</span></th>
+                    <th class="users-th" data-col="last_message_date">Last Message<span class="sort-ind"> ↕</span></th>
+                    <th class="users-th text-right" data-col="avg_word_count">Avg Words<span class="sort-ind"> ↕</span></th>
+                    <th class="users-th text-right" data-col="weeks_with_messages">Weeks Active<span class="sort-ind"> ↕</span></th>
+                    <th class="users-th text-right" data-col="pct_weeks_active">% Weeks<span class="sort-ind"> ↕</span></th>
+                  </tr>
+                </thead>
+                <tbody id="users-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- Context settings -->
         <div class="mt-4 pt-4 border-t flex flex-wrap gap-x-4 gap-y-2 items-center text-sm text-gray-700">
           <span class="font-semibold text-gray-800 w-full sm:w-auto">Context window:</span>
@@ -355,9 +459,158 @@
         </div>
       </section>
 
+      <!-- ── Summarize & Analyse Results ── -->
+      <section id="sr-section" class="hidden space-y-4" aria-labelledby="sr-heading">
+
+        <!-- Form card -->
+        <div class="bg-white rounded-2xl shadow p-5">
+          <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div>
+              <h2 id="sr-heading" class="text-base font-semibold text-violet-800">Summarize &amp; Analyse Results</h2>
+              <p class="text-xs text-gray-500 mt-0.5">
+                <span id="sr-count-label">0</span> current results available for analysis.
+              </p>
+            </div>
+            <button id="sr-export-pdf"
+                    class="hidden text-xs font-semibold text-indigo-700 hover:text-indigo-900
+                           border border-indigo-300 hover:border-indigo-500
+                           px-3 py-1.5 rounded-lg transition-colors
+                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700">
+              Export PDF
+            </button>
+          </div>
+
+          <label for="sr-prompt" class="block text-xs font-semibold text-gray-700 mb-1">
+            Custom instructions / focus (optional)
+          </label>
+          <textarea id="sr-prompt" rows="2"
+            placeholder="e.g. Summarize the main feature requests. Identify recurring complaints. Use bullet points."
+            class="search-input w-full resize-none mb-3"></textarea>
+
+          <div class="flex flex-wrap items-center gap-2 mb-3">
+            <label for="sr-retrieval-mode" class="text-xs font-semibold text-gray-700 shrink-0">Retrieval</label>
+            <select id="sr-retrieval-mode" class="search-input text-xs py-1">
+              <option value="cluster" selected>Cluster &amp; Sample (recommended)</option>
+              <option value="all">All messages (no clustering)</option>
+            </select>
+            <span id="sr-mode-hint" class="text-xs text-gray-500 italic">
+              Deduplicates and samples representative messages across semantic clusters.
+            </span>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <label for="sr-model" class="text-xs font-semibold text-gray-700 shrink-0">Model</label>
+            <select id="sr-model" class="search-input text-xs py-1 flex-1 min-w-[10rem] max-w-xs">
+              <optgroup label="GPT-5.4">
+                <option value="gpt-5.4" selected>GPT-5.4</option>
+                <option value="gpt-5.4-pro">GPT-5.4 pro</option>
+                <option value="gpt-5.4-mini">GPT-5.4 mini</option>
+                <option value="gpt-5.4-nano">GPT-5.4 nano</option>
+              </optgroup>
+              <optgroup label="GPT-4.1">
+                <option value="gpt-4.1">GPT-4.1</option>
+                <option value="gpt-4.1-mini">GPT-4.1 mini</option>
+                <option value="gpt-4.1-nano">GPT-4.1 nano</option>
+              </optgroup>
+              <optgroup label="GPT-4o">
+                <option value="gpt-4o">GPT-4o</option>
+                <option value="gpt-4o-mini">GPT-4o mini</option>
+              </optgroup>
+              <optgroup label="o-series (reasoning)">
+                <option value="o4-mini">o4 mini</option>
+                <option value="o3">o3</option>
+                <option value="o3-mini">o3 mini</option>
+              </optgroup>
+            </select>
+            <button id="sr-btn" class="search-btn">Summarize Results</button>
+          </div>
+        </div>
+
+        <!-- Pipeline log + result -->
+        <div id="sr-results-panel" class="hidden space-y-4">
+          <section class="bg-white rounded-2xl shadow p-5">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pipeline Log</h3>
+              <button id="sr-log-toggle"
+                      class="text-xs font-semibold text-gray-500 hover:text-gray-800
+                             focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-600 rounded">
+                &#9650; Hide
+              </button>
+            </div>
+            <div id="sr-process-log" class="space-y-0.5" aria-live="polite"></div>
+          </section>
+
+          <div id="sr-result"
+               class="bg-white rounded-2xl shadow p-5 text-sm text-gray-900 markdown-body"
+               aria-live="polite"></div>
+
+          <!-- Follow-up Q&A -->
+          <section id="sr-followup-section" class="hidden bg-white rounded-2xl shadow p-5">
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h3 class="text-sm font-semibold text-gray-700">Follow-up Questions</h3>
+              <div class="flex gap-2">
+                <button id="sr-export-pdf-followup"
+                        class="text-xs font-semibold text-indigo-700 hover:text-indigo-900
+                               border border-indigo-300 hover:border-indigo-500 px-3 py-1
+                               rounded-lg transition-colors
+                               focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700">
+                  Export PDF
+                </button>
+                <button id="sr-followup-clear"
+                        class="text-xs font-semibold text-red-700 hover:text-red-900
+                               border border-red-300 hover:border-red-500 px-3 py-1
+                               rounded-lg transition-colors
+                               focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-700">
+                  Clear Q&amp;A
+                </button>
+              </div>
+            </div>
+            <div id="sr-followup-history"
+                 class="space-y-3 mb-3 max-h-[28rem] overflow-y-auto pr-1"
+                 aria-live="polite"></div>
+            <div class="flex gap-2 items-end">
+              <label for="sr-followup-input" class="sr-only">Follow-up question</label>
+              <textarea id="sr-followup-input" rows="2"
+                placeholder="Ask a follow-up question about this summary…"
+                class="search-input flex-1 resize-none min-w-0"></textarea>
+              <button id="sr-followup-send" class="search-btn self-end shrink-0">Ask</button>
+            </div>
+            <p class="text-xs text-gray-500 mt-1.5">Ctrl+Enter or click Ask</p>
+          </section>
+        </div>
+
+      </section>
+
+      <!-- ── Trend Chart ── -->
+      <div id="trend-section" class="hidden bg-white rounded-2xl shadow p-4">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Message Volume Over Time</h3>
+          <div class="flex items-center gap-2">
+            <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden"
+                 role="group" aria-label="Chart bucket size">
+              <button id="trend-btn-month" class="trend-bucket-btn trend-bucket-active"
+                      type="button" aria-pressed="true">Month</button>
+              <button id="trend-btn-week" class="trend-bucket-btn"
+                      type="button" aria-pressed="false">Week</button>
+              <button id="trend-btn-day" class="trend-bucket-btn"
+                      type="button" aria-pressed="false">Day</button>
+            </div>
+            <button id="trend-export-png"
+                    class="text-xs font-semibold text-gray-500 hover:text-gray-800 border border-gray-300
+                           hover:border-gray-400 px-2.5 py-1 rounded-lg transition-colors
+                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-600">
+              ↓ PNG
+            </button>
+          </div>
+        </div>
+        <div class="relative" style="height:180px">
+          <canvas id="trend-chart" aria-label="Message count bar chart" role="img"></canvas>
+        </div>
+      </div>
+
       <!-- Results -->
       <section id="results-section" class="hidden" aria-labelledby="results-count">
-        <div class="flex items-center justify-between mb-3 px-1">
+        <div class="flex items-center justify-between mb-3 px-1 flex-wrap gap-2">
           <h2 id="results-count" class="font-semibold text-sm text-gray-700 uppercase tracking-wide" aria-live="polite" aria-atomic="true">Results</h2>
           <button id="export-btn"
                   class="hidden text-xs text-indigo-700 hover:text-indigo-900 font-semibold border border-indigo-300
@@ -378,6 +631,16 @@
                       d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"/>
               </svg>
               Exact
+            </button>
+            <button id="filter-mode-any"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
+                           bg-slate-100 text-slate-700 border-r border-gray-300 transition-colors"
+                    aria-pressed="false">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M4 6h16M4 12h10M4 18h7"/>
+              </svg>
+              Any Word
             </button>
             <button id="filter-mode-semantic"
                     class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
@@ -414,6 +677,25 @@
           </div><!-- /search input row -->
           <span id="results-filter-count" class="text-xs text-gray-600 shrink-0 hidden w-full sm:w-auto" aria-live="polite"></span>
         </div>
+        <!-- ── Trend Chart ── -->
+        <div id="trend-section" class="hidden bg-white rounded-2xl shadow p-4 mb-3">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Message Volume Over Time</h3>
+            <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden"
+                 role="group" aria-label="Chart bucket size">
+              <button id="trend-btn-month" class="trend-bucket-btn trend-bucket-active"
+                      type="button" aria-pressed="true">Month</button>
+              <button id="trend-btn-week" class="trend-bucket-btn"
+                      type="button" aria-pressed="false">Week</button>
+              <button id="trend-btn-day" class="trend-bucket-btn"
+                      type="button" aria-pressed="false">Day</button>
+            </div>
+          </div>
+          <div class="relative" style="height:180px">
+            <canvas id="trend-chart" aria-label="Message count bar chart" role="img"></canvas>
+          </div>
+        </div>
+
         <div id="results-container" class="space-y-3" aria-live="polite" aria-atomic="false"></div>
       </section>
 
@@ -537,12 +819,35 @@
     ════════════════════════════════════════ -->
     <div id="page-chat" class="hidden">
 
+      <!-- ── Sub-tab switcher ── -->
+      <div class="flex gap-1 bg-white rounded-2xl shadow border border-gray-200 p-1 mb-4">
+        <button id="subtab-btn-chat"
+                class="subtab-btn subtab-btn-active flex items-center gap-1.5 text-sm font-semibold">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3v-3z"/>
+          </svg>
+          Chat Summary
+        </button>
+        <button id="subtab-btn-profile"
+                class="subtab-btn flex items-center gap-1.5 text-sm font-semibold">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+          </svg>
+          User Profile
+        </button>
+      </div>
+
+      <!-- ══ Chat Summary sub-tab ══ -->
+      <div id="subtab-chat">
+
       <!-- ── Sticky form panel ── -->
       <div id="sum-form-panel" class="sticky top-[57px] z-20 mb-4">
 
         <!-- Compact bar (shown when form is collapsed, hidden initially) -->
         <div id="sum-form-compact" class="hidden bg-white rounded-2xl shadow border border-indigo-100 px-4 py-2.5 flex items-center gap-3 flex-wrap">
-          <span class="text-xs font-semibold text-indigo-800 shrink-0">Hybrid Summary</span>
+          <span class="text-xs font-semibold text-indigo-800 shrink-0">Chat Summary</span>
           <span id="sum-compact-info" class="text-xs text-gray-500 flex-1 min-w-0 truncate">—</span>
           <div class="flex gap-2 items-center shrink-0">
             <button id="sum-export-pdf"
@@ -568,7 +873,7 @@
           <!-- Header -->
           <div class="flex items-center justify-between mb-4">
             <div>
-              <h2 class="text-base font-semibold text-indigo-800">Hybrid Summary</h2>
+              <h2 class="text-base font-semibold text-indigo-800">Chat Summary</h2>
               <p class="text-xs text-gray-500 mt-0.5">Semantic retrieval + clustering over your filtered messages.</p>
             </div>
             <button id="sum-form-collapse" class="hidden text-xs font-semibold text-gray-500 hover:text-gray-800
@@ -617,11 +922,25 @@
             </select>
           </div>
 
+          <!-- Retrieval mode -->
+          <div class="flex flex-wrap gap-2 items-center mb-3">
+            <label for="sum-retrieval-mode" class="filter-label">Mode</label>
+            <select id="sum-retrieval-mode" class="search-input text-xs py-1">
+              <option value="cluster" selected>Cluster &amp; Sample</option>
+              <option value="all">All filtered messages</option>
+            </select>
+            <span id="sum-mode-hint" class="text-xs text-gray-400">
+              Semantic retrieval → HDBSCAN clustering → representative sampling
+            </span>
+          </div>
+
           <!-- Custom instructions / focus query -->
-          <label for="sum-prompt" class="block text-xs font-semibold text-gray-700 mb-1">Custom instructions / focus (optional)</label>
-          <textarea id="sum-prompt" rows="2"
-            placeholder="e.g. Focus on feature requests and bug reports. Bullet-point format."
-            class="search-input w-full resize-none mb-3"></textarea>
+          <div id="sum-prompt-wrap">
+            <label for="sum-prompt" class="block text-xs font-semibold text-gray-700 mb-1">Custom instructions / focus (optional)</label>
+            <textarea id="sum-prompt" rows="2"
+              placeholder="e.g. Focus on feature requests and bug reports. Bullet-point format."
+              class="search-input w-full resize-none mb-3"></textarea>
+          </div>
 
           <!-- Model + submit in one row -->
           <div class="flex flex-wrap items-center gap-2">
@@ -655,7 +974,7 @@
                 <option value="o1-mini">o1 mini</option>
               </optgroup>
             </select>
-            <button id="sum-btn" class="search-btn">Generate Hybrid Summary</button>
+            <button id="sum-btn" class="search-btn">Generate Chat Summary</button>
           </div>
 
         </div><!-- /sum-form-full -->
@@ -686,13 +1005,22 @@
         <section id="sum-followup-section" class="hidden bg-white rounded-2xl shadow p-5">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-sm font-semibold text-gray-700">Follow-up Questions</h3>
-            <button id="sum-followup-clear"
-                    class="text-xs font-semibold text-red-700 hover:text-red-900
-                           border border-red-300 hover:border-red-500 px-3 py-1 rounded-lg
-                           transition-colors
-                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-700">
-              Clear Q&amp;A
-            </button>
+            <div class="flex gap-2 items-center">
+              <button id="sum-export-pdf-followup"
+                      class="text-xs font-semibold text-indigo-700 hover:text-indigo-900
+                             border border-indigo-300 hover:border-indigo-500 px-3 py-1 rounded-lg
+                             transition-colors
+                             focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700">
+                Export PDF
+              </button>
+              <button id="sum-followup-clear"
+                      class="text-xs font-semibold text-red-700 hover:text-red-900
+                             border border-red-300 hover:border-red-500 px-3 py-1 rounded-lg
+                             transition-colors
+                             focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-700">
+                Clear Q&amp;A
+              </button>
+            </div>
           </div>
 
           <div id="sum-followup-history"
@@ -712,6 +1040,200 @@
         </section>
 
       </div><!-- /sum-results-panel -->
+
+      </div><!-- /subtab-chat -->
+
+
+      <!-- ══ User Profile sub-tab ══ -->
+      <div id="subtab-profile" class="hidden space-y-4">
+
+        <!-- ── Sticky form panel ── -->
+        <div id="prof-form-panel" class="sticky top-[57px] z-20 mb-4">
+
+          <!-- Compact bar -->
+          <div id="prof-form-compact" class="hidden bg-white rounded-2xl shadow border border-indigo-100 px-4 py-2.5 flex items-center gap-3 flex-wrap">
+            <span class="text-xs font-semibold text-indigo-800 shrink-0">User Profile</span>
+            <span id="prof-compact-info" class="text-xs text-gray-500 flex-1 min-w-0 truncate">—</span>
+            <div class="flex gap-2 items-center shrink-0">
+              <button id="prof-export-pdf"
+                      class="text-xs font-semibold text-indigo-700 hover:text-indigo-900
+                             border border-indigo-300 hover:border-indigo-500
+                             px-3 py-1.5 rounded-lg transition-colors
+                             focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700">
+                Export PDF
+              </button>
+              <button id="prof-form-expand"
+                      class="text-xs font-semibold text-gray-600 hover:text-gray-900
+                             border border-gray-300 hover:border-gray-500
+                             px-3 py-1.5 rounded-lg transition-colors
+                             focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-600">
+                &#9660; Filters
+              </button>
+            </div>
+          </div>
+
+          <!-- Full form -->
+          <div id="prof-form-full" class="bg-white rounded-2xl shadow p-5">
+
+            <!-- Header -->
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h2 class="text-base font-semibold text-indigo-800">User Profile Analysis</h2>
+                <p class="text-xs text-gray-500 mt-0.5">Persona, attitude evolution, and concerns for a specific user.</p>
+              </div>
+              <button id="prof-form-collapse" class="hidden text-xs font-semibold text-gray-500 hover:text-gray-800
+                             border border-gray-300 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors
+                             focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-600">
+                &#9650; Collapse
+              </button>
+            </div>
+
+            <!-- Row 1: username + date mode -->
+            <div class="flex flex-wrap gap-2 items-center mb-3">
+              <label for="prof-username" class="filter-label">Username <span class="text-red-500">*</span></label>
+              <input id="prof-username" type="text" placeholder="Exact or partial username…" class="search-input w-52" />
+              <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden" role="group" aria-label="Date input mode">
+                <button id="prof-mode-exact" class="range-mode-btn range-mode-active" type="button" aria-pressed="true">Exact Date</button>
+                <button id="prof-mode-month" class="range-mode-btn" type="button" aria-pressed="false">By Month</button>
+              </div>
+            </div>
+
+            <!-- Exact date inputs -->
+            <div id="prof-exact-inputs" class="flex flex-wrap gap-2 items-center mb-3">
+              <label for="prof-date-from" class="filter-label">From</label>
+              <input id="prof-date-from" type="date" class="search-input" />
+              <label for="prof-date-to" class="filter-label">To</label>
+              <input id="prof-date-to" type="date" class="search-input" />
+            </div>
+
+            <!-- Month inputs -->
+            <div id="prof-month-inputs" class="hidden flex flex-wrap gap-2 items-center mb-3">
+              <label for="prof-month-from" class="filter-label">From</label>
+              <input id="prof-month-from" type="month" class="search-input" />
+              <label for="prof-month-to" class="filter-label">To</label>
+              <input id="prof-month-to" type="month" class="search-input" />
+            </div>
+
+            <!-- Retrieval mode -->
+            <div class="flex flex-wrap gap-2 items-center mb-3">
+              <label for="prof-retrieval-mode" class="filter-label">Mode</label>
+              <select id="prof-retrieval-mode" class="search-input text-xs py-1">
+                <option value="cluster" selected>Cluster &amp; Sample</option>
+                <option value="all">All filtered messages</option>
+              </select>
+              <span id="prof-mode-hint" class="text-xs text-gray-400">
+                Semantic retrieval → HDBSCAN clustering → representative sampling
+              </span>
+            </div>
+
+            <!-- Focus prompt -->
+            <label for="prof-prompt" class="block text-xs font-semibold text-gray-700 mb-1">
+              Analysis focus (optional)
+            </label>
+            <textarea id="prof-prompt" rows="2"
+              placeholder="e.g. Focus on their feedback about the music generation quality and pricing concerns."
+              class="search-input w-full resize-none mb-3"></textarea>
+
+            <!-- Model + submit -->
+            <div class="flex flex-wrap items-center gap-2">
+              <label for="prof-model" class="text-xs font-semibold text-gray-700 shrink-0">Model</label>
+              <select id="prof-model" class="search-input text-xs py-1 flex-1 min-w-[10rem] max-w-xs">
+                <optgroup label="GPT-5.4">
+                  <option value="gpt-5.4" selected>GPT-5.4</option>
+                  <option value="gpt-5.4-pro">GPT-5.4 pro</option>
+                  <option value="gpt-5.4-mini">GPT-5.4 mini</option>
+                  <option value="gpt-5.4-nano">GPT-5.4 nano</option>
+                </optgroup>
+                <optgroup label="GPT-5">
+                  <option value="gpt-5">GPT-5</option>
+                  <option value="gpt-5-mini">GPT-5 mini</option>
+                  <option value="gpt-5-nano">GPT-5 nano</option>
+                </optgroup>
+                <optgroup label="GPT-4.1">
+                  <option value="gpt-4.1">GPT-4.1</option>
+                  <option value="gpt-4.1-mini">GPT-4.1 mini</option>
+                  <option value="gpt-4.1-nano">GPT-4.1 nano</option>
+                </optgroup>
+                <optgroup label="GPT-4o">
+                  <option value="gpt-4o">GPT-4o</option>
+                  <option value="gpt-4o-mini">GPT-4o mini</option>
+                </optgroup>
+                <optgroup label="o-series (reasoning)">
+                  <option value="o4-mini">o4 mini</option>
+                  <option value="o3">o3</option>
+                  <option value="o3-mini">o3 mini</option>
+                  <option value="o1">o1</option>
+                  <option value="o1-mini">o1 mini</option>
+                </optgroup>
+              </select>
+              <button id="prof-btn" class="search-btn">Analyse User</button>
+            </div>
+
+          </div><!-- /prof-form-full -->
+        </div><!-- /prof-form-panel -->
+
+        <!-- ── Results panel ── -->
+        <div id="prof-results-panel" class="hidden space-y-4 pb-8">
+
+          <!-- Pipeline log -->
+          <section class="bg-white rounded-2xl shadow p-5">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Retrieval &amp; Pipeline Log</h3>
+              <button id="prof-log-toggle"
+                      class="text-xs font-semibold text-gray-500 hover:text-gray-800
+                             focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-600 rounded">
+                &#9650; Hide
+              </button>
+            </div>
+            <div id="prof-process-log" class="space-y-0.5" aria-live="polite" aria-label="Pipeline log"></div>
+          </section>
+
+          <!-- Profile result -->
+          <div id="prof-result"
+               class="bg-white rounded-2xl shadow p-5 text-sm text-gray-900 markdown-body"
+               aria-live="polite"></div>
+
+          <!-- Follow-up Q&A -->
+          <section id="prof-followup-section" class="hidden bg-white rounded-2xl shadow p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-semibold text-gray-700">Follow-up Questions</h3>
+              <div class="flex gap-2 items-center">
+                <button id="prof-export-pdf-followup"
+                        class="text-xs font-semibold text-indigo-700 hover:text-indigo-900
+                               border border-indigo-300 hover:border-indigo-500 px-3 py-1 rounded-lg
+                               transition-colors
+                               focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700">
+                  Export PDF
+                </button>
+                <button id="prof-followup-clear"
+                        class="text-xs font-semibold text-red-700 hover:text-red-900
+                               border border-red-300 hover:border-red-500 px-3 py-1 rounded-lg
+                               transition-colors
+                               focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-700">
+                  Clear Q&amp;A
+                </button>
+              </div>
+            </div>
+
+            <div id="prof-followup-history"
+                 class="space-y-3 mb-3 max-h-[28rem] overflow-y-auto pr-1"
+                 aria-live="polite" aria-label="Follow-up chat history"></div>
+
+            <div class="flex gap-2 items-end">
+              <label for="prof-followup-input" class="sr-only">Follow-up question</label>
+              <textarea id="prof-followup-input" rows="2"
+                placeholder="Ask a follow-up question about this user's profile…"
+                class="search-input flex-1 resize-none min-w-0"></textarea>
+              <button id="prof-followup-send" class="search-btn self-end shrink-0">Ask</button>
+            </div>
+            <p class="text-xs text-gray-500 mt-1.5">
+              Press Ctrl+Enter or click Ask · retrieves fresh evidence for each question
+            </p>
+          </section>
+
+        </div><!-- /prof-results-panel -->
+
+      </div><!-- /subtab-profile -->
 
     </div><!-- /page-chat -->
 
@@ -785,6 +1307,122 @@
 
   </main>
 
+  <!-- ── User Profile Overlay ── -->
+  <div id="user-profile-overlay"
+       class="fixed inset-0 z-50 hidden flex-col bg-slate-100"
+       role="dialog" aria-modal="true" aria-labelledby="upo-username">
+
+    <!-- Header bar -->
+    <div class="bg-indigo-700 px-5 py-3 flex items-center gap-4 shrink-0">
+      <button id="upo-back"
+              class="text-indigo-200 hover:text-white text-sm font-medium flex items-center gap-1
+                     focus-visible:outline focus-visible:outline-2 focus-visible:outline-white rounded"
+              aria-label="Close profile">
+        ← Back
+      </button>
+      <h2 id="upo-username" class="text-white font-bold text-base flex-1 truncate"></h2>
+      <span id="upo-msg-count" class="text-indigo-200 text-xs shrink-0"></span>
+      <button id="upo-sum-toggle"
+              class="text-xs font-semibold bg-white/20 hover:bg-white/30 text-white
+                     px-3 py-1.5 rounded-lg transition-colors shrink-0
+                     focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+        ✦ Summarize
+      </button>
+    </div>
+
+    <!-- Stats bar -->
+    <div id="upo-stats" class="bg-white border-b border-gray-200 px-5 py-3 shrink-0 overflow-x-auto">
+      <!-- filled by JS -->
+    </div>
+
+    <!-- Message filter bar -->
+    <div class="bg-white border-b border-gray-200 px-5 py-2.5 shrink-0 flex flex-wrap gap-2 items-center">
+      <label for="upo-date-from" class="filter-label">From</label>
+      <input id="upo-date-from" type="date" class="search-input" />
+      <label for="upo-date-to" class="filter-label">To</label>
+      <input id="upo-date-to" type="date" class="search-input" />
+      <label for="upo-keyword" class="filter-label">Contains</label>
+      <input id="upo-keyword" type="text" placeholder="keyword…" class="search-input flex-1 min-w-[8rem]" />
+      <button id="upo-filter-btn" class="search-btn">Filter</button>
+      <span id="upo-filter-count" class="text-xs text-gray-500 ml-1"></span>
+    </div>
+
+    <!-- Context window controls -->
+    <div class="bg-gray-50 border-b border-gray-200 px-5 py-2 shrink-0 flex flex-wrap gap-2 items-center">
+      <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Context window</span>
+      <label for="upo-ctx-before" class="filter-label">Before</label>
+      <input id="upo-ctx-before" type="number" value="5" min="0" max="100"
+             class="search-input w-16 text-center" aria-label="Messages before" />
+      <label for="upo-ctx-after" class="filter-label">After</label>
+      <input id="upo-ctx-after" type="number" value="5" min="0" max="100"
+             class="search-input w-16 text-center" aria-label="Messages after" />
+      <span class="text-xs text-gray-400">msgs · click "Show context" on any message</span>
+    </div>
+
+    <!-- Summarize panel (hidden by default) -->
+    <div id="upo-sum-panel" class="hidden bg-indigo-50 border-b border-indigo-200 px-5 py-4 shrink-0 overflow-y-auto max-h-[50vh]">
+      <div class="flex flex-wrap gap-2 items-end mb-3">
+        <div>
+          <label for="upo-sum-limit" class="block text-xs font-semibold text-gray-600 mb-1">Messages (oldest first)</label>
+          <input id="upo-sum-limit" type="number" value="50" min="1"
+                 class="search-input w-24 text-xs py-1" />
+        </div>
+        <div>
+          <label for="upo-sum-model" class="block text-xs font-semibold text-gray-600 mb-1">Model</label>
+          <select id="upo-sum-model" class="search-input text-xs py-1">
+            <option value="gpt-5.4" selected>GPT-5.4</option>
+            <option value="gpt-5.4-mini">GPT-5.4 mini</option>
+            <option value="gpt-4.1">GPT-4.1</option>
+            <option value="gpt-4.1-mini">GPT-4.1 mini</option>
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="gpt-4o-mini">GPT-4o mini</option>
+            <option value="o4-mini">o4 mini</option>
+          </select>
+        </div>
+        <button id="upo-sum-run" class="search-btn self-end">Run Summary</button>
+      </div>
+      <label for="upo-sum-prompt" class="block text-xs font-semibold text-gray-600 mb-1">
+        Custom instructions (optional)
+      </label>
+      <textarea id="upo-sum-prompt" rows="2"
+        placeholder="e.g. Focus on feature requests. Highlight recurring concerns."
+        class="search-input w-full resize-none text-xs mb-3"></textarea>
+      <p class="text-xs text-gray-500 mb-3">
+        Each message is sent with <strong id="upo-sum-ctx-hint">5 before / 5 after</strong>
+        context messages (from the context window settings above).
+      </p>
+
+      <!-- Results -->
+      <div id="upo-sum-results" class="hidden space-y-3">
+        <div class="bg-white rounded-xl border border-indigo-100 p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pipeline</span>
+            <button id="upo-sum-log-toggle"
+                    class="text-xs text-gray-400 hover:text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-500 rounded">
+              ▲ Hide
+            </button>
+          </div>
+          <div id="upo-sum-log" class="space-y-0.5" aria-live="polite"></div>
+        </div>
+        <div id="upo-sum-output"
+             class="bg-white rounded-xl border border-indigo-100 p-5 text-sm text-gray-900 markdown-body"
+             aria-live="polite"></div>
+        <div class="flex justify-end mt-2">
+          <button id="upo-sum-export-pdf"
+                  class="hidden search-btn text-xs py-1 px-3 bg-indigo-600 hover:bg-indigo-700 text-white">
+            Export PDF
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Message list -->
+    <div id="upo-messages" class="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+      <!-- filled by JS -->
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="/static/app.js"></script>
 </body>
