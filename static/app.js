@@ -58,6 +58,11 @@ function _errorPopupEscHandler(e) {
 let currentResults   = [];
 let currentSearchType = '';
 let currentKeyword   = '';
+let _trendBucket = 'month';  // 'month' | 'week' | 'day'
+let _trendChart  = null;     // Chart.js instance
+let srFollowUpHistory = [];
+let srSummaryText     = '';
+let srLastPrompt      = '';
 let allUploads       = [];           // [{id, filename, row_count, upload_time, embedded_models}]
 let selectedUploadIds = new Set();   // empty = search all
 let bookmarkedIds    = new Set();    // msg ids that are bookmarked
@@ -155,11 +160,11 @@ function renderScopeChips() {
   }).join('');
 
   container.querySelectorAll('.scope-chip').forEach(btn => {
-    btn.addEventListener('click', () => toggleScopeChip(btn.dataset.id, btn));
+    btn.addEventListener('click', () => toggleScopeChip(btn.dataset.id));
   });
 }
 
-function toggleScopeChip(uploadId, btn) {
+function toggleScopeChip(uploadId) {
   if (selectedUploadIds.size === 0) {
     // Currently "all" — switch to explicitly selecting all except clicked
     allUploads.forEach(u => { if (u.id !== uploadId) selectedUploadIds.add(u.id); });
@@ -469,7 +474,7 @@ function renderUploadsTable() {
   container.innerHTML = allUploads.map(u => uploadCard(u)).join('');
 
   container.querySelectorAll('.reembed-btn').forEach(btn => {
-    btn.addEventListener('click', () => doReembed(btn.dataset.id, btn.dataset.name, btn));
+    btn.addEventListener('click', () => doReembed(btn.dataset.id, btn));
   });
   container.querySelectorAll('.delete-db-btn').forEach(btn => {
     btn.addEventListener('click', () => confirmDelete(btn.dataset.id, btn.dataset.name, 'sqlite'));
@@ -537,7 +542,7 @@ function uploadCard(u) {
 // Track active poll timers so clicking Re-embed twice doesn't spawn duplicates.
 const _reembedTimers = {};
 
-async function doReembed(uploadId, filename, btn) {
+async function doReembed(uploadId, btn) {
   const safeId    = uploadId.replace(/[^a-zA-Z0-9-]/g, '');
   const progressEl = document.getElementById(`reembed-progress-${safeId}`);
   const fillEl     = document.getElementById(`reembed-fill-${safeId}`);
@@ -1042,10 +1047,31 @@ async function doSearch(type) {
     const res = await fetch(url);
     if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Search failed'); }
     currentResults = await res.json();
-    renderResults(currentResults);
+    renderResults(_sortSemanticResults(currentResults));
   } catch (e) { renderError(e.message); }
   finally { setBtnLoading(type, false); }
 }
+
+function _sortSemanticResults(results) {
+  if (currentSearchType !== 'semantic') return results;
+  const mode = document.getElementById('semantic-sort').value;
+  const copy = [...results];
+  if (mode === 'date_asc') {
+    copy.sort((a, b) => new Date(a.date) - new Date(b.date));
+  } else if (mode === 'date_desc') {
+    copy.sort((a, b) => new Date(b.date) - new Date(a.date));
+  } else {
+    // 'score' — restore original API order (highest similarity first)
+    copy.sort((a, b) => (b.similarity_score ?? 0) - (a.similarity_score ?? 0));
+  }
+  return copy;
+}
+
+document.getElementById('semantic-sort').addEventListener('change', () => {
+  if (currentSearchType === 'semantic' && currentResults.length) {
+    renderResults(_sortSemanticResults(currentResults));
+  }
+});
 
 function setBtnLoading(type, loading) {
   const btn = document.getElementById(`${type}-search-btn`);
@@ -1084,42 +1110,599 @@ function renderResults(results) {
   container.querySelectorAll('.ctx-toggle').forEach(btn => {
     btn.addEventListener('click', () => toggleContext(parseInt(btn.dataset.id), btn));
   });
+
+  // Trend chart + summarize panel
+  renderTrendChart(currentResults, _trendBucket);
+  _updateSrCountLabel();
+  if (results.length) document.getElementById('sr-section').classList.remove('hidden');
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TREND CHART
+══════════════════════════════════════════════════════════════════════════ */
+const _MONTH_NAMES = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+
+function _binResultsByBucket(results, bucket) {
+  // sortKey → { display, count, dateFrom, dateTo }
+  const bins = new Map();
+  for (const r of results) {
+    const d = new Date(r.date);
+    if (isNaN(d)) continue;
+    let sortKey, display, dateFrom, dateTo;
+    if (bucket === 'day') {
+      const yr  = d.getUTCFullYear();
+      const mo  = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      sortKey  = `${yr}-${mo}-${day}`;
+      display  = `${day} ${_MONTH_NAMES[d.getUTCMonth()]} ${yr}`;
+      dateFrom = sortKey;
+      dateTo   = sortKey;
+    } else if (bucket === 'week') {
+      const wom   = Math.min(Math.ceil(d.getDate() / 7), 4);  // 1-4
+      const yr    = d.getFullYear();
+      const moNum = String(d.getMonth() + 1).padStart(2, '0');
+      sortKey  = `${yr}-${moNum}-W${wom}`;
+      display  = `${_MONTH_NAMES[d.getMonth()]}-${yr}-W${wom}`;
+      const weekStarts = [1, 8, 15, 22];
+      const fromDay   = weekStarts[wom - 1];
+      const toDay     = wom < 4 ? weekStarts[wom] - 1 : new Date(yr, d.getMonth() + 1, 0).getDate();
+      dateFrom = `${yr}-${moNum}-${String(fromDay).padStart(2, '0')}`;
+      dateTo   = `${yr}-${moNum}-${String(toDay).padStart(2, '0')}`;
+    } else {
+      const yr    = d.getFullYear();
+      const moNum = String(d.getMonth() + 1).padStart(2, '0');
+      const lastDay = new Date(yr, d.getMonth() + 1, 0).getDate();
+      sortKey  = `${yr}-${moNum}`;
+      display  = `${_MONTH_NAMES[d.getMonth()]}-${yr}`;
+      dateFrom = `${yr}-${moNum}-01`;
+      dateTo   = `${yr}-${moNum}-${String(lastDay).padStart(2, '0')}`;
+    }
+    if (!bins.has(sortKey)) bins.set(sortKey, { display, count: 0, dateFrom, dateTo });
+    bins.get(sortKey).count++;
+  }
+  const sortKeys = [...bins.keys()].sort();
+  return {
+    labels:   sortKeys.map(k => bins.get(k).display),
+    counts:   sortKeys.map(k => bins.get(k).count),
+    ranges:   sortKeys.map(k => ({ from: bins.get(k).dateFrom, to: bins.get(k).dateTo, label: bins.get(k).display })),
+  };
+}
+
+let _trendRanges = [];  // parallel to chart bars: { from, to, label }
+
+function _getOrCreateChartBanner() {
+  let banner = document.getElementById('chart-filter-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'chart-filter-banner';
+    banner.className = 'hidden flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2 mb-3 text-xs text-indigo-800';
+    const container = document.getElementById('results-container');
+    container.parentNode.insertBefore(banner, container);
+  }
+  return banner;
+}
+
+function _applyChartRangeFilter(range) {
+  const filtered = currentResults.filter(r => {
+    const d = (r.date || '').slice(0, 10);
+    return d >= range.from && d <= range.to;
+  });
+  activeFilterTokens = [];
+  _renderFilteredCards(filtered, currentResults.length);
+
+  const banner = _getOrCreateChartBanner();
+  banner.innerHTML = `
+    <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/>
+    </svg>
+    <span>Showing <strong>${filtered.length}</strong> of <strong>${currentResults.length}</strong> messages &mdash; <strong>${esc(range.label)}</strong> (${range.from === range.to ? range.from : range.from + ' → ' + range.to})</span>
+    <button id="chart-filter-clear" class="ml-auto text-indigo-600 hover:text-indigo-900 font-semibold">✕ Clear</button>
+  `;
+  banner.classList.remove('hidden');
+  document.getElementById('chart-filter-clear').addEventListener('click', () => {
+    banner.classList.add('hidden');
+    _resetToAllResults();
+    document.getElementById('results-filter').value = '';
+    document.getElementById('results-filter-count').classList.add('hidden');
+  });
+
+  // Highlight the clicked bar
+  if (_trendChart) {
+    const idx = _trendRanges.findIndex(r => r.from === range.from && r.to === range.to);
+    _trendChart.data.datasets[0].backgroundColor = _trendRanges.map((_, i) =>
+      i === idx ? 'rgba(79,70,229,1)' : 'rgba(99,102,241,0.4)'
+    );
+    _trendChart.update('none');
+  }
+}
+
+function _resetChartHighlight() {
+  if (!_trendChart) return;
+  _trendChart.data.datasets[0].backgroundColor = 'rgba(99,102,241,0.7)';
+  _trendChart.update('none');
+}
+
+function renderTrendChart(results, bucket) {
+  const section = document.getElementById('trend-section');
+  if (!results.length) { section.classList.add('hidden'); return; }
+
+  const { labels, counts, ranges } = _binResultsByBucket(results, bucket);
+  if (!labels.length) { section.classList.add('hidden'); return; }
+  _trendRanges = ranges;
+
+  // Clear any active chart filter banner when re-rendering
+  const banner = document.getElementById('chart-filter-banner');
+  if (banner) banner.classList.add('hidden');
+
+  section.classList.remove('hidden');
+  if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
+
+  _trendChart = new Chart(document.getElementById('trend-chart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data: counts,
+        backgroundColor: 'rgba(99,102,241,0.7)',
+        borderColor: '#4338ca',
+        borderWidth: 1,
+        borderRadius: bucket === 'day' ? 1 : 3,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cursor: 'pointer',
+      onClick(_, elements) {
+        if (!elements.length) return;
+        const range = _trendRanges[elements[0].index];
+        if (range) _applyChartRangeFilter(range);
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: items => {
+              const r = _trendRanges[items[0].dataIndex];
+              if (!r) return items[0].label;
+              return r.from === r.to ? r.from : `${r.from} → ${r.to}`;
+            },
+            label: item => `${item.raw} messages — click to filter`,
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { maxRotation: 45, font: { size: 11 } } },
+        y: { beginAtZero: true, ticks: { precision: 0, font: { size: 11 } } },
+      },
+    },
+  });
+
+  // Make the canvas show a pointer cursor
+  document.getElementById('trend-chart').style.cursor = 'pointer';
+}
+
+(function () {
+  const _buckets = ['month', 'week', 'day'];
+  function _setTrendBucket(b) {
+    _trendBucket = b;
+    for (const bucket of _buckets) {
+      const btn = document.getElementById(`trend-btn-${bucket}`);
+      if (!btn) continue;
+      btn.classList.toggle('trend-bucket-active', b === bucket);
+      btn.setAttribute('aria-pressed', String(b === bucket));
+    }
+    renderTrendChart(currentResults, _trendBucket);
+  }
+  document.getElementById('trend-btn-month').addEventListener('click', () => _setTrendBucket('month'));
+  document.getElementById('trend-btn-week').addEventListener('click',  () => _setTrendBucket('week'));
+  document.getElementById('trend-btn-day').addEventListener('click',   () => _setTrendBucket('day'));
+}());
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SUMMARIZE RESULTS
+══════════════════════════════════════════════════════════════════════════ */
+function _updateSrCountLabel() {
+  const el = document.getElementById('sr-count-label');
+  if (el) el.textContent = currentResults.length.toLocaleString();
+}
+
+function renderSrLogEntry(entry) {
+  const logEl = document.getElementById('sr-process-log');
+  const div   = document.createElement('div');
+  div.className = `log-entry log-step-${entry.step || 'fallback'}`;
+  const icon = LOG_ICONS[entry.step] || '•';
+  div.innerHTML =
+    `<span class="log-icon">${icon}</span>` +
+    `<span class="log-label">${esc(entry.label || '')}</span>` +
+    `<span class="log-msg">${esc(entry.msg || '')}</span>`;
+  logEl.appendChild(div);
+}
+
+async function doSummarizeResults() {
+  if (!currentResults.length) {
+    showErrorPopup('No results to summarize. Run a search first.');
+    return;
+  }
+  const btn           = document.getElementById('sr-btn');
+  const logEl         = document.getElementById('sr-process-log');
+  const resultEl      = document.getElementById('sr-result');
+  const prompt        = document.getElementById('sr-prompt').value.trim();
+  const model         = document.getElementById('sr-model').value;
+  const retrievalMode = document.getElementById('sr-retrieval-mode').value;
+
+  btn.disabled    = true;
+  btn.textContent = 'Summarizing…';
+
+  document.getElementById('sr-results-panel').classList.remove('hidden');
+  logEl.innerHTML    = '';
+  resultEl.innerHTML = '';
+  document.getElementById('sr-followup-section').classList.add('hidden');
+  document.getElementById('sr-followup-history').innerHTML = '';
+  document.getElementById('sr-export-pdf').classList.add('hidden');
+  srFollowUpHistory = [];
+  srSummaryText     = '';
+  srLastPrompt      = prompt;
+
+  const messages = currentResults.map(r => ({
+    msg_uuid: r.msg_uuid || null,
+    username: r.username || '',
+    date:     r.date     || '',
+    content:  r.content  || '',
+  }));
+
+  try {
+    const res = await fetch('/api/summarize-results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, prompt: prompt || null, model, retrieval_mode: retrievalMode }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+      throw new Error(err.detail || 'Request failed');
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') break;
+        try {
+          const delta = JSON.parse(raw);
+          if (delta.type === 'log') {
+            renderSrLogEntry(delta);
+          } else if (delta.content) {
+            srSummaryText += delta.content;
+            resultEl.innerHTML = marked.parse(srSummaryText);
+          } else if (delta.error) {
+            throw new Error(delta.error);
+          }
+        } catch (parseErr) {
+          if (!(parseErr instanceof SyntaxError)) throw parseErr;
+        }
+      }
+    }
+
+    if (!srSummaryText) {
+      showErrorPopup('No response received from the model. Check your API key and selected model.');
+      return;
+    }
+    srFollowUpHistory = [{ role: 'assistant', content: srSummaryText }];
+    document.getElementById('sr-followup-section').classList.remove('hidden');
+    document.getElementById('sr-export-pdf').classList.remove('hidden');
+
+  } catch (e) {
+    showErrorPopup(e.message);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Summarize Results';
+  }
+}
+
+/* ── SR follow-up bubble helpers ── */
+function _appendSrUserBubble(text) {
+  const c = document.getElementById('sr-followup-history');
+  const w = document.createElement('div'); w.className = 'flex justify-end';
+  const b = document.createElement('div'); b.className = 'chat-bubble-user';
+  b.textContent = text;
+  w.appendChild(b); c.appendChild(w);
+  c.scrollTop = c.scrollHeight;
+}
+
+function _appendSrAssistantBubble() {
+  const c = document.getElementById('sr-followup-history');
+  const w = document.createElement('div'); w.className = 'flex justify-start';
+  const b = document.createElement('div'); b.className = 'chat-bubble-assistant markdown-body';
+  w.appendChild(b); c.appendChild(w);
+  c.scrollTop = c.scrollHeight;
+  return b;
+}
+
+function _appendSrLogStrip() {
+  const c     = document.getElementById('sr-followup-history');
+  const strip = document.createElement('div'); strip.className = 'fu-log-strip';
+  c.appendChild(strip); c.scrollTop = c.scrollHeight;
+  return strip;
+}
+
+function _renderSrFuLogEntry(strip, entry) {
+  const div = document.createElement('div');
+  div.className = `fu-log-entry fu-log-step-${entry.step || 'fallback'}`;
+  div.innerHTML =
+    `<span class="fu-log-icon">${LOG_ICONS[entry.step] || '•'}</span>` +
+    `<span class="fu-log-label">${esc(entry.label || '')}</span>` +
+    `<span class="fu-log-msg">${esc(entry.msg || '')}</span>`;
+  strip.appendChild(div);
+  const c = document.getElementById('sr-followup-history');
+  c.scrollTop = c.scrollHeight;
+}
+
+async function sendSrFollowUp() {
+  const input    = document.getElementById('sr-followup-input');
+  const sendBtn  = document.getElementById('sr-followup-send');
+  const question = input.value.trim();
+  if (!question || !srSummaryText) return;
+
+  const model = document.getElementById('sr-model').value;
+  input.value      = '';
+  input.disabled   = true;
+  sendBtn.disabled = true;
+  sendBtn.textContent = '…';
+
+  srFollowUpHistory.push({ role: 'user', content: question });
+  _appendSrUserBubble(question);
+  const strip  = _appendSrLogStrip();
+  const bubble = _appendSrAssistantBubble();
+  let answerText = '';
+
+  try {
+    const res = await fetch('/api/summarize-results/followup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, history: srFollowUpHistory.slice(0, -1), model }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+      throw new Error(err.detail || 'Request failed');
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') break;
+        try {
+          const delta = JSON.parse(raw);
+          if (delta.type === 'log') {
+            _renderSrFuLogEntry(strip, delta);
+          } else if (delta.content) {
+            answerText += delta.content;
+            bubble.innerHTML = marked.parse(answerText);
+            const c = document.getElementById('sr-followup-history');
+            c.scrollTop = c.scrollHeight;
+          } else if (delta.error) {
+            throw new Error(delta.error);
+          }
+        } catch (parseErr) {
+          if (!(parseErr instanceof SyntaxError)) throw parseErr;
+        }
+      }
+    }
+    srFollowUpHistory.push({ role: 'assistant', content: answerText });
+
+  } catch (e) {
+    bubble.remove();
+    srFollowUpHistory.pop();
+    showErrorPopup(e.message);
+  } finally {
+    input.disabled   = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Ask';
+    input.focus();
+  }
+}
+
+/* ── SR PDF export ── */
+function exportSrPDF() {
+  const summaryHTML = document.getElementById('sr-result').innerHTML;
+  const dateStr     = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const pdfFilename = `Results-Summary-${new Date().toISOString().slice(0, 10)}`;
+
+  let instructionHTML = '';
+  if (srLastPrompt) {
+    const safe = srLastPrompt.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    instructionHTML = `<div class="custom-instruction"><span class="ci-label">Custom Instructions</span>${safe}</div>`;
+  }
+
+  let qaHTML = '';
+  for (const turn of srFollowUpHistory.slice(1)) {
+    if (turn.role === 'user') {
+      const safe = turn.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      qaHTML += `<div class="q-block"><span class="q-label">Question</span>${safe}</div>`;
+    } else {
+      qaHTML += `<div class="a-block">${marked.parse(turn.content)}</div>`;
+    }
+  }
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${pdfFilename}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  max-width: 820px; margin: 40px auto; padding: 0 28px;
+  color: #1e293b; line-height: 1.65; font-size: 14px; }
+h1 { font-size: 1.5rem; color: #4c1d95; padding-bottom: 10px;
+     border-bottom: 2px solid #e2e8f0; margin-bottom: 6px; }
+.meta { font-size: 0.75rem; color: #6b7280; margin-bottom: 1.75rem; }
+h2 { font-size: 1.15rem; font-weight: 700; color: #1e293b; margin-top: 2rem;
+     border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 1rem; }
+h3 { font-size: 1rem; font-weight: 600; color: #374151; margin: 1rem 0 0.4rem; }
+h4 { font-size: 0.9rem; font-weight: 600; margin: 0.8rem 0 0.3rem; }
+p  { margin-bottom: 0.65rem; }
+ul, ol { padding-left: 1.4rem; margin-bottom: 0.65rem; }
+li { margin-bottom: 0.2rem; }
+blockquote { border-left: 3px solid #7c3aed; margin: 0.75rem 0;
+  padding: 6px 14px; background: #f5f3ff; color: #3730a3;
+  border-radius: 0 6px 6px 0; font-style: italic; }
+code { background: #f1f5f9; border-radius: 4px; padding: 1px 5px; font-size: 0.82em; font-family: monospace; }
+pre  { background: #1e293b; color: #e2e8f0; border-radius: 6px; padding: 12px; overflow-x: auto; margin-bottom: 0.65rem; }
+pre code { background: none; padding: 0; color: inherit; }
+hr   { border: none; border-top: 1px solid #e2e8f0; margin: 1.25rem 0; }
+strong { font-weight: 700; } em { font-style: italic; } a { color: #4c1d95; text-decoration: underline; }
+table { border-collapse: collapse; width: 100%; margin-bottom: 0.65rem; font-size: 0.85rem; }
+th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
+th { background: #f8fafc; font-weight: 700; }
+.custom-instruction { background: #fefce8; border: 1px solid #fde68a; border-radius: 6px;
+  padding: 8px 14px; margin-bottom: 1.75rem; font-size: 0.8rem; color: #713f12; }
+.ci-label { display: block; font-size: 0.68rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em; color: #92400e; margin-bottom: 4px; }
+.q-block { background: #f5f3ff; border-radius: 10px 10px 10px 2px;
+  padding: 10px 14px; margin: 14px 0 4px; color: #1e1b4b; font-weight: 600; }
+.q-label { display: block; font-size: 0.68rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em; color: #7c3aed; margin-bottom: 4px; }
+.a-block { background: #f8fafc; border-left: 3px solid #94a3b8;
+  border-radius: 0 10px 10px 0; padding: 10px 14px; margin: 4px 0 14px; }
+@media print { body { margin: 16px 28px; } }
+</style>
+</head>
+<body>
+<h1>Results Summary</h1>
+<p class="meta">Exported ${dateStr} &middot; ${currentResults.length.toLocaleString()} search results</p>
+${instructionHTML}
+<div class="summary-body">${summaryHTML}</div>
+${qaHTML ? '<h2>Follow-up Q&amp;A</h2><div class="qa-body">' + qaHTML + '</div>' : ''}
+<script>window.onload = function() { window.print(); };<\/script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url  = URL.createObjectURL(blob);
+  const win  = window.open(url, '_blank', 'width=920,height=750');
+  if (!win) { URL.revokeObjectURL(url); showErrorPopup('Pop-up blocked. Please allow pop-ups for this page.'); return; }
+  win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+}
+
+/* ── Trend chart PNG export ── */
+function exportTrendChartPNG() {
+  if (!_trendChart) return;
+  const src = document.getElementById('trend-chart');
+  const out  = document.createElement('canvas');
+  out.width  = src.width;
+  out.height = src.height;
+  const ctx  = out.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(src, 0, 0);
+  const a = document.createElement('a');
+  a.download = `trend-${_trendBucket}-${new Date().toISOString().slice(0, 10)}.png`;
+  a.href = out.toDataURL('image/png');
+  a.click();
+}
+document.getElementById('trend-export-png').addEventListener('click', exportTrendChartPNG);
+
+/* ── SR event wiring ── */
+document.getElementById('sr-retrieval-mode').addEventListener('change', () => {
+  const hint = document.getElementById('sr-mode-hint');
+  const mode = document.getElementById('sr-retrieval-mode').value;
+  hint.textContent = mode === 'cluster'
+    ? 'Deduplicates and samples representative messages across semantic clusters.'
+    : 'All messages passed directly to the LLM — no clustering or deduplication.';
+});
+document.getElementById('sr-btn').addEventListener('click', doSummarizeResults);
+document.getElementById('sr-log-toggle').addEventListener('click', () => {
+  const logEl = document.getElementById('sr-process-log');
+  const btn   = document.getElementById('sr-log-toggle');
+  const hidden = logEl.classList.toggle('hidden');
+  btn.innerHTML = hidden ? '&#9660; Show' : '&#9650; Hide';
+});
+document.getElementById('sr-followup-send').addEventListener('click', sendSrFollowUp);
+document.getElementById('sr-followup-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); sendSrFollowUp(); }
+});
+document.getElementById('sr-followup-clear').addEventListener('click', () => {
+  srFollowUpHistory = srSummaryText ? [{ role: 'assistant', content: srSummaryText }] : [];
+  document.getElementById('sr-followup-history').innerHTML = '';
+});
+document.getElementById('sr-export-pdf').addEventListener('click', exportSrPDF);
+document.getElementById('sr-export-pdf-followup').addEventListener('click', exportSrPDF);
 
 /* ══════════════════════════════════════════════════════════════════════════
    RESULTS FILTER
 ══════════════════════════════════════════════════════════════════════════ */
 
-let filterMode        = 'exact';  // 'exact' | 'semantic'
+let filterMode        = 'exact';  // 'exact' | 'any' | 'semantic'
 let _semanticDebounce = null;
 
 /* ── Set active mode + update UI ── */
 const _EXACT_ACTIVE    = ['bg-indigo-700','text-white'];
 const _EXACT_INACTIVE  = ['bg-slate-100','text-slate-500'];
+const _ANY_ACTIVE      = ['bg-emerald-600','text-white'];
+const _ANY_INACTIVE    = ['bg-slate-100','text-slate-500'];
 const _SEM_ACTIVE      = ['bg-violet-600','text-white'];
 const _SEM_INACTIVE    = ['bg-slate-100','text-slate-500'];
 
 function setFilterMode(mode) {
   filterMode = mode;
   const exactBtn = document.getElementById('filter-mode-exact');
+  const anyBtn   = document.getElementById('filter-mode-any');
   const semBtn   = document.getElementById('filter-mode-semantic');
 
+  exactBtn.classList.remove(..._EXACT_ACTIVE,   ..._EXACT_INACTIVE);
+  anyBtn.classList.remove(  ..._ANY_ACTIVE,     ..._ANY_INACTIVE);
+  semBtn.classList.remove(  ..._SEM_ACTIVE,     ..._SEM_INACTIVE);
+
   if (mode === 'exact') {
-    exactBtn.classList.remove(..._EXACT_INACTIVE);  exactBtn.classList.add(..._EXACT_ACTIVE);
-    semBtn.classList.remove(..._SEM_ACTIVE);         semBtn.classList.add(..._SEM_INACTIVE);
+    exactBtn.classList.add(..._EXACT_ACTIVE);
+    anyBtn.classList.add(  ..._ANY_INACTIVE);
+    semBtn.classList.add(  ..._SEM_INACTIVE);
+  } else if (mode === 'any') {
+    exactBtn.classList.add(..._EXACT_INACTIVE);
+    anyBtn.classList.add(  ..._ANY_ACTIVE);
+    semBtn.classList.add(  ..._SEM_INACTIVE);
   } else {
-    semBtn.classList.remove(..._SEM_INACTIVE);       semBtn.classList.add(..._SEM_ACTIVE);
-    exactBtn.classList.remove(..._EXACT_ACTIVE);     exactBtn.classList.add(..._EXACT_INACTIVE);
+    exactBtn.classList.add(..._EXACT_INACTIVE);
+    anyBtn.classList.add(  ..._ANY_INACTIVE);
+    semBtn.classList.add(  ..._SEM_ACTIVE);
   }
 
-  document.getElementById('results-filter').placeholder =
-    mode === 'exact'
-      ? 'Exact: whole-word match, multi-word phrase scores highest…'
-      : 'Semantic: re-rank results by embedding similarity…';
+  exactBtn.setAttribute('aria-pressed', String(mode === 'exact'));
+  anyBtn.setAttribute(  'aria-pressed', String(mode === 'any'));
+  semBtn.setAttribute(  'aria-pressed', String(mode === 'semantic'));
+
+  const placeholders = {
+    exact:    'Exact: whole-word match, multi-word phrase scores highest…',
+    any:      'Any Word: returns messages containing at least one query word…',
+    semantic: 'Semantic: re-rank results by embedding similarity…',
+  };
+  document.getElementById('results-filter').placeholder = placeholders[mode];
 }
 
 document.getElementById('filter-mode-exact')
   .addEventListener('click', () => { setFilterMode('exact');    applyResultsFilter(); });
+document.getElementById('filter-mode-any')
+  .addEventListener('click', () => { setFilterMode('any');      applyResultsFilter(); });
 document.getElementById('filter-mode-semantic')
   .addEventListener('click', () => { setFilterMode('semantic'); applyResultsFilter(); });
 
@@ -1158,33 +1741,39 @@ function _applyExactFilter(term) {
   if (!term) { _resetToAllResults(); return; }
 
   const words = term.split(/\s+/).filter(Boolean);
-  // Tokens for highlighting: phrase first (if multi-word), then individual words
   activeFilterTokens = words.length > 1 ? [term, ...words] : words;
 
-  // Word-boundary regex per token — "cat" won't match "category"
-  const tokenRegexes = words.map(w =>
+  // Substring inclusion: all words must appear somewhere (AND logic).
+  // Keeps results visible while still typing partial words.
+  const subRegexes = words.map(w => new RegExp(_escapeRegex(w), 'i'));
+
+  // Whole-word regexes for bonus scoring (exact-word hit ranks higher)
+  const wordRegexes = words.map(w =>
     new RegExp('\\b' + _escapeRegex(w) + '\\b', 'i')
   );
-  // Phrase regex: full sequence with word boundaries (multi-word only)
+  // Phrase regex: full sequence (multi-word only) for highest score
   const phraseRegex = words.length > 1
-    ? new RegExp('\\b' + words.map(_escapeRegex).join('\\s+') + '\\b', 'i')
+    ? new RegExp(_escapeRegex(words.join(' ')), 'i')
     : null;
 
   const scored = currentResults
     .map(m => {
       const user    = m.username || '';
       const content = m.content  || '';
+      const text    = user + ' ' + content;
 
-      // Exact phrase match (multi-word) — scores highest
+      // All words must be present as substrings (AND gate)
+      if (!subRegexes.every(rx => rx.test(text))) return { m, s: 0 };
+
+      // Phrase match — highest score
       if (phraseRegex) {
-        const inUser    = phraseRegex.test(user);
-        const inContent = phraseRegex.test(content);
-        if (inUser || inContent) return { m, s: 1000 + (inUser ? 500 : 0) };
+        if (phraseRegex.test(user))    return { m, s: 1500 };
+        if (phraseRegex.test(content)) return { m, s: 1000 };
       }
 
-      // Per-token whole-word matches
-      let s = 0;
-      for (const rx of tokenRegexes) {
+      // Whole-word bonus over plain substring
+      let s = 1;  // base: passes substring gate
+      for (const rx of wordRegexes) {
         if (rx.test(user))    s += 20;
         if (rx.test(content)) s += 10;
       }
@@ -1194,6 +1783,27 @@ function _applyExactFilter(term) {
     .sort((a, b) => new Date(a.m.date) - new Date(b.m.date));
 
   _renderFilteredCards(scored.map(x => x.m), currentResults.length);
+}
+
+/* ── Any-word filter (instant, client-side) ── */
+function _applyAnyWordFilter(term) {
+  if (!term) { _resetToAllResults(); return; }
+
+  const words = term.split(/\s+/).filter(Boolean);
+  // Highlight all individual words
+  activeFilterTokens = words;
+
+  // Substring match (OR logic) — partial words work while typing
+  const tokenRegexes = words.map(w => new RegExp(_escapeRegex(w), 'i'));
+
+  const matched = currentResults
+    .filter(m => {
+      const text = (m.username || '') + ' ' + (m.content || '');
+      return tokenRegexes.some(rx => rx.test(text));
+    })
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  _renderFilteredCards(matched, currentResults.length);
 }
 
 /* ── Semantic filter (debounced, API-backed) ── */
@@ -1267,6 +1877,8 @@ function applyResultsFilter() {
   clearTimeout(_semanticDebounce);
   if (filterMode === 'exact') {
     _applyExactFilter(term);
+  } else if (filterMode === 'any') {
+    _applyAnyWordFilter(term);
   } else {
     if (!term) { _applySemanticFilter(''); return; }
     _semanticDebounce = setTimeout(() => _applySemanticFilter(term), 500);
@@ -1276,6 +1888,9 @@ function applyResultsFilter() {
 document.getElementById('results-filter').addEventListener('input', applyResultsFilter);
 document.getElementById('results-filter-clear').addEventListener('click', () => {
   document.getElementById('results-filter').value = '';
+  const banner = document.getElementById('chart-filter-banner');
+  if (banner) banner.classList.add('hidden');
+  _resetChartHighlight();
   applyResultsFilter();
 });
 
@@ -1945,6 +2560,8 @@ let sumFollowUpHistory = [];
 // Filter params stored after a successful summary so follow-up
 // can search the same filtered message pool.
 let sumLastFilterParams = null;
+// Custom instruction text from the last summary run (used for PDF export).
+let sumLastPrompt = '';
 
 /* ── Form collapse / expand ── */
 function _buildCompactInfo(p) {
@@ -1975,13 +2592,15 @@ document.getElementById('sum-form-collapse').addEventListener('click', () => col
 
 /* ── Process log ── */
 const LOG_ICONS = {
-  filter:    '🔍',
-  retrieval: '📡',
-  dedup:     '🧹',
-  cluster:   '🔮',
-  sample:    '🎯',
-  llm:       '✨',
-  fallback:  '⚠️',
+  filter:      '🔍',
+  retrieval:   '📡',
+  dedup:       '🧹',
+  cluster:     '🔮',
+  sample:      '🎯',
+  llm:         '✨',
+  fallback:    '⚠️',
+  meta:        '📅',
+  instruction: '📝',
 };
 
 function renderProcessLogEntry(entry) {
@@ -2032,6 +2651,30 @@ function appendFollowUpAssistantBubble(text) {
   return bubble; // caller streams content into bubble.innerHTML
 }
 
+function appendFollowUpLogStrip() {
+  const container = document.getElementById('sum-followup-history');
+  const strip = document.createElement('div');
+  strip.className = 'fu-log-strip';
+  container.appendChild(strip);
+  container.scrollTop = container.scrollHeight;
+  return strip;
+}
+
+function renderFollowUpLogEntry(strip, entry) {
+  const div = document.createElement('div');
+  div.className = `fu-log-entry fu-log-step-${entry.step || 'fallback'}`;
+  const icon  = LOG_ICONS[entry.step] || '•';
+  const label = entry.label || entry.step || '';
+  const msg   = entry.msg   || '';
+  div.innerHTML =
+    `<span class="fu-log-icon">${icon}</span>` +
+    `<span class="fu-log-label">${esc(label)}</span>` +
+    `<span class="fu-log-msg">${esc(msg)}</span>`;
+  strip.appendChild(div);
+  document.getElementById('sum-followup-history').scrollTop =
+    document.getElementById('sum-followup-history').scrollHeight;
+}
+
 /* ── Generate Hybrid Summary ── */
 async function doSummarize() {
   const btn      = document.getElementById('sum-btn');
@@ -2042,8 +2685,10 @@ async function doSummarize() {
   const isMonthMode = document.getElementById('sum-mode-month').classList.contains('range-mode-active');
   const minW        = parseInt(document.getElementById('sum-min-words').value) || 0;
   const suno        = document.getElementById('sum-suno').value;
-  const prompt      = document.getElementById('sum-prompt').value.trim();
-  const scope       = getScopeParam();
+  const prompt         = document.getElementById('sum-prompt').value.trim();
+  sumLastPrompt        = prompt;
+  const retrievalMode  = document.getElementById('sum-retrieval-mode').value;
+  const scope          = getScopeParam();
   const sumModel    = document.getElementById('sum-model').value;
 
   let dateFrom = '', dateTo = '';
@@ -2072,6 +2717,17 @@ async function doSummarize() {
   logEl.classList.remove('hidden');
   document.getElementById('sum-log-toggle').innerHTML = '&#9650; Hide';
 
+  // Show custom instruction at top of log if provided
+  if (prompt) {
+    const div = document.createElement('div');
+    div.className = 'log-entry log-step-instruction';
+    div.innerHTML =
+      `<span class="log-icon">📝</span>` +
+      `<span class="log-label">Custom instructions</span>` +
+      `<span class="log-msg log-msg-wrap">${esc(prompt)}</span>`;
+    logEl.appendChild(div);
+  }
+
   // Reset follow-up section whenever a new summary starts
   document.getElementById('sum-followup-section').classList.add('hidden');
   document.getElementById('sum-followup-history').innerHTML = '';
@@ -2095,7 +2751,7 @@ async function doSummarize() {
     const res = await fetch('/api/summarize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...currentParams, prompt: prompt || null }),
+      body: JSON.stringify({ ...currentParams, prompt: prompt || null, retrieval_mode: retrievalMode }),
     });
 
     if (!res.ok) {
@@ -2160,6 +2816,21 @@ async function doSummarize() {
 
 document.getElementById('sum-btn').addEventListener('click', doSummarize);
 
+/* ── Retrieval mode toggle ── */
+(function () {
+  const modeEl  = document.getElementById('sum-retrieval-mode');
+  const hintEl  = document.getElementById('sum-mode-hint');
+  const HINTS = {
+    cluster: 'Semantic retrieval \u2192 HDBSCAN clustering \u2192 representative sampling',
+    all:     'All messages matching the filters above are sent directly to the LLM',
+  };
+  function applyMode(mode) {
+    hintEl.textContent = HINTS[mode] || '';
+  }
+  modeEl.addEventListener('change', () => applyMode(modeEl.value));
+  applyMode(modeEl.value); // initialise on page load
+}());
+
 /* ── Follow-up Q&A ── */
 async function sendSumFollowUp() {
   const input    = document.getElementById('sum-followup-input');
@@ -2180,6 +2851,7 @@ async function sendSumFollowUp() {
   sumFollowUpHistory.push({ role: 'user', content: question });
   appendFollowUpUserBubble(question);
 
+  const fuLogStrip = appendFollowUpLogStrip();
   const bubble = appendFollowUpAssistantBubble('');
   let answerText = '';
 
@@ -2189,8 +2861,11 @@ async function sendSumFollowUp() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         question,
-        // History excludes the current question (already in 'question' field)
+        // History excludes the current question (already in 'question' field).
+        // history[0] = initial summary; rest = prior Q&A turns.
         history: sumFollowUpHistory.slice(0, -1),
+        // Original custom instructions so the backend can include them as context.
+        prompt: sumLastPrompt || null,
         ...sumLastFilterParams,
       }),
     });
@@ -2217,7 +2892,7 @@ async function sendSumFollowUp() {
         try {
           const delta = JSON.parse(raw);
           if (delta.type === 'log') {
-            // Follow-up log events are silently consumed (not shown in main log)
+            renderFollowUpLogEntry(fuLogStrip, delta);
           } else if (delta.content) {
             answerText += delta.content;
             bubble.innerHTML = marked.parse(answerText);
@@ -2264,6 +2939,47 @@ function exportSummaryPDF() {
     year: 'numeric', month: 'long', day: 'numeric',
   });
 
+  // ── Build filename: Summary_<date range>_<excerpt> ────────────────────────
+  // Date/month range from filter params (YYYY-MM-DD → keep YYYY-MM for brevity)
+  let dateRangePart = 'All';
+  if (sumLastFilterParams) {
+    const df = sumLastFilterParams.date_from;
+    const dt = sumLastFilterParams.date_to;
+    if (df && dt)   dateRangePart = `${df.slice(0, 7)}_${dt.slice(0, 7)}`;
+    else if (df)    dateRangePart = `from_${df.slice(0, 7)}`;
+    else if (dt)    dateRangePart = `to_${dt.slice(0, 7)}`;
+  }
+
+  // Plain-text excerpt: strip HTML tags, collapse whitespace, take first ~55 chars
+  const rawText = (document.getElementById('sum-result').innerText || '')
+    .replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/^[#\s*_]+/, '')   // drop any leading markdown artefacts
+    .trim();
+  let excerpt = rawText.slice(0, 55);
+  if (rawText.length > 55) {
+    const lastSpace = excerpt.lastIndexOf(' ');
+    if (lastSpace > 20) excerpt = excerpt.slice(0, lastSpace);
+  }
+  // Sanitize: keep alphanumerics, spaces, hyphens; convert spaces to underscores
+  const excerptSafe = excerpt
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .slice(0, 50);
+
+  const pdfFilename = ['Summary', dateRangePart, excerptSafe]
+    .filter(Boolean)
+    .join('_');
+
+  // Build custom instruction block if present
+  let instructionHTML = '';
+  if (sumLastPrompt) {
+    const safe = sumLastPrompt
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    instructionHTML = `<div class="custom-instruction"><span class="ci-label">Custom Instructions</span>${safe}</div>`;
+  }
+
   // Build Q&A section from history (skip index 0 = initial summary)
   let qaHTML = '';
   const qaHistory = sumFollowUpHistory.slice(1);
@@ -2283,7 +2999,7 @@ function exportSummaryPDF() {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Hybrid Summary \u2013 ${dateStr}</title>
+<title>${pdfFilename}</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -2322,6 +3038,15 @@ a      { color: #3730a3; text-decoration: underline; }
 table  { border-collapse: collapse; width: 100%; margin-bottom: 0.65rem; font-size: 0.85rem; }
 th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
 th     { background: #f8fafc; font-weight: 700; }
+.custom-instruction {
+  background: #fefce8; border: 1px solid #fde68a; border-radius: 6px;
+  padding: 8px 14px; margin-bottom: 1.75rem; font-size: 0.8rem; color: #713f12;
+}
+.ci-label {
+  display: block; font-size: 0.68rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: #92400e; margin-bottom: 4px;
+}
 .q-block {
   background: #eef2ff; border-radius: 10px 10px 10px 2px;
   padding: 10px 14px; margin: 14px 0 4px; color: #1e1b4b; font-weight: 600;
@@ -2341,6 +3066,7 @@ th     { background: #f8fafc; font-weight: 700; }
 <body>
 <h1>Hybrid Summary</h1>
 <p class="meta">Exported ${dateStr}</p>
+${instructionHTML}
 <div class="summary-body">${summaryHTML}</div>
 ${qaHTML ? '<h2>Follow-up Q&amp;A</h2><div class="qa-body">' + qaHTML + '</div>' : ''}
 <script>window.onload = function() { window.print(); };<\/script>
@@ -2360,6 +3086,1163 @@ ${qaHTML ? '<h2>Follow-up Q&amp;A</h2><div class="qa-body">' + qaHTML + '</div>'
 }
 
 document.getElementById('sum-export-pdf').addEventListener('click', exportSummaryPDF);
+document.getElementById('sum-export-pdf-followup').addEventListener('click', exportSummaryPDF);
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SUB-TAB SWITCHING (Chat Summary ↔ User Profile)
+══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  function switchSubtab(tab) {
+    const isChatTab = tab === 'chat';
+    document.getElementById('subtab-chat').classList.toggle('hidden', !isChatTab);
+    document.getElementById('subtab-profile').classList.toggle('hidden', isChatTab);
+    document.getElementById('subtab-btn-chat').classList.toggle('subtab-btn-active', isChatTab);
+    document.getElementById('subtab-btn-profile').classList.toggle('subtab-btn-active', !isChatTab);
+  }
+  document.getElementById('subtab-btn-chat').addEventListener('click', () => switchSubtab('chat'));
+  document.getElementById('subtab-btn-profile').addEventListener('click', () => switchSubtab('profile'));
+}());
+
+/* ══════════════════════════════════════════════════════════════════════════
+   USER PROFILE
+══════════════════════════════════════════════════════════════════════════ */
+
+/* ── State ── */
+let profFollowUpHistory  = [];
+let profLastFilterParams = null;
+let profLastPrompt       = '';
+
+/* ── Form collapse / expand ── */
+function _buildProfCompactInfo(p) {
+  if (!p) return '—';
+  const parts = [];
+  if (p.profile_username) parts.push(`@${p.profile_username}`);
+  if (p.date_from || p.date_to) {
+    parts.push(`${p.date_from || '…'} → ${p.date_to || '…'}`);
+  }
+  return parts.length ? parts.join(' · ') : 'All messages';
+}
+
+function collapseProfForm(filterParams) {
+  document.getElementById('prof-compact-info').textContent = _buildProfCompactInfo(filterParams);
+  document.getElementById('prof-form-full').classList.add('hidden');
+  document.getElementById('prof-form-compact').classList.remove('hidden');
+}
+
+function expandProfForm() {
+  document.getElementById('prof-form-compact').classList.add('hidden');
+  document.getElementById('prof-form-full').classList.remove('hidden');
+}
+
+document.getElementById('prof-form-expand').addEventListener('click', expandProfForm);
+document.getElementById('prof-form-collapse').addEventListener('click', () => collapseProfForm(profLastFilterParams));
+
+/* ── Date mode toggle ── */
+(function () {
+  const exactBtn  = document.getElementById('prof-mode-exact');
+  const monthBtn  = document.getElementById('prof-mode-month');
+  const exactDiv  = document.getElementById('prof-exact-inputs');
+  const monthDiv  = document.getElementById('prof-month-inputs');
+
+  function setMode(mode) {
+    const isExact = mode === 'exact';
+    exactBtn.classList.toggle('range-mode-active', isExact);
+    exactBtn.setAttribute('aria-pressed', String(isExact));
+    monthBtn.classList.toggle('range-mode-active', !isExact);
+    monthBtn.setAttribute('aria-pressed', String(!isExact));
+    exactDiv.classList.toggle('hidden', !isExact);
+    monthDiv.classList.toggle('hidden', isExact);
+  }
+
+  exactBtn.addEventListener('click', () => setMode('exact'));
+  monthBtn.addEventListener('click', () => setMode('month'));
+  setMode('exact'); // default
+}());
+
+/* ── Retrieval mode hint ── */
+(function () {
+  const modeEl = document.getElementById('prof-retrieval-mode');
+  const hintEl = document.getElementById('prof-mode-hint');
+  const HINTS = {
+    cluster: 'Semantic retrieval → HDBSCAN clustering → representative sampling',
+    all:     'All messages by this user matching the filters are sent directly to the LLM',
+  };
+  function applyMode(mode) { hintEl.textContent = HINTS[mode] || ''; }
+  modeEl.addEventListener('change', () => applyMode(modeEl.value));
+  applyMode(modeEl.value);
+}());
+
+/* ── Process log ── */
+function renderProfLogEntry(entry) {
+  const logEl = document.getElementById('prof-process-log');
+  const div = document.createElement('div');
+  div.className = `log-entry log-step-${entry.step || 'fallback'}`;
+  const icon  = LOG_ICONS[entry.step] || '•';
+  const label = entry.label || entry.step || '';
+  const msg   = entry.msg   || '';
+  div.innerHTML =
+    `<span class="log-icon">${icon}</span>` +
+    `<span class="log-label">${esc(label)}</span>` +
+    `<span class="log-msg">${esc(msg)}</span>`;
+  logEl.appendChild(div);
+}
+
+document.getElementById('prof-log-toggle').addEventListener('click', () => {
+  const logEl    = document.getElementById('prof-process-log');
+  const toggleEl = document.getElementById('prof-log-toggle');
+  const hidden   = logEl.classList.toggle('hidden');
+  toggleEl.innerHTML = hidden ? '&#9660; Show' : '&#9650; Hide';
+});
+
+/* ── Follow-up bubble helpers ── */
+function appendProfFollowUpUserBubble(text) {
+  const container = document.getElementById('prof-followup-history');
+  const wrap   = document.createElement('div');
+  wrap.className = 'flex justify-end';
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble-user';
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  container.appendChild(wrap);
+  container.scrollTop = container.scrollHeight;
+}
+
+function appendProfFollowUpAssistantBubble(text) {
+  const container = document.getElementById('prof-followup-history');
+  const wrap   = document.createElement('div');
+  wrap.className = 'flex justify-start';
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble-assistant markdown-body';
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  container.appendChild(wrap);
+  container.scrollTop = container.scrollHeight;
+  return bubble;
+}
+
+function appendProfFollowUpLogStrip() {
+  const container = document.getElementById('prof-followup-history');
+  const strip = document.createElement('div');
+  strip.className = 'fu-log-strip';
+  container.appendChild(strip);
+  container.scrollTop = container.scrollHeight;
+  return strip;
+}
+
+function renderProfFollowUpLogEntry(strip, entry) {
+  const div = document.createElement('div');
+  div.className = `fu-log-entry fu-log-step-${entry.step || 'fallback'}`;
+  const icon  = LOG_ICONS[entry.step] || '•';
+  const label = entry.label || entry.step || '';
+  const msg   = entry.msg   || '';
+  div.innerHTML =
+    `<span class="fu-log-icon">${icon}</span>` +
+    `<span class="fu-log-label">${esc(label)}</span>` +
+    `<span class="fu-log-msg">${esc(msg)}</span>`;
+  strip.appendChild(div);
+  document.getElementById('prof-followup-history').scrollTop =
+    document.getElementById('prof-followup-history').scrollHeight;
+}
+
+/* ── Analyse User ── */
+async function doUserProfile() {
+  const btn       = document.getElementById('prof-btn');
+  const resultEl  = document.getElementById('prof-result');
+  const logEl     = document.getElementById('prof-process-log');
+
+  const profileUsername = document.getElementById('prof-username').value.trim();
+  if (!profileUsername) {
+    showErrorPopup('Please enter a username to analyse.');
+    return;
+  }
+
+  const isMonthMode    = document.getElementById('prof-mode-month').classList.contains('range-mode-active');
+  const prompt         = document.getElementById('prof-prompt').value.trim();
+  profLastPrompt       = prompt;
+  const retrievalMode  = document.getElementById('prof-retrieval-mode').value;
+  const profModel      = document.getElementById('prof-model').value;
+  const scope          = getScopeParam();
+
+  let dateFrom = '', dateTo = '';
+  if (isMonthMode) {
+    const mFrom = document.getElementById('prof-month-from').value;
+    const mTo   = document.getElementById('prof-month-to').value;
+    if (mFrom) dateFrom = mFrom + '-01';
+    if (mTo) {
+      const parts = mTo.split('-');
+      const lastDay = new Date(parseInt(parts[0]), parseInt(parts[1]), 0).getDate();
+      dateTo = mTo + '-' + String(lastDay).padStart(2, '0');
+    }
+  } else {
+    dateFrom = document.getElementById('prof-date-from').value;
+    dateTo   = document.getElementById('prof-date-to').value;
+  }
+
+  btn.disabled    = true;
+  btn.textContent = 'Analysing…';
+
+  document.getElementById('prof-results-panel').classList.remove('hidden');
+  logEl.innerHTML  = '';
+  resultEl.innerHTML = '';
+  logEl.classList.remove('hidden');
+  document.getElementById('prof-log-toggle').innerHTML = '&#9650; Hide';
+
+  // Show custom instruction in log if provided
+  if (prompt) {
+    const div = document.createElement('div');
+    div.className = 'log-entry log-step-instruction';
+    div.innerHTML =
+      `<span class="log-icon">📝</span>` +
+      `<span class="log-label">Custom instructions</span>` +
+      `<span class="log-msg log-msg-wrap">${esc(prompt)}</span>`;
+    logEl.appendChild(div);
+  }
+
+  // Reset follow-up section
+  document.getElementById('prof-followup-section').classList.add('hidden');
+  document.getElementById('prof-followup-history').innerHTML = '';
+  profFollowUpHistory  = [];
+  profLastFilterParams = null;
+
+  // Show collapse button
+  document.getElementById('prof-form-collapse').classList.remove('hidden');
+
+  try {
+    const currentParams = {
+      profile_username: profileUsername,
+      date_from:        dateFrom  || null,
+      date_to:          dateTo    || null,
+      upload_ids:       scope ? scope.split(',') : [],
+      model:            profModel,
+    };
+
+    const res = await fetch('/api/user-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...currentParams,
+        prompt:         prompt || null,
+        retrieval_mode: retrievalMode,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+      throw new Error(err.detail || 'Request failed');
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let profileText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') break;
+        try {
+          const delta = JSON.parse(raw);
+          if (delta.type === 'log') {
+            renderProfLogEntry(delta);
+          } else if (delta.content) {
+            profileText += delta.content;
+            resultEl.innerHTML = marked.parse(profileText);
+          } else if (delta.error) {
+            throw new Error(delta.error);
+          }
+        } catch (parseErr) {
+          if (!(parseErr instanceof SyntaxError)) throw parseErr;
+        }
+      }
+    }
+
+    if (!profileText) {
+      showErrorPopup('No response received from the model. Check your API key and selected model.');
+      return;
+    }
+
+    profLastFilterParams = currentParams;
+    profFollowUpHistory  = [{ role: 'assistant', content: profileText }];
+
+    document.getElementById('prof-followup-section').classList.remove('hidden');
+    collapseProfForm(currentParams);
+
+  } catch (e) {
+    showErrorPopup(e.message);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Analyse User';
+  }
+}
+
+document.getElementById('prof-btn').addEventListener('click', doUserProfile);
+
+/* ── Follow-up Q&A ── */
+async function sendProfileFollowUp() {
+  const input    = document.getElementById('prof-followup-input');
+  const sendBtn  = document.getElementById('prof-followup-send');
+  const question = input.value.trim();
+
+  if (!question) return;
+  if (!profLastFilterParams) {
+    showErrorPopup('Run a User Profile analysis first before asking follow-up questions.');
+    return;
+  }
+
+  input.value      = '';
+  input.disabled   = true;
+  sendBtn.disabled = true;
+  sendBtn.textContent = '…';
+
+  profFollowUpHistory.push({ role: 'user', content: question });
+  appendProfFollowUpUserBubble(question);
+
+  const fuLogStrip = appendProfFollowUpLogStrip();
+  const bubble     = appendProfFollowUpAssistantBubble('');
+  let answerText   = '';
+
+  try {
+    const res = await fetch('/api/user-profile/followup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question,
+        history:  profFollowUpHistory.slice(0, -1),
+        prompt:   profLastPrompt || null,
+        ...profLastFilterParams,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+      throw new Error(err.detail || 'Request failed');
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') break;
+        try {
+          const delta = JSON.parse(raw);
+          if (delta.type === 'log') {
+            renderProfFollowUpLogEntry(fuLogStrip, delta);
+          } else if (delta.content) {
+            answerText += delta.content;
+            bubble.innerHTML = marked.parse(answerText);
+            document.getElementById('prof-followup-history').scrollTop =
+              document.getElementById('prof-followup-history').scrollHeight;
+          } else if (delta.error) {
+            throw new Error(delta.error);
+          }
+        } catch (parseErr) {
+          if (!(parseErr instanceof SyntaxError)) throw parseErr;
+        }
+      }
+    }
+
+    profFollowUpHistory.push({ role: 'assistant', content: answerText });
+
+  } catch (e) {
+    bubble.remove();
+    profFollowUpHistory.pop();
+    showErrorPopup(e.message);
+  } finally {
+    input.disabled   = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Ask';
+    input.focus();
+  }
+}
+
+document.getElementById('prof-followup-send').addEventListener('click', sendProfileFollowUp);
+document.getElementById('prof-followup-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); sendProfileFollowUp(); }
+});
+document.getElementById('prof-followup-clear').addEventListener('click', () => {
+  const init = profFollowUpHistory[0];
+  profFollowUpHistory = init ? [init] : [];
+  document.getElementById('prof-followup-history').innerHTML = '';
+});
+
+/* ── PDF Export ── */
+function exportProfilePDF() {
+  const profileHTML = document.getElementById('prof-result').innerHTML;
+  const dateStr     = new Date().toLocaleDateString('en-US', {
+    year: 'numeric', month: 'long', day: 'numeric',
+  });
+
+  const username = profLastFilterParams ? (profLastFilterParams.profile_username || 'User') : 'User';
+
+  // Filename: Profile_<username>_<date range>
+  let dateRangePart = 'All';
+  if (profLastFilterParams) {
+    const df = profLastFilterParams.date_from;
+    const dt = profLastFilterParams.date_to;
+    if (df && dt)   dateRangePart = `${df.slice(0, 7)}_${dt.slice(0, 7)}`;
+    else if (df)    dateRangePart = `from_${df.slice(0, 7)}`;
+    else if (dt)    dateRangePart = `to_${dt.slice(0, 7)}`;
+  }
+  const pdfFilename = `Profile_${username}_${dateRangePart}`;
+
+  // Build custom instruction block if present
+  let instructionHTML = '';
+  if (profLastPrompt) {
+    const safe = profLastPrompt
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    instructionHTML = `<div class="custom-instruction"><span class="ci-label">Custom Instructions</span>${safe}</div>`;
+  }
+
+  // Build Q&A section
+  let qaHTML = '';
+  const qaHistory = profFollowUpHistory.slice(1);
+  for (const turn of qaHistory) {
+    if (turn.role === 'user') {
+      const safe = turn.content
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      qaHTML += `<div class="q-block"><span class="q-label">Question</span>${safe}</div>`;
+    } else {
+      qaHTML += `<div class="a-block">${marked.parse(turn.content)}</div>`;
+    }
+  }
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${pdfFilename}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  max-width: 820px; margin: 40px auto; padding: 0 28px;
+  color: #1e293b; line-height: 1.65; font-size: 14px;
+}
+h1  { font-size: 1.5rem; color: #0f766e; padding-bottom: 10px;
+      border-bottom: 2px solid #e2e8f0; margin-bottom: 6px; }
+.meta { font-size: 0.75rem; color: #6b7280; margin-bottom: 1.75rem; }
+h2  { font-size: 1.15rem; font-weight: 700; color: #1e293b; margin-top: 2rem;
+      border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 1rem; }
+h3  { font-size: 1rem; font-weight: 600; color: #374151; margin: 1rem 0 0.4rem; }
+h4  { font-size: 0.9rem; font-weight: 600; margin: 0.8rem 0 0.3rem; }
+p   { margin-bottom: 0.65rem; }
+ul, ol { padding-left: 1.4rem; margin-bottom: 0.65rem; }
+li  { margin-bottom: 0.2rem; }
+blockquote {
+  border-left: 3px solid #0d9488; margin: 0.75rem 0;
+  padding: 6px 14px; background: #f0fdfa; color: #134e4a;
+  border-radius: 0 6px 6px 0; font-style: italic;
+}
+code {
+  background: #f1f5f9; border-radius: 4px;
+  padding: 1px 5px; font-size: 0.82em; font-family: monospace;
+}
+pre  {
+  background: #1e293b; color: #e2e8f0; border-radius: 6px;
+  padding: 12px; overflow-x: auto; margin-bottom: 0.65rem;
+}
+pre code { background: none; padding: 0; color: inherit; }
+hr   { border: none; border-top: 1px solid #e2e8f0; margin: 1.25rem 0; }
+strong { font-weight: 700; }
+em     { font-style: italic; }
+a      { color: #0f766e; text-decoration: underline; }
+table  { border-collapse: collapse; width: 100%; margin-bottom: 0.65rem; font-size: 0.85rem; }
+th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
+th     { background: #f8fafc; font-weight: 700; }
+.custom-instruction {
+  background: #fefce8; border: 1px solid #fde68a; border-radius: 6px;
+  padding: 8px 14px; margin-bottom: 1.75rem; font-size: 0.8rem; color: #713f12;
+}
+.ci-label {
+  display: block; font-size: 0.68rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: #92400e; margin-bottom: 4px;
+}
+.q-block {
+  background: #f0fdfa; border-radius: 10px 10px 10px 2px;
+  padding: 10px 14px; margin: 14px 0 4px; color: #134e4a; font-weight: 600;
+}
+.q-label {
+  display: block; font-size: 0.68rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: #0d9488; margin-bottom: 4px;
+}
+.a-block {
+  background: #f8fafc; border-left: 3px solid #94a3b8;
+  border-radius: 0 10px 10px 0; padding: 10px 14px; margin: 4px 0 14px;
+}
+@media print { body { margin: 16px 28px; } }
+</style>
+</head>
+<body>
+<h1>User Profile: ${username.replace(/</g, '&lt;')}</h1>
+<p class="meta">Exported ${dateStr}</p>
+${instructionHTML}
+<div class="profile-body">${profileHTML}</div>
+${qaHTML ? '<h2>Follow-up Q&amp;A</h2><div class="qa-body">' + qaHTML + '</div>' : ''}
+<script>window.onload = function() { window.print(); };<\/script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url  = URL.createObjectURL(blob);
+  const win  = window.open(url, '_blank', 'width=920,height=750');
+  if (!win) {
+    URL.revokeObjectURL(url);
+    showErrorPopup('Pop-up blocked. Please allow pop-ups for this page, then try again.');
+    return;
+  }
+  win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+}
+
+document.getElementById('prof-export-pdf').addEventListener('click', exportProfilePDF);
+document.getElementById('prof-export-pdf-followup').addEventListener('click', exportProfilePDF);
+
+/* ══════════════════════════════════════════════════════════════════════════
+   USERS IN RANGE
+══════════════════════════════════════════════════════════════════════════ */
+
+let _usersData    = [];
+let _usersSortCol = 'total_messages';
+let _usersSortDir = 'desc';
+
+async function searchUsersInRange() {
+  const btn      = document.getElementById('users-search-btn');
+  const dateFrom = document.getElementById('users-date-from').value;
+  const dateTo   = document.getElementById('users-date-to').value;
+  const suno     = document.getElementById('users-suno').value;
+  const minWords = parseInt(document.getElementById('users-min-words').value, 10) || 0;
+
+  btn.disabled    = true;
+  btn.textContent = 'Searching…';
+
+  try {
+    const params = new URLSearchParams();
+    if (dateFrom)    params.set('date_from', dateFrom);
+    if (dateTo)      params.set('date_to', dateTo);
+    if (suno !== 'all') params.set('suno_team', suno);
+    if (minWords > 0) params.set('min_words', minWords);
+    const scope = getScopeParam();
+    if (scope) params.set('upload_ids', scope);
+
+    _usersData = await apiFetch(`/api/search/users-in-range?${params}`);
+    _usersSortCol = 'total_messages';
+    _usersSortDir = 'desc';
+    _sortAndRenderUsers();
+    document.getElementById('users-results').classList.remove('hidden');
+  } catch (e) {
+    showErrorPopup(e.message);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Search';
+  }
+}
+
+function _lastDayOfMonth(yearMonth) {
+  const [y, m] = yearMonth.split('-').map(Number);
+  return new Date(y, m, 0).toISOString().slice(0, 10);
+}
+
+function _usersActiveFilters() {
+  return {
+    q:            (document.getElementById('users-filter-input').value || '').toLowerCase().trim(),
+    monthFrom:    document.getElementById('users-month-from').value,
+    monthTo:      document.getElementById('users-month-to').value,
+    minMsgs:      parseInt(document.getElementById('users-min-msgs').value,      10) || 0,
+    minWeeks:     parseInt(document.getElementById('users-min-weeks').value,     10) || 0,
+    minAvgWords:  parseFloat(document.getElementById('users-min-avg-words').value) || 0,
+    maxAvgWords:  parseFloat(document.getElementById('users-max-avg-words').value) || 0,
+  };
+}
+
+function _sortAndRenderUsers() {
+  let data = [..._usersData];
+  const { q, monthFrom, monthTo, minMsgs, minWeeks, minAvgWords, maxAvgWords } = _usersActiveFilters();
+
+  if (q) data = data.filter(u => (u.username || '').toLowerCase().includes(q));
+
+  // Month From: first_message_date must fall within that exact month
+  if (monthFrom) {
+    const mStart = monthFrom + '-01';
+    const mEnd   = _lastDayOfMonth(monthFrom);
+    data = data.filter(u => {
+      const first = u.first_message_date || '';
+      return first >= mStart && first <= mEnd;
+    });
+  }
+
+  // Month To: last_message_date must be in that month or later
+  if (monthTo) {
+    const mStart = monthTo + '-01';
+    data = data.filter(u => (u.last_message_date || '') >= mStart);
+  }
+
+  if (minMsgs     > 0) data = data.filter(u => (u.total_messages      || 0) >= minMsgs);
+  if (minWeeks    > 0) data = data.filter(u => (u.weeks_with_messages || 0) >= minWeeks);
+  if (minAvgWords > 0) data = data.filter(u => (u.avg_word_count      || 0) >= minAvgWords);
+  if (maxAvgWords > 0) data = data.filter(u => (u.avg_word_count      || 0) <= maxAvgWords);
+
+  data.sort((a, b) => {
+    let av = a[_usersSortCol];
+    let bv = b[_usersSortCol];
+    if (av == null) av = _usersSortDir === 'asc' ? '' : '\uffff';
+    if (bv == null) bv = _usersSortDir === 'asc' ? '' : '\uffff';
+    if (typeof av === 'string') return _usersSortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    return _usersSortDir === 'asc' ? av - bv : bv - av;
+  });
+
+  const tbody = document.getElementById('users-tbody');
+  tbody.innerHTML = '';
+  const frag = document.createDocumentFragment();
+
+  for (const u of data) {
+    const totalWeeks = u.total_weeks_in_range;
+    const weeksDisp  = totalWeeks != null
+      ? `${u.weeks_with_messages}<span class="text-gray-400">/${totalWeeks}</span>`
+      : String(u.weeks_with_messages ?? '—');
+    const pctDisp    = u.pct_weeks_active != null ? `${u.pct_weeks_active}%` : '—';
+    const avgWords   = u.avg_word_count != null ? Number(u.avg_word_count).toFixed(1) : '—';
+
+    const teamBadge = truthy(u.is_suno_team)
+      ? `<span class="ml-1.5 text-[0.6rem] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-semibold leading-none">Team</span>`
+      : '';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="users-td">
+        <button class="text-indigo-700 hover:underline hover:text-indigo-900 font-medium text-left
+                       focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600 rounded"
+                data-username="${esc(u.username)}">${esc(u.username)}</button>${teamBadge}
+      </td>
+      <td class="users-td text-right tabular-nums">${(u.total_messages || 0).toLocaleString()}</td>
+      <td class="users-td">${u.first_message_date || '—'}</td>
+      <td class="users-td">${u.last_message_date || '—'}</td>
+      <td class="users-td text-right tabular-nums">${avgWords}</td>
+      <td class="users-td text-right tabular-nums">${weeksDisp}</td>
+      <td class="users-td text-right tabular-nums">${pctDisp}</td>
+    `;
+    frag.appendChild(tr);
+  }
+  tbody.appendChild(frag);
+
+  // Sort indicators
+  document.querySelectorAll('#users-table .users-th').forEach(th => {
+    const col = th.dataset.col;
+    const ind = th.querySelector('.sort-ind');
+    if (!ind) return;
+    if (col === _usersSortCol) {
+      ind.textContent = _usersSortDir === 'asc' ? ' ↑' : ' ↓';
+      ind.style.color = '#4f46e5';
+    } else {
+      ind.textContent = ' ↕';
+      ind.style.color = '';
+    }
+  });
+
+  const n = data.length;
+  const anyFilter = q || monthFrom || monthTo || minMsgs > 0 || minWeeks > 0 || minAvgWords > 0 || maxAvgWords > 0;
+  document.getElementById('users-result-count').textContent =
+    `${n.toLocaleString()} user${n !== 1 ? 's' : ''}` +
+    (anyFilter ? ` (filtered from ${_usersData.length.toLocaleString()})` : '');
+}
+
+// Sort on header click
+document.getElementById('users-table').addEventListener('click', e => {
+  const th = e.target.closest('.users-th');
+  if (!th) return;
+  const col = th.dataset.col;
+  if (!col) return;
+  if (_usersSortCol === col) {
+    _usersSortDir = _usersSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _usersSortCol = col;
+    _usersSortDir = col === 'username' || col === 'first_message_date' || col === 'last_message_date'
+      ? 'asc' : 'desc';
+  }
+  _sortAndRenderUsers();
+});
+
+// Username click → open profile
+document.getElementById('users-tbody').addEventListener('click', e => {
+  const btn = e.target.closest('[data-username]');
+  if (!btn) return;
+  const username = btn.dataset.username;
+  const row = _usersData.find(u => u.username === username);
+  openUserProfile(username, row || null);
+});
+
+// Live filters — month pickers fire 'change'; number/text inputs fire 'input'
+['users-month-from', 'users-month-to'].forEach(id => {
+  document.getElementById(id).addEventListener('change', _sortAndRenderUsers);
+});
+['users-filter-input', 'users-min-msgs', 'users-min-weeks',
+ 'users-min-avg-words', 'users-max-avg-words'].forEach(id => {
+  document.getElementById(id).addEventListener('input', _sortAndRenderUsers);
+});
+document.getElementById('users-refine-apply').addEventListener('click', _sortAndRenderUsers);
+
+document.getElementById('users-refine-clear').addEventListener('click', () => {
+  ['users-month-from', 'users-month-to', 'users-min-msgs', 'users-min-weeks',
+   'users-min-avg-words', 'users-max-avg-words']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  _sortAndRenderUsers();
+});
+
+document.getElementById('users-search-btn').addEventListener('click', searchUsersInRange);
+document.getElementById('users-date-from').addEventListener('keydown', e => { if (e.key === 'Enter') searchUsersInRange(); });
+document.getElementById('users-date-to').addEventListener('keydown', e => { if (e.key === 'Enter') searchUsersInRange(); });
+
+/* ══════════════════════════════════════════════════════════════════════════
+   USER PROFILE OVERLAY
+══════════════════════════════════════════════════════════════════════════ */
+
+let _upoUsername    = '';
+let _profileMessages = [];
+
+function _statPill(label, value) {
+  return `<div class="inline-flex flex-col items-start bg-indigo-50 rounded-xl px-4 py-2.5 mr-2 mb-2">
+    <span class="text-[0.65rem] font-semibold uppercase tracking-wide text-indigo-400">${label}</span>
+    <span class="text-sm font-bold text-indigo-900 mt-0.5 tabular-nums">${value}</span>
+  </div>`;
+}
+
+async function openUserProfile(username, stats) {
+  _upoUsername = username;
+
+  document.getElementById('upo-username').textContent = username;
+  document.getElementById('upo-msg-count').textContent = '';
+  document.getElementById('upo-filter-count').textContent = '';
+
+  // Populate stats bar
+  if (stats) {
+    const totalWeeks = stats.total_weeks_in_range;
+    const weeksStr = totalWeeks != null
+      ? `${stats.weeks_with_messages} / ${totalWeeks}`
+      : String(stats.weeks_with_messages ?? '—');
+    const pctStr = stats.pct_weeks_active != null ? `${stats.pct_weeks_active}%` : '—';
+    const avgStr = stats.avg_word_count != null ? Number(stats.avg_word_count).toFixed(1) : '—';
+
+    document.getElementById('upo-stats').innerHTML =
+      `<div class="flex flex-wrap">` +
+      _statPill('Total Messages', (stats.total_messages || 0).toLocaleString()) +
+      _statPill('First Message',  stats.first_message_date || '—') +
+      _statPill('Last Message',   stats.last_message_date  || '—') +
+      _statPill('Avg Words',      avgStr) +
+      _statPill('Weeks Active',   weeksStr) +
+      _statPill('% Weeks Active', pctStr) +
+      `</div>`;
+  } else {
+    document.getElementById('upo-stats').innerHTML = '';
+  }
+
+  // Pre-fill date filters from the users-in-range search
+  document.getElementById('upo-date-from').value = document.getElementById('users-date-from').value;
+  document.getElementById('upo-date-to').value   = document.getElementById('users-date-to').value;
+  document.getElementById('upo-keyword').value   = '';
+
+  // Show overlay
+  const overlay = document.getElementById('user-profile-overlay');
+  overlay.classList.remove('hidden');
+  overlay.classList.add('flex');
+  document.body.style.overflow = 'hidden';
+
+  await _fetchProfileMessages();
+}
+
+function closeUserProfile() {
+  const overlay = document.getElementById('user-profile-overlay');
+  overlay.classList.add('hidden');
+  overlay.classList.remove('flex');
+  document.body.style.overflow = '';
+
+  // Reset summary panel so the next profile starts clean
+  document.getElementById('upo-sum-panel').classList.add('hidden');
+  document.getElementById('upo-sum-results').classList.add('hidden');
+  document.getElementById('upo-sum-output').innerHTML = '';
+  document.getElementById('upo-sum-log').innerHTML = '';
+  document.getElementById('upo-sum-prompt').value = '';
+  document.getElementById('upo-sum-export-pdf').classList.add('hidden');
+}
+
+async function _fetchProfileMessages() {
+  const msgEl    = document.getElementById('upo-messages');
+  const dateFrom = document.getElementById('upo-date-from').value;
+  const dateTo   = document.getElementById('upo-date-to').value;
+  const keyword  = document.getElementById('upo-keyword').value.trim();
+  const filterEl = document.getElementById('upo-filter-count');
+
+  msgEl.innerHTML = '<p class="text-sm text-gray-400 py-6 text-center">Loading…</p>';
+  filterEl.textContent = '';
+
+  try {
+    const params = new URLSearchParams({ username: _upoUsername });
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo)   params.set('date_to', dateTo);
+    if (keyword)  params.set('keyword', keyword);
+    const scope = getScopeParam();
+    if (scope) params.set('upload_ids', scope);
+
+    const msgs = await apiFetch(`/api/search/user-messages?${params}`);
+
+    document.getElementById('upo-msg-count').textContent =
+      `${msgs.length.toLocaleString()} message${msgs.length !== 1 ? 's' : ''}`;
+    filterEl.textContent = keyword || dateFrom || dateTo
+      ? `${msgs.length.toLocaleString()} result${msgs.length !== 1 ? 's' : ''}`
+      : '';
+
+    if (!msgs.length) {
+      _profileMessages = [];
+      msgEl.innerHTML = '<p class="text-sm text-gray-400 py-8 text-center">No messages found.</p>';
+      return;
+    }
+
+    _profileMessages = msgs;
+    msgEl.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    for (const msg of msgs) {
+      const card = document.createElement('div');
+      card.className = 'bg-white rounded-xl border border-gray-200 shadow-sm p-3';
+      const safeContent = keyword ? highlight(msg.content || '', keyword) : esc(msg.content || '');
+      card.innerHTML = `
+        <div class="flex items-center justify-between mb-1.5 gap-2">
+          <span class="text-xs text-gray-400">${esc(msg.date || '')}</span>
+          <div class="flex gap-1.5">
+            ${truthy(msg.is_suno_team)
+              ? `<span class="text-[0.65rem] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-semibold">Suno Team</span>`
+              : ''}
+            ${msg.upload_id
+              ? `<span class="text-[0.65rem] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">${esc(String(msg.upload_id))}</span>`
+              : ''}
+          </div>
+        </div>
+        <p class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed">${safeContent}</p>
+        <div class="border-t border-gray-100 mt-2 pt-1.5 flex justify-end">
+          <button class="upo-ctx-btn text-xs text-indigo-600 hover:text-indigo-800 font-medium
+                         focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600 rounded"
+                  data-id="${msg.id}" data-open="false">Show context ↕</button>
+        </div>
+        <div id="upo-ctx-${msg.id}" class="hidden mt-2"></div>
+      `;
+      frag.appendChild(card);
+    }
+    msgEl.appendChild(frag);
+  } catch (e) {
+    msgEl.innerHTML = `<p class="text-sm text-red-600 py-4 text-center">Error: ${esc(e.message)}</p>`;
+  }
+}
+
+/* ── User profile summarize ─────────────────────────────────────────────── */
+
+document.getElementById('upo-sum-toggle').addEventListener('click', () => {
+  const panel  = document.getElementById('upo-sum-panel');
+  const hidden = panel.classList.toggle('hidden');
+  document.getElementById('upo-sum-toggle').textContent = hidden ? '✦ Summarize' : '✦ Hide Summary';
+  if (!hidden) {
+    const before = document.getElementById('upo-ctx-before').value || 5;
+    const after  = document.getElementById('upo-ctx-after').value  || 5;
+    document.getElementById('upo-sum-ctx-hint').textContent = `${before} before / ${after} after`;
+    // Default limit to all currently loaded messages
+    if (_profileMessages.length) {
+      document.getElementById('upo-sum-limit').value = _profileMessages.length;
+    }
+  }
+});
+
+document.getElementById('upo-sum-log-toggle').addEventListener('click', () => {
+  const logEl = document.getElementById('upo-sum-log');
+  const btn   = document.getElementById('upo-sum-log-toggle');
+  const hide  = btn.textContent.startsWith('▲');
+  logEl.classList.toggle('hidden', hide);
+  btn.textContent = hide ? '▼ Show' : '▲ Hide';
+});
+
+function _upoSumLog(step, label, msg) {
+  const icons = { input:'📋', context:'📡', llm:'✨', fallback:'⚠️' };
+  const div = document.createElement('div');
+  div.className = 'text-xs text-gray-600 flex items-start gap-1.5 py-0.5';
+  div.innerHTML = `<span class="shrink-0">${icons[step] || '•'}</span>
+    <span><strong>${esc(label)}</strong> — ${esc(msg)}</span>`;
+  document.getElementById('upo-sum-log').appendChild(div);
+}
+
+async function doUpoSummarize() {
+  const runBtn   = document.getElementById('upo-sum-run');
+  const outputEl = document.getElementById('upo-sum-output');
+  const logEl    = document.getElementById('upo-sum-log');
+  const resultsEl= document.getElementById('upo-sum-results');
+  const limit    = parseInt(document.getElementById('upo-sum-limit').value, 10) || _profileMessages.length;
+  const model    = document.getElementById('upo-sum-model').value;
+  const prompt   = document.getElementById('upo-sum-prompt').value.trim();
+  const before   = Math.min(parseInt(document.getElementById('upo-ctx-before').value, 10) || 5, 50);
+  const after    = Math.min(parseInt(document.getElementById('upo-ctx-after').value,  10) || 5, 50);
+
+  if (!_profileMessages.length) {
+    showErrorPopup('No messages loaded. Filter the profile first.');
+    return;
+  }
+
+  runBtn.disabled    = true;
+  runBtn.textContent = 'Working…';
+  logEl.innerHTML    = '';
+  outputEl.innerHTML = '';
+  resultsEl.classList.remove('hidden');
+  document.getElementById('upo-sum-export-pdf').classList.add('hidden');
+
+  const msgs = _profileMessages.slice(0, limit);
+  _upoSumLog('input', 'Input', `${msgs.length} messages from ${esc(_upoUsername)}`);
+
+  // Fetch context for each message
+  let contextMap = {};
+  try {
+    const msgIds = msgs.map(m => m.id).filter(Boolean);
+    _upoSumLog('context', 'Context fetch', `Fetching ${before}+${after} context msgs for each…`);
+    contextMap = await apiFetch('/api/search/bulk-context', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ msg_ids: msgIds, before, after }),
+    });
+    _upoSumLog('context', 'Context fetch', `Done — ${Object.keys(contextMap).length} messages enriched`);
+  } catch (e) {
+    _upoSumLog('fallback', 'Context fetch failed', `${e.message} — proceeding without context`);
+  }
+
+  // Build formatted blocks: context before / ★ user message / context after
+  const blocks = msgs.map(m => {
+    const ctx      = contextMap[String(m.id)] || [];
+    const targetIdx= ctx.findIndex(r => r.is_target);
+    const ctxPre   = targetIdx > 0 ? ctx.slice(0, targetIdx) : [];
+    const ctxPost  = targetIdx >= 0 ? ctx.slice(targetIdx + 1) : [];
+    const fmt      = r => `  [${r.username}]: ${r.content}`;
+
+    let block = '';
+    if (ctxPre.length)  block += ctxPre.map(fmt).join('\n') + '\n';
+    block += `★ [${m.username} | ${m.date}]: ${m.content}`;
+    if (ctxPost.length) block += '\n' + ctxPost.map(fmt).join('\n');
+    return block;
+  });
+
+  const conv   = blocks.join('\n\n---\n\n');
+  const n      = msgs.length;
+  const header = `USER PROFILE ANALYSIS — ${_upoUsername} (${n} messages with context)`;
+
+  const defaultPrompt = `Each block below contains one message from **${_upoUsername}** (marked ★) with surrounding conversation context. Concisely identify persona, topics, attitudes, actions, narratives, and identified changes in attitude and stance if present. Use tight bullet points. No padding, no repetition across sections.`;
+
+  const fullPrompt = (prompt || defaultPrompt) + `\n\n${header}:\n${conv}`;
+  _upoSumLog('llm', 'LLM generation', `Summarising with ${model}…`);
+
+  let output = '';
+  try {
+    const res = await fetch('/api/summarize-results', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages:       [{ username: _upoUsername, date: '', content: fullPrompt }],
+        model,
+        retrieval_mode: 'all',
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+      throw new Error(err.detail || 'Request failed');
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') break;
+        try {
+          const delta = JSON.parse(raw);
+          if (delta.content) {
+            output += delta.content;
+            outputEl.innerHTML = marked.parse(output);
+          } else if (delta.error) {
+            throw new Error(delta.error);
+          }
+        } catch (parseErr) {
+          if (!(parseErr instanceof SyntaxError)) throw parseErr;
+        }
+      }
+    }
+  } catch (e) {
+    outputEl.innerHTML = `<p class="text-red-600 text-sm">Error: ${esc(e.message)}</p>`;
+  } finally {
+    runBtn.disabled    = false;
+    runBtn.textContent = 'Run Summary';
+    if (output) {
+      document.getElementById('upo-sum-export-pdf').classList.remove('hidden');
+    }
+  }
+}
+
+function exportUpoSumPDF() {
+  const outputEl  = document.getElementById('upo-sum-output');
+  const summaryHTML = outputEl.innerHTML;
+  if (!summaryHTML.trim()) return;
+
+  const dateStr = new Date().toLocaleDateString('en-US', {
+    year: 'numeric', month: 'long', day: 'numeric',
+  });
+  const username    = _upoUsername || 'User';
+  const pdfFilename = `UserSummary_${username}_${new Date().toISOString().slice(0, 10)}`;
+
+  const customInstructions = (document.getElementById('upo-sum-prompt').value || '').trim();
+  let instructionHTML = '';
+  if (customInstructions) {
+    const safe = customInstructions
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    instructionHTML = `<div class="custom-instruction"><span class="ci-label">Custom Instructions</span>${safe}</div>`;
+  }
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${pdfFilename}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  max-width: 820px; margin: 40px auto; padding: 0 28px;
+  color: #1e293b; line-height: 1.65; font-size: 14px;
+}
+h1  { font-size: 1.5rem; color: #4f46e5; padding-bottom: 10px;
+      border-bottom: 2px solid #e2e8f0; margin-bottom: 6px; }
+.meta { font-size: 0.75rem; color: #6b7280; margin-bottom: 1.75rem; }
+h2  { font-size: 1.15rem; font-weight: 700; color: #1e293b; margin-top: 2rem;
+      border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 1rem; }
+h3  { font-size: 1rem; font-weight: 600; color: #374151; margin: 1rem 0 0.4rem; }
+h4  { font-size: 0.9rem; font-weight: 600; margin: 0.8rem 0 0.3rem; }
+p   { margin-bottom: 0.65rem; }
+ul, ol { padding-left: 1.4rem; margin-bottom: 0.65rem; }
+li  { margin-bottom: 0.2rem; }
+blockquote {
+  border-left: 3px solid #4f46e5; margin: 0.75rem 0;
+  padding: 6px 14px; background: #eef2ff; color: #312e81;
+  border-radius: 0 6px 6px 0; font-style: italic;
+}
+code {
+  background: #f1f5f9; border-radius: 4px;
+  padding: 1px 5px; font-size: 0.82em; font-family: monospace;
+}
+pre  {
+  background: #1e293b; color: #e2e8f0; border-radius: 6px;
+  padding: 12px; overflow-x: auto; margin-bottom: 0.65rem;
+}
+pre code { background: none; padding: 0; color: inherit; }
+hr   { border: none; border-top: 1px solid #e2e8f0; margin: 1.25rem 0; }
+strong { font-weight: 700; }
+em     { font-style: italic; }
+a      { color: #4f46e5; text-decoration: underline; }
+table  { border-collapse: collapse; width: 100%; margin-bottom: 0.65rem; font-size: 0.85rem; }
+th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
+th     { background: #f8fafc; font-weight: 700; }
+.custom-instruction {
+  background: #fefce8; border: 1px solid #fde68a; border-radius: 6px;
+  padding: 8px 14px; margin-bottom: 1.75rem; font-size: 0.8rem; color: #713f12;
+}
+.ci-label {
+  display: block; font-size: 0.68rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: #92400e; margin-bottom: 4px;
+}
+@media print { body { margin: 16px 28px; } }
+</style>
+</head>
+<body>
+<h1>User Summary: ${username.replace(/</g, '&lt;')}</h1>
+<p class="meta">Exported ${dateStr}</p>
+${instructionHTML}
+<div class="summary-body">${summaryHTML}</div>
+<script>window.onload = function() { window.print(); };<\/script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url  = URL.createObjectURL(blob);
+  const win  = window.open(url, '_blank', 'width=920,height=750');
+  if (!win) {
+    URL.revokeObjectURL(url);
+    showErrorPopup('Pop-up blocked. Please allow pop-ups for this page, then try again.');
+    return;
+  }
+  win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+}
+
+document.getElementById('upo-sum-run').addEventListener('click', doUpoSummarize);
+document.getElementById('upo-sum-export-pdf').addEventListener('click', exportUpoSumPDF);
+
+async function upoToggleContext(id, btn) {
+  const ctxEl = document.getElementById(`upo-ctx-${id}`);
+  if (btn.dataset.open === 'true') {
+    ctxEl.classList.add('hidden');
+    btn.dataset.open = 'false';
+    btn.textContent  = 'Show context ↕';
+    return;
+  }
+  const before = parseInt(document.getElementById('upo-ctx-before').value, 10) || 5;
+  const after  = parseInt(document.getElementById('upo-ctx-after').value,  10) || 5;
+  btn.textContent = 'Loading…';
+  btn.disabled    = true;
+  try {
+    const msgs = await apiFetch(`/api/context/${id}?before=${before}&after=${after}`);
+    ctxEl.innerHTML = `
+      <div class="bg-slate-50 rounded-lg border border-slate-200 p-3 space-y-2">
+        <p class="text-xs text-gray-500 font-medium mb-2">
+          ${msgs.length} messages &mdash; ${before} before &bull; ${after} after
+        </p>
+        ${msgs.map(m => ctxMsg(m)).join('')}
+      </div>`;
+    ctxEl.classList.remove('hidden');
+    btn.dataset.open = 'true';
+    btn.textContent  = 'Hide context ↕';
+  } catch (e) {
+    btn.textContent = 'Show context ↕';
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('upo-messages').addEventListener('click', e => {
+  const btn = e.target.closest('.upo-ctx-btn');
+  if (!btn) return;
+  upoToggleContext(parseInt(btn.dataset.id, 10), btn);
+});
+
+document.getElementById('upo-back').addEventListener('click', closeUserProfile);
+document.getElementById('upo-filter-btn').addEventListener('click', _fetchProfileMessages);
+document.getElementById('upo-date-from').addEventListener('change', _fetchProfileMessages);
+document.getElementById('upo-date-to').addEventListener('change', _fetchProfileMessages);
+document.getElementById('upo-keyword').addEventListener('keydown', e => { if (e.key === 'Enter') _fetchProfileMessages(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !document.getElementById('user-profile-overlay').classList.contains('hidden')) {
+    closeUserProfile();
+  }
+});
 
 /* ══════════════════════════════════════════════════════════════════════════
    INIT
