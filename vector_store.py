@@ -196,8 +196,8 @@ class QdrantCollectionWrapper:
                 if "404" not in str(exc) and "Not Found" not in str(exc):
                     raise
                 logger.warning(
-                    "query_points() got 404 — Qdrant server is older than 1.7. "
-                    "Falling back to REST /search. Consider upgrading your Qdrant server."
+                    "query_points() got 404 — falling back to REST /search. "
+                    "Exception: %s", exc
                 )
 
         # ── Attempt 2: legacy search() (client < 1.7) ─────────────────────────
