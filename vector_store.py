@@ -151,7 +151,7 @@ class QdrantCollectionWrapper:
         if self._api_key:
             headers["api-key"] = self._api_key
         url = f"{self._url}/collections/{self._name}/points/search"
-        with httpx.Client(timeout=15.0, verify=False) as client:
+        with httpx.Client(timeout=60.0, verify=False) as client:
             resp = client.post(url, json={
                 "vector": vector,
                 "limit": n_results,
