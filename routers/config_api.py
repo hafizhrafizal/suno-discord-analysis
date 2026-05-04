@@ -13,7 +13,7 @@ from openai import AsyncOpenAI, OpenAI
 
 import state
 from config import EMBEDDING_MODELS
-from database import get_session_user, set_setting, update_user_api_key
+from database import get_session_user, set_setting
 from embeddings import embedding_model_available
 
 logger = logging.getLogger(__name__)
@@ -27,14 +27,14 @@ async def set_api_key(body: dict, request: Request):
         raise HTTPException(400, "api_key is required")
 
     if state.app_mode == "multi":
-        # Multi mode: persist key per user and update in-memory client cache.
+        # Multi mode: store key in memory only — never persisted to the database.
+        # The client (browser localStorage) is the sole durable store.
         token = request.cookies.get("session")
         user  = get_session_user(token) if token else None
         if not user:
             raise HTTPException(401, "Not authenticated.")
 
         uid = user["id"]
-        update_user_api_key(uid, key)
 
         # Evict old cached client
         old = state.user_clients.pop(uid, None)
@@ -48,7 +48,7 @@ async def set_api_key(body: dict, request: Request):
         new_pair = (OpenAI(api_key=key), AsyncOpenAI(api_key=key))
         state.user_clients[uid] = new_pair
         state.set_request_clients(*new_pair)
-        return {"status": "ok", "message": "API key updated for your account."}
+        return {"status": "ok", "message": "API key set for this session."}
 
     # Single mode: set global clients as before.
     if state.async_openai_client:
