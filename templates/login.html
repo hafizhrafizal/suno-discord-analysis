@@ -99,7 +99,7 @@
 
   <script>
     // Determine initial tab from server context (first_run = no users yet → show signup)
-    const firstRun = {{ 'true' if first_run else 'false' }};
+    const firstRun = {{ first_run | tojson }};
 
     function switchTab(tab) {
       const isLogin = tab === 'login';
