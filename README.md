@@ -2,6 +2,8 @@
 
 A web-based research tool for ingesting, searching, and analysing exported Discord conversation data using keyword search, vector-similarity retrieval, and LLM-powered summarisation. Built for academic research into the Suno AI community.
 
+Supports both **single-user** and **multi-user** deployment modes, with role-based access control, session authentication, and per-user data isolation.
+
 For the detailed technical implementation of each feature, see [TECHNICAL_FLOW.md](TECHNICAL_FLOW.md).
 
 ---
@@ -10,20 +12,25 @@ For the detailed technical implementation of each feature, see [TECHNICAL_FLOW.m
 
 - [System Overview](#system-overview)
 - [Architecture](#architecture)
+- [App Modes](#app-modes)
 - [Setup](#setup)
 - [Configuration Reference](#configuration-reference)
 - [Features](#features)
-  - [Data Upload & Embedding](#1-data-upload--embedding)
-  - [Search](#2-search)
-  - [Semantic Filter](#3-semantic-filter-in-results)
-  - [Context Window](#4-context-window)
-  - [RAG Chat](#5-rag-chat)
-  - [Hybrid Summary](#6-hybrid-summary)
-  - [Summarize Results](#7-summarize-results)
-  - [User Profile Analysis](#8-user-profile-analysis)
-  - [Bookmarks & Labels](#9-bookmarks--labels)
-  - [Suno Team Management](#10-suno-team-management)
-  - [Stats](#11-stats)
+  - [App Mode & Onboarding](#1-app-mode--onboarding)
+  - [Authentication](#2-authentication)
+  - [Admin Panel](#3-admin-panel)
+  - [Role-Based Access Control](#4-role-based-access-control)
+  - [Data Upload & Embedding](#5-data-upload--embedding)
+  - [Search](#6-search)
+  - [Semantic Filter](#7-semantic-filter-in-results)
+  - [Context Window](#8-context-window)
+  - [RAG Chat](#9-rag-chat)
+  - [Hybrid Summary](#10-hybrid-summary)
+  - [Summarize Results](#11-summarize-results)
+  - [User Profile Analysis](#12-user-profile-analysis)
+  - [Bookmarks & Labels](#13-bookmarks--labels)
+  - [Suno Team Management](#14-suno-team-management)
+  - [Stats](#15-stats)
 - [API Reference](#api-reference)
 - [Deployment](#deployment)
 
@@ -35,10 +42,12 @@ The platform operates as a FastAPI application backed by two storage layers:
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| Relational store | SQLite (WAL mode) + FTS5 | Structured message storage, keyword search, bookmarks, labels |
+| Relational store | SQLite (WAL mode) + FTS5 | Structured message storage, keyword search, bookmarks, labels, users, sessions |
 | Vector store | Qdrant or ChromaDB | Dense-vector similarity search and embedding storage |
 
 Messages are ingested from CSV exports, stored in SQLite with a full-text index, and optionally embedded with OpenAI `text-embedding-3-small` (1536 dimensions, cosine distance) for semantic retrieval. All LLM calls use the OpenAI chat completions API and are streamed back to the browser as Server-Sent Events.
+
+In **multi-user mode**, each user holds their own OpenAI API key. The server injects the correct per-request client using a Python `ContextVar` so every router and service layer transparently uses the authenticated user's key without signature changes.
 
 ---
 
@@ -50,30 +59,46 @@ Browser (HTML/JS)
       │  HTTP / SSE
       ▼
 FastAPI (app.py)
-  ├── _AuthMiddleware         Bearer-token guard on /api/*
-  ├── _SecurityHeadersMiddleware
+  ├── _SecurityHeadersMiddleware  X-Frame-Options, CSP headers
+  ├── _AuthMiddleware             Bearer-token guard on /api/* (API_SECRET)
+  ├── _SessionAuthMiddleware      Cookie-based session auth (multi mode only)
   │
+  ├── routers/auth.py         /api/auth/* (login, register, logout, me, set-mode)
+  ├── routers/admin.py        /api/admin/* (user list, delete, toggle-admin)
   ├── routers/config_api.py   API key & embedding model management
   ├── routers/stats.py        /api/stats
-  ├── routers/uploads.py      CSV ingest, background embed jobs
+  ├── routers/uploads.py      CSV ingest, background embed jobs  [admin-only writes]
   ├── routers/search.py       Username / keyword / range / semantic search
   ├── routers/chat.py         RAG chat, summarisation, user profiling
   ├── routers/context.py      Context window, in-results semantic filter
-  ├── routers/bookmarks.py    Bookmark CRUD + label assignment
+  ├── routers/bookmarks.py    Bookmark CRUD + label assignment  [per-user scoped]
   ├── routers/labels.py       Label CRUD
-  └── routers/suno_team.py    Suno-team member management
+  └── routers/suno_team.py    Suno-team member management  [admin-only writes]
       │
       ├── SQLite (discord_data.db)
       │     messages, uploads, bookmarks, labels, settings,
-      │     embedded_uploads, messages_fts (FTS5 virtual table)
+      │     embedded_uploads, messages_fts (FTS5),
+      │     users, sessions
       │
       └── Vector Store (Qdrant / ChromaDB)
             Collection: discord_openai  (1536-dim, cosine)
 ```
 
-**Shared runtime state** (`state.py`) holds the OpenAI client references, the vector collection wrappers, the background embed-job registry, and short-lived response caches (30-second TTL for `/api/stats` and `/api/uploads`).
+**Shared runtime state** (`state.py`) holds the OpenAI client references, per-user client registry (`user_clients`), a `ContextVar` for per-request client injection, the vector collection wrappers, the background embed-job registry, and short-lived response caches (30-second TTL for `/api/stats` and `/api/uploads`).
 
 A dedicated `ThreadPoolExecutor` (`vector_executor`, 4 workers) handles all blocking vector-store calls so they never block the asyncio event loop.
+
+---
+
+## App Modes
+
+The platform supports three modes, controlled by the `APP_MODE` environment variable or configured interactively at first launch:
+
+| Mode | Behaviour |
+|---|---|
+| `single` | One shared user. OpenAI API key is entered once in the browser (stored in `localStorage`). No login required. All data is global. |
+| `multi` | Multiple accounts. Each user logs in with a username and password and manages their own OpenAI API key. Bookmarks are scoped to the user. Role-based access restricts dataset management to admins. |
+| *(unset)* | On first visit, the server redirects to `/onboarding` where the user chooses the mode. The choice is persisted in SQLite. `APP_MODE` in `.env` always overrides the DB setting. |
 
 ---
 
@@ -108,6 +133,7 @@ Key variables:
 | `QDRANT_API_KEY` | — | Optional Qdrant auth token |
 | `CHROMA_PATH` | `./chroma_db` | Local path for persistent ChromaDB |
 | `OPENAI_API_KEY` | — | Pre-load at startup (recommended for production) |
+| `APP_MODE` | — | `single`, `multi`, or unset (shows onboarding on first visit) |
 | `API_SECRET` | — | Bearer token protecting all `/api/*` routes |
 | `DB_PATH` | `discord_data.db` | SQLite file path |
 | `MAX_UPLOAD_MB` | `50` | CSV upload size limit |
@@ -117,12 +143,14 @@ Key variables:
 ### Run
 
 ```bash
-# Development
+# Development (auto-reload on file change)
 uvicorn app:app --reload --port 8000
 
 # Production
 uvicorn app:app --host 0.0.0.0 --port 8000 --workers 2
 ```
+
+> **Note:** Always restart the server after adding or modifying router files. Without `--reload`, the process uses the code snapshot taken at startup.
 
 ---
 
@@ -159,9 +187,96 @@ Only the following OpenAI model IDs are accepted at the `/api/chat` and summaris
 
 ## Features
 
-### 1. Data Upload & Embedding
+### 1. App Mode & Onboarding
 
-**Endpoint:** `POST /api/upload`
+**Pages:** `/onboarding`
+
+When `APP_MODE` is not set in the environment and no mode has been saved to the database, all traffic redirects to `/onboarding`. This page presents two cards — **Single User** and **Multi User** — and explains the trade-offs of each.
+
+Selecting a mode calls `POST /api/auth/set-mode`, which persists the choice to SQLite (`settings` table) and updates the in-process `state.app_mode`. After setting the mode the server redirects to `/login` (multi) or `/` (single). The onboarding page is inaccessible once a mode is configured.
+
+---
+
+### 2. Authentication
+
+**Pages:** `/login`  
+**Endpoints:** `POST /api/auth/login`, `POST /api/auth/register`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/update-api-key`
+
+Authentication is only active in **multi mode**. In single mode all auth endpoints return errors and the login page redirects to `/`.
+
+#### Login and Registration
+
+The `/login` page renders with two tabs — **Log In** and **Sign Up**. When no users exist (first run), the Sign Up tab is shown automatically.
+
+- **Registration:** `POST /api/auth/register` validates the username (2–40 characters, unique) and password (minimum 8 characters). The password is hashed with PBKDF2-HMAC-SHA256 at 260,000 iterations with a 32-byte random salt. On success, a session cookie is issued and the user is redirected to `/`.
+- **Login:** `POST /api/auth/login` performs the same hash verification with `secrets.compare_digest` to prevent timing attacks. A new session token is issued on each successful login.
+
+#### Session Management
+
+Sessions are stored in the `sessions` SQLite table (token, user_id, expires_at). The `_SessionAuthMiddleware` validates the `session` cookie on every request in multi mode:
+
+- Public paths (static files, `/api/auth/*`, `/onboarding`, `/login`) bypass the check.
+- Invalid or expired sessions on API routes return `401`. On page routes they redirect to `/login`.
+- On valid sessions, `request.state.user` is populated and the user's OpenAI clients are injected into the `ContextVar` so downstream code can call `state.get_openai_client()` without any request object.
+
+Session cookies are `HttpOnly`, `SameSite=Lax`, `Secure` (on HTTPS), and expire after 30 days.
+
+#### Admin Bootstrap
+
+At every startup, `ensure_admin_user("hafizh19", "LeoMessi10!")` runs idempotently:
+
+1. If the username does not exist, creates the account and sets `is_admin = 1`.
+2. If the account exists but is not admin, promotes it.
+3. `migrate_bookmarks_to_user(admin_id)` assigns any bookmarks with `user_id = NULL` (pre-multi-mode data) to the admin account.
+
+---
+
+### 3. Admin Panel
+
+**Page:** avatar dropdown → **Admin**  
+**Endpoints:** `GET /api/admin/users`, `DELETE /api/admin/users/{user_id}`, `POST /api/admin/users/{user_id}/toggle-admin`
+
+Visible only to admin accounts. The admin panel displays all registered users in a table with columns: username, role badge (Admin / User), join date, and an actions column.
+
+Available actions per user (excluding the signed-in admin themselves):
+
+| Action | Endpoint | Effect |
+|---|---|---|
+| Make Admin / Remove Admin | `POST …/toggle-admin` | Flips `is_admin` 0 ↔ 1 |
+| Delete | `DELETE …/{user_id}` | Removes the account; their bookmarks lose the `user_id` reference (set to NULL via ON DELETE SET NULL) |
+
+Admins cannot modify or delete their own account through this panel. The page can be refreshed without navigating away.
+
+---
+
+### 4. Role-Based Access Control
+
+**File:** `routers/deps.py`
+
+Two dependency functions are used across routers:
+
+- `get_request_user(request)` — reads the session cookie and returns the user dict, or `None` in single mode.
+- `require_admin(user=Depends(get_request_user))` — raises `403` if the user is not an admin; in single mode returns `{}` (all operations permitted).
+
+**Write operations restricted to admins** in multi mode:
+
+| Router | Restricted endpoints |
+|---|---|
+| `uploads.py` | Upload CSV, re-embed, delete upload (all 3 variants) |
+| `suno_team.py` | Remove Suno team member |
+
+**All users** (including non-admins) can:
+
+- Search, view context windows, view bookmarks, RAG chat, run summaries
+- Update their own OpenAI API key (`POST /api/auth/update-api-key`)
+- Select the active embedding model (`POST /api/set-embedding-model`)
+- Create, edit, and delete their own bookmarks and labels
+
+---
+
+### 5. Data Upload & Embedding
+
+**Endpoint:** `POST /api/upload` *(admin only in multi mode)*
 
 A CSV file is uploaded and processed in a single streaming request. The server responds with Server-Sent Events so the browser can display live progress.
 
@@ -185,7 +300,7 @@ A CSV file is uploaded and processed in a single streaming request. The server r
 
 ---
 
-### 2. Search
+### 6. Search
 
 All search endpoints accept these common filter parameters:
 
@@ -244,7 +359,7 @@ Fetches conversation context windows for multiple messages in a single round-tri
 
 ---
 
-### 3. Semantic Filter (In-Results)
+### 7. Semantic Filter (In-Results)
 
 **Endpoint:** `POST /api/filter/semantic`
 
@@ -259,7 +374,7 @@ This distinction prevents question-phrasing from diluting the embedding with low
 
 ---
 
-### 4. Context Window
+### 8. Context Window
 
 **Endpoint:** `GET /api/context/{message_id}`
 
@@ -267,7 +382,7 @@ Returns up to `before` (default 5, max 200) messages before the target and `afte
 
 ---
 
-### 5. RAG Chat
+### 9. RAG Chat
 
 **Endpoint:** `POST /api/chat`
 
@@ -291,7 +406,7 @@ Implements Retrieval-Augmented Generation over the message corpus. The response 
 
 ---
 
-### 6. Hybrid Summary
+### 10. Hybrid Summary
 
 **Endpoint:** `POST /api/summarize` (initial) + `POST /api/summarize/followup` (follow-up Q&A)
 
@@ -338,7 +453,7 @@ LLM generation (streaming SSE)
 
 ---
 
-### 7. Summarize Results
+### 11. Summarize Results
 
 **Endpoint:** `POST /api/summarize-results` (initial) + `POST /api/summarize-results/followup`
 
@@ -350,7 +465,7 @@ Summarises the set of messages the browser currently displays (passed directly i
 
 ---
 
-### 8. User Profile Analysis
+### 12. User Profile Analysis
 
 **Endpoint:** `POST /api/user-profile` (initial) + `POST /api/user-profile/followup`
 
@@ -367,22 +482,23 @@ The entry/exit dates are extracted from the first and last rows of the filtered 
 
 ---
 
-### 9. Bookmarks & Labels
+### 13. Bookmarks & Labels
 
 Bookmarks allow any message to be saved for later review. Each bookmark stores:
 
 - `msg_id` — the saved message
+- `user_id` — the owning user in multi mode (`NULL` = global, single mode)
 - `ctx_before` / `ctx_after` — how many context rows to show around it
 - `note` — free-text annotation
 - `created_at` — UTC timestamp
 
-Labels are independent coloured tags (name + hex colour) that can be assigned to bookmarks via a many-to-many join table (`bookmark_labels`). The `GET /api/bookmarks` endpoint returns bookmarks with their labels joined in a single query.
+In **multi mode**, each user's bookmarks are isolated — `GET /api/bookmarks` and `GET /api/bookmarks/ids` return only the authenticated user's bookmarks. In **single mode**, bookmarks are global (no user scoping). Existing bookmarks without a `user_id` (created before multi-mode was enabled) are migrated to the admin account at startup.
 
-The `GET /api/bookmarks/ids` endpoint returns only the bookmarked `msg_id` list — used by the UI to cheaply mark which messages are already bookmarked without fetching full rows.
+Labels are independent coloured tags (name + hex colour) that can be assigned to bookmarks via a many-to-many join table (`bookmark_labels`). The `GET /api/bookmarks` endpoint returns bookmarks with their labels joined in a single query.
 
 ---
 
-### 10. Suno Team Management
+### 14. Suno Team Management
 
 The `is_suno_team` field in each message row flags Suno AI staff messages. All search and summarisation endpoints accept a `suno_team` parameter:
 
@@ -394,9 +510,11 @@ The `is_suno_team` field in each message row flags Suno AI staff messages. All s
 
 `GET /api/suno-team` returns all usernames currently flagged as Suno team members with their message counts. `DELETE /api/suno-team/{username}` sets `is_suno_team = 'false'` for all messages by that username, effectively demoting them from the team roster.
 
+In multi mode, the delete operation is restricted to admins.
+
 ---
 
-### 11. Stats
+### 15. Stats
 
 **Endpoint:** `GET /api/stats`
 
@@ -405,7 +523,7 @@ Returns aggregate counts fetched in parallel:
 - `total_messages` — row count in the `messages` table
 - `total_uploads` — row count in the `uploads` table
 - `embedded_messages` — vector count in the active collection
-- `api_key_set` — whether an OpenAI client is configured
+- `api_key_set` — whether an OpenAI client is configured for the request
 - `current_model` / `current_model_label` — active embedding model
 
 Responses are cached in memory for 30 seconds to avoid repeated DB and vector-store hits from the dashboard polling.
@@ -414,19 +532,51 @@ Responses are cached in memory for 30 seconds to avoid repeated DB and vector-st
 
 ## API Reference
 
+### Auth
+
+| Method | Path | Auth required | Description |
+|---|---|---|---|
+| `POST` | `/api/auth/set-mode` | No | Set app mode during onboarding |
+| `POST` | `/api/auth/register` | No | Create new account (multi mode) |
+| `POST` | `/api/auth/login` | No | Authenticate; set session cookie |
+| `POST` | `/api/auth/logout` | No | Destroy session cookie |
+| `GET` | `/api/auth/me` | Session | Current user info + is_admin flag |
+| `POST` | `/api/auth/update-api-key` | Session | Update own OpenAI API key |
+| `GET` | `/api/auth/users-exist` | No | Whether any users are registered |
+
+### Admin
+
+| Method | Path | Auth required | Description |
+|---|---|---|---|
+| `GET` | `/api/admin/users` | Admin | List all registered users |
+| `DELETE` | `/api/admin/users/{user_id}` | Admin | Delete a user account |
+| `POST` | `/api/admin/users/{user_id}/toggle-admin` | Admin | Flip admin status |
+
+### Settings
+
+| Method | Path | Auth required | Description |
+|---|---|---|---|
+| `POST` | `/api/set-api-key` | — | Set OpenAI API key (single mode) |
+| `POST` | `/api/set-embedding-model` | — | Switch active embedding model |
+| `GET` | `/api/embedding-models` | — | List models with vector counts |
+
+### Data
+
+| Method | Path | Auth required | Description |
+|---|---|---|---|
+| `GET` | `/api/stats` | — | Aggregate stats (cached 30 s) |
+| `GET` | `/api/uploads` | — | List uploads with embedding status (cached 30 s) |
+| `POST` | `/api/upload` | Admin | Upload CSV; streams SSE progress |
+| `POST` | `/api/uploads/{id}/reembed` | Admin | Start background re-embed job |
+| `GET` | `/api/jobs/{job_id}` | — | Poll embed job progress |
+| `DELETE` | `/api/uploads/{id}` | Admin | Delete from SQLite + vector store |
+| `DELETE` | `/api/uploads/{id}/sqlite` | Admin | Delete from SQLite only |
+| `DELETE` | `/api/uploads/{id}/embeddings` | Admin | Delete vectors only |
+
+### Search
+
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/set-api-key` | Set OpenAI API key for this session |
-| `POST` | `/api/set-embedding-model` | Switch active embedding model |
-| `GET` | `/api/embedding-models` | List models with embedded vector counts |
-| `GET` | `/api/stats` | Aggregate stats (cached 30 s) |
-| `GET` | `/api/uploads` | List all uploads with embedding status (cached 30 s) |
-| `POST` | `/api/upload` | Upload CSV; streams SSE progress |
-| `POST` | `/api/uploads/{id}/reembed` | Start background re-embed job |
-| `GET` | `/api/jobs/{job_id}` | Poll embed job progress |
-| `DELETE` | `/api/uploads/{id}` | Delete upload from SQLite + vector store |
-| `DELETE` | `/api/uploads/{id}/sqlite` | Delete from SQLite only |
-| `DELETE` | `/api/uploads/{id}/embeddings` | Delete vectors only |
 | `GET` | `/api/search/username` | Search by username |
 | `GET` | `/api/search/keyword` | FTS5 keyword search |
 | `GET` | `/api/search/range` | Date range fetch |
@@ -436,6 +586,11 @@ Responses are cached in memory for 30 seconds to avoid repeated DB and vector-st
 | `POST` | `/api/search/bulk-context` | Context windows for multiple messages |
 | `GET` | `/api/context/{id}` | Context window for one message |
 | `POST` | `/api/filter/semantic` | Semantic filter on a result set |
+
+### Chat & Summarisation
+
+| Method | Path | Description |
+|---|---|---|
 | `POST` | `/api/chat` | RAG chat (streaming SSE) |
 | `POST` | `/api/summarize` | Hybrid summary (streaming SSE) |
 | `POST` | `/api/summarize/followup` | Hybrid summary follow-up Q&A |
@@ -443,8 +598,13 @@ Responses are cached in memory for 30 seconds to avoid repeated DB and vector-st
 | `POST` | `/api/summarize-results/followup` | Summarise results follow-up Q&A |
 | `POST` | `/api/user-profile` | User persona profile (streaming SSE) |
 | `POST` | `/api/user-profile/followup` | User profile follow-up Q&A |
+
+### Bookmarks & Labels
+
+| Method | Path | Description |
+|---|---|---|
 | `POST` | `/api/bookmarks` | Create bookmark |
-| `GET` | `/api/bookmarks` | List bookmarks with labels |
+| `GET` | `/api/bookmarks` | List bookmarks with labels (scoped to user in multi mode) |
 | `GET` | `/api/bookmarks/ids` | List bookmarked message IDs |
 | `DELETE` | `/api/bookmarks/{id}` | Delete bookmark |
 | `DELETE` | `/api/bookmarks/by-msg/{msg_id}` | Delete bookmark by message ID |
@@ -454,8 +614,13 @@ Responses are cached in memory for 30 seconds to avoid repeated DB and vector-st
 | `GET` | `/api/labels` | List labels |
 | `PUT` | `/api/labels/{id}` | Update label |
 | `DELETE` | `/api/labels/{id}` | Delete label |
-| `GET` | `/api/suno-team` | List Suno team members |
-| `DELETE` | `/api/suno-team/{username}` | Remove Suno team flag |
+
+### Suno Team
+
+| Method | Path | Auth required | Description |
+|---|---|---|---|
+| `GET` | `/api/suno-team` | — | List Suno team members |
+| `DELETE` | `/api/suno-team/{username}` | Admin | Remove Suno team flag |
 
 ---
 
@@ -469,3 +634,5 @@ The repository includes a GitHub Actions workflow (`.github/workflows/deploy.yml
 4. `docker image prune -f` removes dangling images.
 
 The workflow uses `concurrency: group: production-deploy` with `cancel-in-progress: true` to prevent overlapping deployments from concurrent pushes.
+
+> **Multi-mode deployment note:** The admin account (`hafizh19`) is bootstrapped automatically on every server start via `ensure_admin_user()`. No manual database setup is required. If deploying fresh, the first startup will create the admin user and you can begin registering other accounts via `/login`.

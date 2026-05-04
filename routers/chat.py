@@ -280,7 +280,7 @@ async def chat_endpoint(request: Request):
 
     if not message:
         raise HTTPException(400, "Empty message.")
-    if not state.openai_client:
+    if not state.get_openai_client():
         raise HTTPException(400, "OpenAI API key not set — add it in Settings.")
     if chat_model not in VALID_CHAT_MODELS:
         raise HTTPException(400, f"Unknown model '{chat_model}'.")
@@ -391,7 +391,7 @@ async def chat_endpoint(request: Request):
 
     async def generate():
         try:
-            stream = state.openai_client.chat.completions.create(
+            stream = state.get_openai_client().chat.completions.create(
                 model=chat_model, messages=msgs, stream=True
             )
             for chunk in stream:
@@ -427,7 +427,7 @@ async def summarize_endpoint(request: Request):
     suno_team       = str(body.get("suno_team") or "all")
     sum_model       = (body.get("model") or "gpt-5.4").strip()
 
-    if not state.openai_client:
+    if not state.get_openai_client():
         raise HTTPException(400, "OpenAI API key not set — add it in Settings.")
     if sum_model not in VALID_CHAT_MODELS:
         raise HTTPException(400, f"Unknown model '{sum_model}'.")
@@ -770,7 +770,7 @@ Do NOT output plain paragraphs. Every section must use the Markdown elements abo
         for entry in pipeline_log:
             yield f"data: {json.dumps(entry)}\n\n"
         try:
-            stream = state.openai_client.chat.completions.create(
+            stream = state.get_openai_client().chat.completions.create(
                 model=sum_model,
                 messages=[
                     {
@@ -837,7 +837,7 @@ async def summarize_followup_endpoint(request: Request):
 
     if not question:
         raise HTTPException(400, "Empty question.")
-    if not state.openai_client:
+    if not state.get_openai_client():
         raise HTTPException(400, "OpenAI API key not set — add it in Settings.")
     if sum_model not in VALID_CHAT_MODELS:
         raise HTTPException(400, f"Unknown model '{sum_model}'.")
@@ -1089,7 +1089,7 @@ async def summarize_followup_endpoint(request: Request):
         for entry in fu_log:
             yield f"data: {json.dumps(entry)}\n\n"
         try:
-            stream = state.openai_client.chat.completions.create(
+            stream = state.get_openai_client().chat.completions.create(
                 model=sum_model, messages=msgs, stream=True,
             )
             for chunk in stream:
@@ -1137,7 +1137,7 @@ async def user_profile_endpoint(request: Request):
 
     if not profile_username:
         raise HTTPException(400, "profile_username is required.")
-    if not state.openai_client:
+    if not state.get_openai_client():
         raise HTTPException(400, "OpenAI API key not set — add it in Settings.")
     if sum_model not in VALID_CHAT_MODELS:
         raise HTTPException(400, f"Unknown model '{sum_model}'.")
@@ -1449,7 +1449,7 @@ async def user_profile_endpoint(request: Request):
         for entry in pipeline_log:
             yield f"data: {json.dumps(entry)}\n\n"
         try:
-            stream = state.openai_client.chat.completions.create(
+            stream = state.get_openai_client().chat.completions.create(
                 model=sum_model,
                 messages=[
                     {
@@ -1511,7 +1511,7 @@ async def user_profile_followup_endpoint(request: Request):
 
     if not question:
         raise HTTPException(400, "Empty question.")
-    if not state.openai_client:
+    if not state.get_openai_client():
         raise HTTPException(400, "OpenAI API key not set — add it in Settings.")
     if sum_model not in VALID_CHAT_MODELS:
         raise HTTPException(400, f"Unknown model '{sum_model}'.")
@@ -1702,7 +1702,7 @@ async def user_profile_followup_endpoint(request: Request):
         for entry in fu_log:
             yield f"data: {json.dumps(entry)}\n\n"
         try:
-            stream = state.openai_client.chat.completions.create(
+            stream = state.get_openai_client().chat.completions.create(
                 model=sum_model, messages=msgs, stream=True,
             )
             for chunk in stream:
@@ -1745,7 +1745,7 @@ async def summarize_results_endpoint(request: Request):
     sum_model      = (body.get("model") or "gpt-5.4").strip()
     retrieval_mode = (body.get("retrieval_mode") or "cluster").strip()
 
-    if not state.openai_client:
+    if not state.get_openai_client():
         raise HTTPException(400, "OpenAI API key not set — add it in Settings.")
     if sum_model not in VALID_CHAT_MODELS:
         raise HTTPException(400, f"Unknown model '{sum_model}'.")
@@ -1933,7 +1933,7 @@ Do NOT output plain paragraphs. Every section must use the Markdown elements abo
         for entry in pipeline_log:
             yield f"data: {json.dumps(entry)}\n\n"
         try:
-            stream = state.openai_client.chat.completions.create(
+            stream = state.get_openai_client().chat.completions.create(
                 model=sum_model,
                 messages=[
                     {
@@ -1988,7 +1988,7 @@ async def summarize_results_followup_endpoint(request: Request):
 
     if not question:
         raise HTTPException(400, "Empty question.")
-    if not state.openai_client:
+    if not state.get_openai_client():
         raise HTTPException(400, "OpenAI API key not set — add it in Settings.")
     if sum_model not in VALID_CHAT_MODELS:
         raise HTTPException(400, f"Unknown model '{sum_model}'.")
@@ -2025,7 +2025,7 @@ async def summarize_results_followup_endpoint(request: Request):
         for entry in fu_log:
             yield f"data: {json.dumps(entry)}\n\n"
         try:
-            stream = state.openai_client.chat.completions.create(
+            stream = state.get_openai_client().chat.completions.create(
                 model=sum_model, messages=msgs, stream=True,
             )
             for chunk in stream:

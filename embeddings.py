@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def embedding_model_available() -> bool:
-    return state.async_openai_client is not None
+    return state.get_async_openai_client() is not None
 
 
 def active_collection():
@@ -39,9 +39,10 @@ def active_collection():
 
 async def embed_texts_async(texts: list[str]) -> list[list[float]]:
     """Embed texts using the async OpenAI client — pure async I/O."""
-    if not state.async_openai_client:
+    client = state.get_async_openai_client()
+    if not client:
         raise HTTPException(400, "OpenAI API key not configured. Set it in Settings.")
-    response = await state.async_openai_client.embeddings.create(
+    response = await client.embeddings.create(
         model="text-embedding-3-small",
         input=[t[:8191] for t in texts],
     )

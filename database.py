@@ -3,7 +3,9 @@ database.py — SQLite helpers: connection, schema init, settings, and
 embedded-upload tracking.
 """
 
+import hashlib
 import logging
+import secrets
 import sqlite3
 from datetime import datetime
 from typing import Optional
@@ -65,7 +67,8 @@ def init_db() -> None:
             ctx_before INTEGER NOT NULL DEFAULT 5,
             ctx_after  INTEGER NOT NULL DEFAULT 5,
             note       TEXT    DEFAULT '',
-            created_at TEXT    NOT NULL
+            created_at TEXT    NOT NULL,
+            user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL
         );
 
         DROP INDEX IF EXISTS idx_content;
@@ -100,6 +103,27 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_embedded_model ON embedded_uploads(model_id);
 
+        -- Multi-user auth tables
+        CREATE TABLE IF NOT EXISTS users (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            username       TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash  TEXT    NOT NULL,
+            password_salt  TEXT    NOT NULL,
+            openai_api_key TEXT    NOT NULL DEFAULT '',
+            is_admin       INTEGER NOT NULL DEFAULT 0,
+            created_at     TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_users_username ON users(username COLLATE NOCASE);
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            token      TEXT    PRIMARY KEY,
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at TEXT    NOT NULL,
+            expires_at TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
         -- FTS5 full-text search index (content mirror of messages.content)
         CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
             USING fts5(content, content='messages', content_rowid='id');
@@ -120,6 +144,24 @@ def init_db() -> None:
                 INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
             END;
     """)
+
+    # Column migrations for existing databases (try/except because ADD COLUMN fails if already present)
+    for stmt in [
+        "ALTER TABLE users     ADD COLUMN is_admin  INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE bookmarks ADD COLUMN user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL",
+    ]:
+        try:
+            conn.execute(stmt)
+            conn.commit()
+        except Exception:
+            pass  # column already exists
+
+    # Index for bookmark user lookups
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_bookmark_user ON bookmarks(user_id)")
+        conn.commit()
+    except Exception:
+        pass
 
     # Rebuild FTS only when the index appears empty (first run, or after manual wipe).
     fts_count = conn.execute("SELECT COUNT(*) FROM messages_fts").fetchone()[0]
@@ -185,6 +227,132 @@ def get_all_embedded_uploads() -> dict[str, set[str]]:
     for upload_id, model_id in rows:
         result.setdefault(model_id, set()).add(upload_id)
     return result
+
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+
+# ── User & session helpers ────────────────────────────────────────────────────
+
+def ensure_admin_user(username: str, password: str) -> int:
+    """
+    Idempotent: create an admin user if one with this username doesn't exist,
+    or mark an existing user as admin.  Returns the user's id.
+    """
+    conn = get_db()
+    row  = conn.execute(
+        "SELECT id, is_admin FROM users WHERE LOWER(username) = LOWER(?)", (username,)
+    ).fetchone()
+
+    if row:
+        uid = row["id"]
+        if not row["is_admin"]:
+            conn.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (uid,))
+            conn.commit()
+            logger.info("Promoted existing user '%s' (id=%d) to admin", username, uid)
+        conn.close()
+        return uid
+
+    salt    = secrets.token_hex(32)
+    pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260_000).hex()
+    cur = conn.execute(
+        "INSERT INTO users (username, password_hash, password_salt, openai_api_key, is_admin, created_at)"
+        " VALUES (?,?,?,?,1,?)",
+        (username, pw_hash, salt, "", datetime.now().isoformat()),
+    )
+    conn.commit()
+    uid = cur.lastrowid
+    conn.close()
+    logger.info("Admin user '%s' created (id=%d)", username, uid)
+    return uid
+
+
+def migrate_bookmarks_to_user(user_id: int) -> int:
+    """Assign all unowned bookmarks (user_id IS NULL) to user_id.  Returns count migrated."""
+    conn = get_db()
+    cur  = conn.execute(
+        "UPDATE bookmarks SET user_id = ? WHERE user_id IS NULL", (user_id,)
+    )
+    conn.commit()
+    migrated = cur.rowcount
+    conn.close()
+    if migrated:
+        logger.info("Migrated %d bookmarks → user_id=%d", migrated, user_id)
+    return migrated
+
+
+def create_user(username: str, password_hash: str, password_salt: str,
+                openai_api_key: str = "") -> int:
+    conn = get_db()
+    cur  = conn.execute(
+        "INSERT INTO users (username, password_hash, password_salt, openai_api_key, created_at)"
+        " VALUES (?,?,?,?,?)",
+        (username, password_hash, password_salt, openai_api_key, datetime.now().isoformat()),
+    )
+    conn.commit()
+    user_id = cur.lastrowid
+    conn.close()
+    return user_id
+
+
+def get_user_by_username(username: str) -> Optional[dict]:
+    conn = get_db()
+    row  = conn.execute(
+        "SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (username,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> Optional[dict]:
+    conn = get_db()
+    row  = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_user_api_key(user_id: int, api_key: str) -> None:
+    conn = get_db()
+    conn.execute("UPDATE users SET openai_api_key = ? WHERE id = ?", (api_key, user_id))
+    conn.commit()
+    conn.close()
+
+
+def create_session(token: str, user_id: int, expires_at: str) -> None:
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)",
+        (token, user_id, datetime.now().isoformat(), expires_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_session_user(token: str) -> Optional[dict]:
+    """Return the user dict for a valid, non-expired session token, or None."""
+    if not token:
+        return None
+    conn = get_db()
+    row  = conn.execute(
+        """SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+           WHERE s.token = ? AND s.expires_at > ?""",
+        (token, datetime.utcnow().isoformat()),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_session(token: str) -> None:
+    conn = get_db()
+    conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
+
+
+def users_exist() -> bool:
+    conn = get_db()
+    n    = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    conn.close()
+    return n > 0
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────

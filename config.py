@@ -39,6 +39,12 @@ CHROMA_PORT       = int(os.environ.get("CHROMA_PORT", "8001"))
 CHROMA_SSL        = os.environ.get("CHROMA_SSL", "false").strip().lower() == "true"
 CHROMA_AUTH_TOKEN = os.environ.get("CHROMA_AUTH_TOKEN", "").strip()
 
+# ── Application mode ─────────────────────────────────────────────────────────
+# "single" — one user, API key in localStorage; no login system.
+# "multi"  — user accounts with login/signup; each user stores their own API key.
+# ""       — not yet chosen; onboarding page will ask.
+APP_MODE         = os.environ.get("APP_MODE", "").strip().lower()
+
 # ── Embedding performance ─────────────────────────────────────────────────────
 # OpenAI accepts up to 2048 inputs per embedding request.
 EMBED_BATCH_SIZE   = int(os.environ.get("EMBED_BATCH_SIZE", "2048"))

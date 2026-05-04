@@ -1,19 +1,19 @@
 """
 routers/config_api.py — API-key management and embedding-model selection.
 
-  POST /api/set-api-key
+  POST /api/set-api-key         — single mode: set global key; multi mode: update user key
   POST /api/set-embedding-model
   GET  /api/embedding-models
 """
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from openai import AsyncOpenAI, OpenAI
 
 import state
 from config import EMBEDDING_MODELS
-from database import set_setting
+from database import get_session_user, set_setting, update_user_api_key
 from embeddings import embedding_model_available
 
 logger = logging.getLogger(__name__)
@@ -21,10 +21,36 @@ router = APIRouter()
 
 
 @router.post("/api/set-api-key")
-async def set_api_key(body: dict):
-    key = body.get("api_key", "").strip()
+async def set_api_key(body: dict, request: Request):
+    key = (body.get("api_key") or "").strip()
     if not key:
         raise HTTPException(400, "api_key is required")
+
+    if state.app_mode == "multi":
+        # Multi mode: persist key per user and update in-memory client cache.
+        token = request.cookies.get("session")
+        user  = get_session_user(token) if token else None
+        if not user:
+            raise HTTPException(401, "Not authenticated.")
+
+        uid = user["id"]
+        update_user_api_key(uid, key)
+
+        # Evict old cached client
+        old = state.user_clients.pop(uid, None)
+        if old:
+            import asyncio
+            async def _close():
+                try: await old[1].close()
+                except Exception: pass
+            asyncio.create_task(_close())
+
+        new_pair = (OpenAI(api_key=key), AsyncOpenAI(api_key=key))
+        state.user_clients[uid] = new_pair
+        state.set_request_clients(*new_pair)
+        return {"status": "ok", "message": "API key updated for your account."}
+
+    # Single mode: set global clients as before.
     if state.async_openai_client:
         await state.async_openai_client.close()
     state.openai_client       = OpenAI(api_key=key)
@@ -45,7 +71,7 @@ async def set_embedding_model(body: dict):
     state.current_embedding_model = model_id
     set_setting("embedding_model", model_id)
     return {
-        "status":  "ok",
+        "status":   "ok",
         "model_id": model_id,
         "label":    EMBEDDING_MODELS[model_id]["label"],
     }

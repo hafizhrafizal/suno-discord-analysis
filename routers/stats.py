@@ -47,7 +47,7 @@ async def get_stats():
         "total_messages":      total_msgs,
         "total_uploads":       total_uploads,
         "embedded_messages":   embedded_msgs,
-        "api_key_set":         state.openai_client is not None,
+        "api_key_set":         state.get_openai_client() is not None,
         "current_model":       state.current_embedding_model,
         "current_model_label": EMBEDDING_MODELS[state.current_embedding_model]["label"],
     }
