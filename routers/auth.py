@@ -24,7 +24,6 @@ from database import (
     get_session_user,
     get_user_by_username,
     set_setting,
-    update_user_api_key,
     users_exist,
 )
 
@@ -84,7 +83,6 @@ async def register(body: dict, request: Request):
 
     username = (body.get("username") or "").strip()
     password = (body.get("password") or "").strip()
-    api_key  = (body.get("openai_api_key") or "").strip()
 
     if not username:
         raise HTTPException(400, "username is required.")
@@ -97,11 +95,8 @@ async def register(body: dict, request: Request):
         raise HTTPException(409, f"Username '{username}' is already taken.")
 
     pw_hash, salt = _hash_password(password)
-    user_id = create_user(username, pw_hash, salt, api_key)
-
-    if api_key:
-        from openai import AsyncOpenAI, OpenAI
-        state.user_clients[user_id] = (OpenAI(api_key=api_key), AsyncOpenAI(api_key=api_key))
+    # API key is never stored server-side; the browser keeps it in localStorage.
+    user_id = create_user(username, pw_hash, salt)
 
     token   = secrets.token_hex(32)
     expires = (datetime.utcnow() + timedelta(days=30)).isoformat()
@@ -129,13 +124,8 @@ async def login(body: dict, request: Request):
     if user is None or not _verify_password(password, user["password_hash"], user["password_salt"]):
         raise HTTPException(401, "Invalid username or password.")
 
-    uid = user["id"]
-    if user.get("openai_api_key") and uid not in state.user_clients:
-        from openai import AsyncOpenAI, OpenAI
-        key = user["openai_api_key"]
-        state.user_clients[uid] = (OpenAI(api_key=key), AsyncOpenAI(api_key=key))
-
-    token   = secrets.token_hex(32)
+    uid   = user["id"]
+    token = secrets.token_hex(32)
     expires = (datetime.utcnow() + timedelta(days=30)).isoformat()
     create_session(token, uid, expires)
 
@@ -168,50 +158,13 @@ async def get_me(request: Request):
     user = get_session_user(token)
     if not user:
         raise HTTPException(401, "Session expired or invalid.")
+    uid = user["id"]
     return {
-        "id":          user["id"],
+        "id":          uid,
         "username":    user["username"],
-        "has_api_key": bool(user.get("openai_api_key")),
+        "has_api_key": uid in state.user_clients,
         "is_admin":    bool(user.get("is_admin")),
     }
-
-
-# ── Update API key (multi mode) ────────────────────────────────────────────────
-
-@router.post("/api/auth/update-api-key")
-async def update_api_key(body: dict, request: Request):
-    """Update the current user's OpenAI API key (multi mode)."""
-    if state.app_mode != "multi":
-        raise HTTPException(403, "Use /api/set-api-key in single-user mode.")
-
-    token = request.cookies.get("session")
-    user  = get_session_user(token) if token else None
-    if not user:
-        raise HTTPException(401, "Not authenticated.")
-
-    key = (body.get("api_key") or "").strip()
-    if not key:
-        raise HTTPException(400, "api_key is required.")
-
-    uid = user["id"]
-    update_user_api_key(uid, key)
-
-    # Evict old client and create new one
-    old = state.user_clients.pop(uid, None)
-    if old:
-        import asyncio
-        async def _close_old():
-            try:
-                await old[1].close()
-            except Exception:
-                pass
-        asyncio.create_task(_close_old())
-
-    from openai import AsyncOpenAI, OpenAI
-    state.user_clients[uid] = (OpenAI(api_key=key), AsyncOpenAI(api_key=key))
-    state.set_request_clients(*state.user_clients[uid])
-
-    return {"status": "ok", "message": "API key updated."}
 
 
 # ── Users exist check (for login page initial state) ─────────────────────────

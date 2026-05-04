@@ -266,11 +266,10 @@ class _SessionAuthMiddleware(BaseHTTPMiddleware):
         # Attach user to request state (used by config_api + auth endpoints)
         request.state.user = user
 
-        # Inject per-user OpenAI clients into ContextVar
+        # Inject per-user OpenAI clients into ContextVar.
+        # Keys come from the in-memory cache (populated when the user calls
+        # POST /api/set-api-key) — never from the database.
         uid = user["id"]
-        if uid not in state.user_clients and user.get("openai_api_key"):
-            key = user["openai_api_key"]
-            state.user_clients[uid] = (OpenAI(api_key=key), AsyncOpenAI(api_key=key))
 
         pair = state.user_clients.get(uid)
         if pair:

@@ -281,15 +281,10 @@ function showApiKeyPopup(dismissable = false) {
   const errorEl   = document.getElementById('apikey-popup-error');
   const descEl    = document.getElementById('apikey-popup-desc');
 
-  // In multi mode, key is stored server-side; in single mode, use localStorage
-  if (APP_MODE === 'multi') {
-    input.value = '';
-    if (descEl) descEl.innerHTML = 'Stored securely <strong>on the server</strong>, tied to your account. Never shared with third parties.';
-  } else {
-    const stored = localStorage.getItem(STORAGE_KEY) || '';
-    input.value = stored;
-    if (descEl) descEl.innerHTML = 'Stored in <strong>browser localStorage</strong> and restored on each visit. Sent only to your own server — never to third parties.';
-  }
+  // Key is always stored in browser localStorage only — never on the server.
+  const stored = localStorage.getItem(STORAGE_KEY) || '';
+  input.value = stored;
+  if (descEl) descEl.innerHTML = 'Stored in <strong>your browser\'s localStorage</strong> only — never saved to the server or database. Sent to your own server per session to make OpenAI requests on your behalf.';
 
   errorEl.textContent = '';
   errorEl.classList.add('hidden');
@@ -314,22 +309,16 @@ function hideApiKeyPopup() {
 function _apiKeyEscHandler(e) {
   if (e.key !== 'Escape') return;
   // Only dismiss on Esc if dismissable
-  if (APP_MODE === 'multi' || localStorage.getItem(STORAGE_KEY)) hideApiKeyPopup();
+  if (localStorage.getItem(STORAGE_KEY)) hideApiKeyPopup();
 }
 
 function updateSettingsKeyStatus(apiKeySet) {
   const statusEl = document.getElementById('settings-key-status');
   if (!statusEl) return;
-  if (APP_MODE === 'multi') {
-    statusEl.textContent = apiKeySet
-      ? 'API key saved on the server for your account.'
-      : 'No API key set. Click "Change Key" to add one.';
-  } else {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    statusEl.textContent = stored
-      ? 'API key saved in your browser (localStorage).'
-      : 'No API key set. Click "Change Key" to add one.';
-  }
+  const stored = localStorage.getItem(STORAGE_KEY);
+  statusEl.textContent = stored
+    ? 'API key saved in your browser (localStorage) — not stored on the server.'
+    : 'No API key set. Click "Change Key" to add one.';
 }
 
 // Save button
@@ -353,7 +342,7 @@ document.getElementById('apikey-popup-save').onclick = async () => {
 
   try {
     await _sendKeyToServer(key);
-    if (APP_MODE !== 'multi') localStorage.setItem(STORAGE_KEY, key);
+    localStorage.setItem(STORAGE_KEY, key);
     hideApiKeyPopup();
     updateSettingsKeyStatus(true);
     loadStats();
@@ -4528,16 +4517,26 @@ if (APP_MODE === 'multi' && CURRENT_USER) {
     } catch (_) {}
     applyAdminUI();
 
-    // Load stats and prompt for API key if not set.
+    // Restore API key from localStorage into server memory for this session.
+    // The key is never stored server-side; localStorage is the sole durable store.
+    const storedKey = localStorage.getItem(STORAGE_KEY);
+    if (storedKey) {
+      try { await _sendKeyToServer(storedKey); } catch (_) {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    }
+
+    // Load stats and prompt for API key if not set in localStorage.
     try {
       const d = await apiFetch('/api/stats');
+      const keySet = !!localStorage.getItem(STORAGE_KEY);
       document.getElementById('stats-bar').innerHTML =
         `${d.total_messages.toLocaleString()} msgs &bull; ` +
         `${d.total_uploads} uploads &bull; ` +
         `${d.embedded_messages.toLocaleString()} embedded &bull; ` +
         `<span style="color:#c4b5fd">${esc(d.current_model_label)}</span>` +
-        (d.api_key_set ? ' &bull; <span style="color:#86efac">API key ✓</span>' : '');
-      if (!d.api_key_set) showApiKeyPopup(true);
+        (keySet ? ' &bull; <span style="color:#86efac">API key ✓</span>' : '');
+      if (!keySet) showApiKeyPopup(true);
     } catch (_) {}
   } else {
     // Single mode: restore API key from localStorage → send to server.

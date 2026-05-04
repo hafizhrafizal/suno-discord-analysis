@@ -109,7 +109,6 @@ def init_db() -> None:
             username       TEXT    NOT NULL UNIQUE COLLATE NOCASE,
             password_hash  TEXT    NOT NULL,
             password_salt  TEXT    NOT NULL,
-            openai_api_key TEXT    NOT NULL DEFAULT '',
             is_admin       INTEGER NOT NULL DEFAULT 0,
             created_at     TEXT    NOT NULL
         );
@@ -145,7 +144,8 @@ def init_db() -> None:
             END;
     """)
 
-    # Column migrations for existing databases (try/except because ADD COLUMN fails if already present)
+    # Column migrations for existing databases (try/except because ADD/DROP COLUMN
+    # fails silently when the column already exists or has already been removed)
     for stmt in [
         "ALTER TABLE users     ADD COLUMN is_admin  INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE bookmarks ADD COLUMN user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL",
@@ -155,6 +155,20 @@ def init_db() -> None:
             conn.commit()
         except Exception:
             pass  # column already exists
+
+    # Privacy migration: wipe any stored OpenAI API keys then drop the column.
+    # Keys are now stored exclusively in the browser's localStorage.
+    try:
+        conn.execute("UPDATE users SET openai_api_key = '' WHERE openai_api_key != ''")
+        conn.commit()
+    except Exception:
+        pass  # column already gone
+    try:
+        conn.execute("ALTER TABLE users DROP COLUMN openai_api_key")
+        conn.commit()
+        logger.info("Dropped openai_api_key column from users table")
+    except Exception:
+        pass  # column already removed or never existed
 
     # Index for bookmark user lookups
     try:
@@ -255,9 +269,9 @@ def ensure_admin_user(username: str, password: str) -> int:
     salt    = secrets.token_hex(32)
     pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 260_000).hex()
     cur = conn.execute(
-        "INSERT INTO users (username, password_hash, password_salt, openai_api_key, is_admin, created_at)"
-        " VALUES (?,?,?,?,1,?)",
-        (username, pw_hash, salt, "", datetime.now().isoformat()),
+        "INSERT INTO users (username, password_hash, password_salt, is_admin, created_at)"
+        " VALUES (?,?,?,1,?)",
+        (username, pw_hash, salt, datetime.now().isoformat()),
     )
     conn.commit()
     uid = cur.lastrowid
@@ -280,13 +294,12 @@ def migrate_bookmarks_to_user(user_id: int) -> int:
     return migrated
 
 
-def create_user(username: str, password_hash: str, password_salt: str,
-                openai_api_key: str = "") -> int:
+def create_user(username: str, password_hash: str, password_salt: str) -> int:
     conn = get_db()
     cur  = conn.execute(
-        "INSERT INTO users (username, password_hash, password_salt, openai_api_key, created_at)"
-        " VALUES (?,?,?,?,?)",
-        (username, password_hash, password_salt, openai_api_key, datetime.now().isoformat()),
+        "INSERT INTO users (username, password_hash, password_salt, created_at)"
+        " VALUES (?,?,?,?)",
+        (username, password_hash, password_salt, datetime.now().isoformat()),
     )
     conn.commit()
     user_id = cur.lastrowid
@@ -308,13 +321,6 @@ def get_user_by_id(user_id: int) -> Optional[dict]:
     row  = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
-
-
-def update_user_api_key(user_id: int, api_key: str) -> None:
-    conn = get_db()
-    conn.execute("UPDATE users SET openai_api_key = ? WHERE id = ?", (api_key, user_id))
-    conn.commit()
-    conn.close()
 
 
 def create_session(token: str, user_id: int, expires_at: str) -> None:
