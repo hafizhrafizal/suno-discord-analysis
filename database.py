@@ -107,10 +107,12 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS users (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             username       TEXT    NOT NULL UNIQUE COLLATE NOCASE,
-            password_hash  TEXT    NOT NULL,
-            password_salt  TEXT    NOT NULL,
+            password_hash  TEXT    NOT NULL DEFAULT '',
+            password_salt  TEXT    NOT NULL DEFAULT '',
             is_admin       INTEGER NOT NULL DEFAULT 0,
-            created_at     TEXT    NOT NULL
+            created_at     TEXT    NOT NULL,
+            google_id      TEXT    UNIQUE,
+            email          TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_users_username ON users(username COLLATE NOCASE);
 
@@ -149,6 +151,8 @@ def init_db() -> None:
     for stmt in [
         "ALTER TABLE users     ADD COLUMN is_admin  INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE bookmarks ADD COLUMN user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "ALTER TABLE users     ADD COLUMN google_id TEXT",
+        "ALTER TABLE users     ADD COLUMN email     TEXT",
     ]:
         try:
             conn.execute(stmt)
@@ -173,6 +177,13 @@ def init_db() -> None:
     # Index for bookmark user lookups
     try:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_bookmark_user ON bookmarks(user_id)")
+        conn.commit()
+    except Exception:
+        pass
+
+    # Unique index for google_id (NULLs are always distinct in SQLite so this is safe)
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)")
         conn.commit()
     except Exception:
         pass
@@ -294,12 +305,39 @@ def migrate_bookmarks_to_user(user_id: int) -> int:
     return migrated
 
 
-def create_user(username: str, password_hash: str, password_salt: str) -> int:
+def create_user(username: str, password_hash: str, password_salt: str,
+                is_admin: bool = False) -> int:
     conn = get_db()
     cur  = conn.execute(
-        "INSERT INTO users (username, password_hash, password_salt, created_at)"
-        " VALUES (?,?,?,?)",
-        (username, password_hash, password_salt, datetime.now().isoformat()),
+        "INSERT INTO users (username, password_hash, password_salt, is_admin, created_at)"
+        " VALUES (?,?,?,?,?)",
+        (username, password_hash, password_salt, 1 if is_admin else 0,
+         datetime.now().isoformat()),
+    )
+    conn.commit()
+    user_id = cur.lastrowid
+    conn.close()
+    return user_id
+
+
+def get_user_by_google_id(google_id: str) -> Optional[dict]:
+    conn = get_db()
+    row  = conn.execute(
+        "SELECT * FROM users WHERE google_id = ?", (google_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def create_google_user(google_id: str, email: str, username: str,
+                       is_admin: bool = False) -> int:
+    conn = get_db()
+    cur  = conn.execute(
+        "INSERT INTO users"
+        " (username, password_hash, password_salt, is_admin, created_at, google_id, email)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (username, '', '', 1 if is_admin else 0,
+         datetime.now().isoformat(), google_id, email),
     )
     conn.commit()
     user_id = cur.lastrowid
