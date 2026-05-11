@@ -259,7 +259,7 @@
           </div>
         </div>
         <div id="scope-chips" class="flex flex-wrap gap-2" role="group" aria-label="Upload scope selection">
-          <span class="text-xs text-gray-600 italic">No uploads yet — go to the Settings page to add data.</span>
+          <span class="text-xs text-gray-600 italic">No dataset uploads yet — go to the Settings page to add data.</span>
         </div>
         <p class="text-xs text-gray-600 mt-2">Toggle which uploaded files to include. All selected = search everything.</p>
       </section>
@@ -268,167 +268,224 @@
       <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="search-heading">
         <h2 id="search-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">Search</h2>
 
-        <div class="flex border-b mb-4 overflow-x-auto" role="tablist" aria-label="Search type">
-          <button class="search-tab tab-active whitespace-nowrap" data-tab="keyword" role="tab" aria-selected="true" aria-controls="tab-keyword">Keyword</button>
-          <button class="search-tab whitespace-nowrap" data-tab="username" role="tab" aria-selected="false" aria-controls="tab-username">By Username</button>
-          <button class="search-tab whitespace-nowrap" data-tab="semantic" role="tab" aria-selected="false" aria-controls="tab-semantic">Semantic</button>
-          <button class="search-tab whitespace-nowrap" data-tab="range" role="tab" aria-selected="false" aria-controls="tab-range">Date Range</button>
-          <button class="search-tab whitespace-nowrap" data-tab="users" role="tab" aria-selected="false" aria-controls="tab-users">Users in Range</button>
+        <!-- Top-level tabs: Search Chat | Search Users -->
+        <div class="flex gap-1 mb-4" role="tablist" aria-label="Search category">
+          <button id="search-cat-chat" class="subtab-btn subtab-btn-active" data-cat="chat" role="tab" aria-selected="true" aria-controls="search-cat-panel-chat">Search Chat</button>
+          <button id="search-cat-users" class="subtab-btn" data-cat="users" role="tab" aria-selected="false" aria-controls="search-cat-panel-users">Search Users</button>
         </div>
 
-        <!-- Username Tab -->
-        <div id="tab-username" class="search-panel hidden" role="tabpanel" aria-labelledby="">
-          <div class="flex flex-wrap gap-2 mb-2">
-            <label for="username-input" class="sr-only">Username</label>
-            <input id="username-input" type="text" placeholder="Username or partial match…" class="search-input flex-1 min-w-[8rem]" />
-            <div class="flex gap-2 shrink-0">
-              <label for="username-limit" class="sr-only">Max results</label>
-              <input id="username-limit" type="number" value="200" min="1" max="1000" class="search-input w-20" title="Max results" aria-label="Max results" />
-              <label for="username-min-words" class="sr-only">Minimum word count</label>
-              <input id="username-min-words" type="number" value="0" min="0" class="search-input w-20" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
-              <button id="username-search-btn" class="search-btn">Search</button>
+        <!-- Search Chat panel -->
+        <div id="search-cat-panel-chat" role="tabpanel" aria-labelledby="search-cat-chat">
+          <div class="flex border-b mb-4 overflow-x-auto" role="tablist" aria-label="Chat search type">
+            <button class="search-tab tab-active whitespace-nowrap" data-tab="keyword" role="tab" aria-selected="true" aria-controls="tab-keyword">Keyword</button>
+            <button class="search-tab whitespace-nowrap" data-tab="semantic" role="tab" aria-selected="false" aria-controls="tab-semantic">Semantic</button>
+            <button class="search-tab whitespace-nowrap" data-tab="username" role="tab" aria-selected="false" aria-controls="tab-username">Username</button>
+            <button class="search-tab whitespace-nowrap" data-tab="range" role="tab" aria-selected="false" aria-controls="tab-range">Time Range</button>
+          </div>
+
+          <!-- Keyword Tab -->
+          <div id="tab-keyword" class="search-panel" role="tabpanel">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-xs font-semibold text-gray-600">Match:</span>
+              <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden" role="group" aria-label="Keyword match type">
+                <button id="kw-match-fuzzy" class="range-mode-btn range-mode-active" type="button" aria-pressed="true">Fuzzy</button>
+                <button id="kw-match-exact" class="range-mode-btn" type="button" aria-pressed="false">Exact</button>
+                <button id="kw-match-any" class="range-mode-btn" type="button" aria-pressed="false">Any Word</button>
+              </div>
             </div>
-          </div>
-          <div class="flex flex-wrap gap-2 items-center">
-            <label for="username-date-from" class="filter-label">From</label>
-            <input id="username-date-from" type="date" class="search-input" />
-            <label for="username-date-to" class="filter-label">To</label>
-            <input id="username-date-to" type="date" class="search-input" />
-            <label for="username-suno" class="filter-label">Suno Team</label>
-            <select id="username-suno" class="search-input">
-              <option value="all">All</option>
-              <option value="only">Only Suno Team</option>
-              <option value="exclude">Exclude Suno Team</option>
-            </select>
-          </div>
-          <p class="text-xs text-gray-600 mt-1.5">Partial match, case-insensitive.</p>
-        </div>
-
-        <!-- Keyword Tab -->
-        <div id="tab-keyword" class="search-panel" role="tabpanel">
-          <div class="flex flex-wrap gap-2 mb-2">
-            <label for="keyword-input" class="sr-only">Keyword or phrase</label>
-            <input id="keyword-input" type="text" placeholder="Keyword or phrase…" class="search-input flex-1 min-w-[8rem]" />
-            <div class="flex gap-2 shrink-0">
-              <label for="keyword-limit" class="sr-only">Max results</label>
-              <input id="keyword-limit" type="number" value="200" min="1" max="1000" class="search-input w-20" title="Max results" aria-label="Max results" />
-              <label for="keyword-min-words" class="sr-only">Minimum word count</label>
-              <input id="keyword-min-words" type="number" value="0" min="0" class="search-input w-20" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+            <div class="flex gap-2 mb-4">
+              <label for="keyword-input" class="sr-only">Keyword or phrase</label>
+              <input id="keyword-input" type="text" placeholder="Keyword or phrase…" class="search-input flex-1" />
               <button id="keyword-search-btn" class="search-btn">Search</button>
             </div>
-          </div>
-          <div class="flex flex-wrap gap-2 items-center">
-            <label for="keyword-username-filter" class="filter-label">Author</label>
-            <input id="keyword-username-filter" type="text" placeholder="Optional username…" class="search-input flex-1 min-w-36" />
-            <label for="keyword-date-from" class="filter-label">From</label>
-            <input id="keyword-date-from" type="date" class="search-input" />
-            <label for="keyword-date-to" class="filter-label">To</label>
-            <input id="keyword-date-to" type="date" class="search-input" />
-            <label for="keyword-suno" class="filter-label">Suno Team</label>
-            <select id="keyword-suno" class="search-input">
-              <option value="all">All</option>
-              <option value="only">Only Suno Team</option>
-              <option value="exclude">Exclude Suno Team</option>
-            </select>
-          </div>
-          <p class="text-xs text-gray-600 mt-1.5">Case-insensitive substring match.</p>
-        </div>
-
-        <!-- Semantic Tab -->
-        <div id="tab-semantic" class="search-panel hidden" role="tabpanel">
-          <div class="flex flex-wrap gap-2 mb-2">
-            <label for="semantic-input" class="sr-only">Semantic search query</label>
-            <input id="semantic-input" type="text" placeholder="Describe what you're looking for…" class="search-input flex-1 min-w-[8rem]" />
-            <div class="flex gap-2 shrink-0">
-              <label for="semantic-n" class="sr-only">Number of results</label>
-              <input id="semantic-n" type="number" value="20" min="1" max="100" class="search-input w-20" title="Number of results" aria-label="Number of results" />
-              <label for="semantic-min-words" class="sr-only">Minimum word count</label>
-              <input id="semantic-min-words" type="number" value="0" min="0" class="search-input w-20" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
-              <button id="semantic-search-btn" class="search-btn">Search</button>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+              <div class="flex flex-col gap-1">
+                <label for="keyword-username-filter" class="filter-label">Author</label>
+                <input id="keyword-username-filter" type="text" placeholder="Optional username…" class="search-input" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="keyword-date-from" class="filter-label">From Date</label>
+                <input id="keyword-date-from" type="date" class="search-input" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="keyword-date-to" class="filter-label">To Date</label>
+                <input id="keyword-date-to" type="date" class="search-input" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="keyword-suno" class="filter-label">Suno Team</label>
+                <select id="keyword-suno" class="search-input">
+                  <option value="all">All</option>
+                  <option value="only">Only Suno Team</option>
+                  <option value="exclude">Exclude Suno Team</option>
+                </select>
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="keyword-limit" class="filter-label">Max Results</label>
+                <input id="keyword-limit" type="number" value="200" min="1" max="1000" class="search-input" placeholder="200" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="keyword-min-words" class="filter-label">Min Word Count</label>
+                <input id="keyword-min-words" type="number" value="0" min="0" class="search-input" placeholder="0" />
+              </div>
             </div>
           </div>
-          <div class="flex flex-wrap gap-2 items-center">
-            <label for="semantic-username-filter" class="filter-label">Author</label>
-            <input id="semantic-username-filter" type="text" placeholder="Optional username…" class="search-input flex-1 min-w-36" />
-            <label for="semantic-date-from" class="filter-label">From</label>
-            <input id="semantic-date-from" type="date" class="search-input" />
-            <label for="semantic-date-to" class="filter-label">To</label>
-            <input id="semantic-date-to" type="date" class="search-input" />
-            <label for="semantic-suno" class="filter-label">Suno Team</label>
-            <select id="semantic-suno" class="search-input">
-              <option value="all">All</option>
-              <option value="only">Only Suno Team</option>
-              <option value="exclude">Exclude Suno Team</option>
-            </select>
-            <label for="semantic-sort" class="filter-label">Sort</label>
-            <select id="semantic-sort" class="search-input">
-              <option value="score">Similarity ↓</option>
-              <option value="date_asc">Date ↑</option>
-              <option value="date_desc">Date ↓</option>
-            </select>
-          </div>
-          <p class="text-xs text-gray-600 mt-1.5">
-            Requires embedded data. Vectors are content-only — author &amp; date filter after retrieval.
-          </p>
-        </div>
 
-        <!-- Date Range Tab -->
-        <div id="tab-range" class="search-panel hidden" role="tabpanel">
-          <!-- Segmented mode control -->
-          <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden mb-3" role="group" aria-label="Date input mode">
-            <button id="range-mode-exact" class="range-mode-btn range-mode-active" type="button" aria-pressed="true">Exact Date Range</button>
-            <button id="range-mode-month" class="range-mode-btn" type="button" aria-pressed="false">By Month &amp; Year</button>
+          <!-- Semantic Tab -->
+          <div id="tab-semantic" class="search-panel hidden" role="tabpanel">
+            <div class="flex gap-2 mb-4">
+              <label for="semantic-input" class="sr-only">Semantic search query</label>
+              <input id="semantic-input" type="text" placeholder="Describe what you're looking for…" class="search-input flex-1" />
+              <button id="semantic-search-btn" class="search-btn">Search</button>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+              <div class="flex flex-col gap-1">
+                <label for="semantic-username-filter" class="filter-label">Author</label>
+                <input id="semantic-username-filter" type="text" placeholder="Optional username…" class="search-input" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="semantic-date-from" class="filter-label">From Date</label>
+                <input id="semantic-date-from" type="date" class="search-input" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="semantic-date-to" class="filter-label">To Date</label>
+                <input id="semantic-date-to" type="date" class="search-input" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="semantic-suno" class="filter-label">Suno Team</label>
+                <select id="semantic-suno" class="search-input">
+                  <option value="all">All</option>
+                  <option value="only">Only Suno Team</option>
+                  <option value="exclude">Exclude Suno Team</option>
+                </select>
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="semantic-n" class="filter-label">Max Results</label>
+                <input id="semantic-n" type="number" value="20" min="1" max="100" class="search-input" placeholder="20" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="semantic-min-words" class="filter-label">Min Word Count</label>
+                <input id="semantic-min-words" type="number" value="0" min="0" class="search-input" placeholder="0" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="semantic-sort" class="filter-label">Sort By</label>
+                <select id="semantic-sort" class="search-input">
+                  <option value="score">Similarity ↓</option>
+                  <option value="date_asc">Date ↑</option>
+                  <option value="date_desc">Date ↓</option>
+                </select>
+              </div>
+            </div>
+            <p class="text-xs text-gray-500 mt-3">Requires embedded data. Author &amp; date filter applied after retrieval.</p>
           </div>
 
-          <!-- Exact date inputs -->
-          <div id="range-exact-inputs" class="flex flex-wrap gap-2 items-center mb-2">
-            <label for="range-date-from" class="filter-label">From</label>
-            <input id="range-date-from" type="date" class="search-input" />
-            <label for="range-date-to" class="filter-label">To</label>
-            <input id="range-date-to" type="date" class="search-input" />
+          <!-- By Username Tab -->
+          <div id="tab-username" class="search-panel hidden" role="tabpanel">
+            <div class="flex gap-2 mb-4">
+              <label for="username-input" class="sr-only">Username</label>
+              <input id="username-input" type="text" placeholder="Username or partial match…" class="search-input flex-1" />
+              <button id="username-search-btn" class="search-btn">Search</button>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+              <div class="flex flex-col gap-1">
+                <label for="username-date-from" class="filter-label">From Date</label>
+                <input id="username-date-from" type="date" class="search-input" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="username-date-to" class="filter-label">To Date</label>
+                <input id="username-date-to" type="date" class="search-input" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="username-suno" class="filter-label">Suno Team</label>
+                <select id="username-suno" class="search-input">
+                  <option value="all">All</option>
+                  <option value="only">Only Suno Team</option>
+                  <option value="exclude">Exclude Suno Team</option>
+                </select>
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="username-limit" class="filter-label">Max Results</label>
+                <input id="username-limit" type="number" value="200" min="1" max="1000" class="search-input" placeholder="200" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="username-min-words" class="filter-label">Min Word Count</label>
+                <input id="username-min-words" type="number" value="0" min="0" class="search-input" placeholder="0" />
+              </div>
+            </div>
+            <p class="text-xs text-gray-500 mt-3">Partial match, case-insensitive.</p>
           </div>
 
-          <!-- Month inputs (hidden by default) -->
-          <div id="range-month-inputs" class="hidden flex flex-wrap gap-2 items-center mb-2">
-            <label for="range-month-from" class="filter-label">From</label>
-            <input id="range-month-from" type="month" class="search-input" />
-            <label for="range-month-to" class="filter-label">To</label>
-            <input id="range-month-to" type="month" class="search-input" />
-          </div>
-
-          <!-- Actions row -->
-          <div class="flex flex-wrap gap-2 items-center mt-1">
-            <label for="range-suno" class="filter-label">Suno Team</label>
-            <select id="range-suno" class="search-input">
-              <option value="all">All</option>
-              <option value="only">Only Suno Team</option>
-              <option value="exclude">Exclude Suno Team</option>
-            </select>
-            <label for="range-min-words" class="sr-only">Minimum word count</label>
-            <input id="range-min-words" type="number" value="0" min="0" class="search-input w-24" placeholder="Min words" title="Minimum word count" aria-label="Minimum word count" />
+          <!-- Date Range Tab -->
+          <div id="tab-range" class="search-panel hidden" role="tabpanel">
+            <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden mb-3" role="group" aria-label="Date input mode">
+              <button id="range-mode-exact" class="range-mode-btn range-mode-active" type="button" aria-pressed="true">Exact Date Range</button>
+              <button id="range-mode-month" class="range-mode-btn" type="button" aria-pressed="false">By Month &amp; Year</button>
+            </div>
+            <div id="range-exact-inputs" class="grid grid-cols-2 gap-x-4 gap-y-3 mb-3">
+              <div class="flex flex-col gap-1">
+                <label for="range-date-from" class="filter-label">From Date</label>
+                <input id="range-date-from" type="date" class="search-input" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="range-date-to" class="filter-label">To Date</label>
+                <input id="range-date-to" type="date" class="search-input" />
+              </div>
+            </div>
+            <div id="range-month-inputs" class="hidden grid grid-cols-2 gap-x-4 gap-y-3 mb-3">
+              <div class="flex flex-col gap-1">
+                <label for="range-month-from" class="filter-label">From Month</label>
+                <input id="range-month-from" type="month" class="search-input" />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="range-month-to" class="filter-label">To Month</label>
+                <input id="range-month-to" type="month" class="search-input" />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 mb-4">
+              <div class="flex flex-col gap-1">
+                <label for="range-suno" class="filter-label">Suno Team</label>
+                <select id="range-suno" class="search-input">
+                  <option value="all">All</option>
+                  <option value="only">Only Suno Team</option>
+                  <option value="exclude">Exclude Suno Team</option>
+                </select>
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="range-min-words" class="filter-label">Min Word Count</label>
+                <input id="range-min-words" type="number" value="0" min="0" class="search-input" placeholder="0" />
+              </div>
+            </div>
             <button id="range-search-btn" type="button" class="search-btn">Search</button>
+            <p class="text-xs text-gray-500 mt-3">Returns all messages in the selected range. At least one date is required.</p>
           </div>
-          <p class="text-xs text-gray-600 mt-1.5">Returns all messages in the selected range. At least one date is required.</p>
+
         </div>
 
-        <!-- Users in Range Tab -->
-        <div id="tab-users" class="search-panel hidden" role="tabpanel">
-          <div class="flex flex-wrap gap-2 items-center mb-2">
-            <label for="users-date-from" class="filter-label">From</label>
-            <input id="users-date-from" type="date" class="search-input" />
-            <label for="users-date-to" class="filter-label">To</label>
-            <input id="users-date-to" type="date" class="search-input" />
-            <label for="users-suno" class="filter-label">Suno Team</label>
-            <select id="users-suno" class="search-input">
-              <option value="all">All</option>
-              <option value="only">Only Suno Team</option>
-              <option value="exclude">Exclude Suno Team</option>
-            </select>
-            <label for="users-min-words" class="filter-label">Min Words</label>
-            <input id="users-min-words" type="number" value="0" min="0" class="search-input w-20" />
-            <button id="users-search-btn" class="search-btn">Search</button>
+        <!-- Search Users panel -->
+        <div id="search-cat-panel-users" class="hidden" role="tabpanel" aria-labelledby="search-cat-users">
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 mb-4">
+            <div class="flex flex-col gap-1">
+              <label for="users-date-from" class="filter-label">From Date</label>
+              <input id="users-date-from" type="date" class="search-input" />
+            </div>
+            <div class="flex flex-col gap-1">
+              <label for="users-date-to" class="filter-label">To Date</label>
+              <input id="users-date-to" type="date" class="search-input" />
+            </div>
+            <div class="flex flex-col gap-1">
+              <label for="users-suno" class="filter-label">Suno Team</label>
+              <select id="users-suno" class="search-input">
+                <option value="all">All</option>
+                <option value="only">Only Suno Team</option>
+                <option value="exclude">Exclude Suno Team</option>
+              </select>
+            </div>
+            <div class="flex flex-col gap-1">
+              <label for="users-min-words" class="filter-label">Min Word Count</label>
+              <input id="users-min-words" type="number" value="0" min="0" class="search-input" placeholder="0" />
+            </div>
           </div>
-          <p class="text-xs text-gray-600 mt-1.5">
+          <button id="users-search-btn" class="search-btn mb-4">Search</button>
+          <p class="text-xs text-gray-500 mb-4">
             Returns all users active in the selected date range with message statistics.
             Leave dates empty to include all data. Click a username to view their full profile.
           </p>
@@ -868,11 +925,11 @@
       <!-- Existing uploads -->
       <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="uploads-heading">
         <div class="flex items-center justify-between mb-4">
-          <h2 id="uploads-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide">Your Uploads</h2>
+          <h2 id="uploads-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide">Active Dataset</h2>
           <button id="refresh-data-btn" class="text-xs font-semibold text-indigo-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700 rounded">Refresh</button>
         </div>
         <div id="uploads-table" class="space-y-3" aria-live="polite">
-          <p class="text-sm text-gray-600 text-center py-6">No uploads yet.</p>
+          <p class="text-sm text-gray-600 text-center py-6">No dataset uploads yet.</p>
         </div>
       </section>
 

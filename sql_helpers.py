@@ -90,22 +90,25 @@ def _sql_upload_ids_clause(uid_list: list[str]) -> tuple[str, list]:
 
 # ── FTS5 query builder ────────────────────────────────────────────────────────
 
-def _build_fts_query(keyword: str) -> str:
+def _build_fts_query(keyword: str, match_type: str = 'fuzzy') -> str:
     """
     Convert a plain keyword string into a safe FTS5 MATCH expression.
 
-    Strategy:
-      - Strip FTS5 syntax chars to prevent injection / parse errors.
-      - Single words  → prefix match   (e.g.  feat → "feat"*)
-      - Multi-word    → phrase match   (e.g. "new feature" → "new feature")
+    match_type:
+      'fuzzy' — prefix match per word: "w1"* "w2"* ...
+      'exact' — exact phrase: "w1 w2 w3"
+      'any'   — any word (OR): "w1" OR "w2" OR "w3"
     """
     safe = re.sub(r'["\'*^()\[\]{};:\\]', ' ', keyword).strip()
     if not safe:
         raise ValueError("Empty keyword after FTS5 sanitization")
     words = safe.split()
-    if len(words) == 1:
-        return f'"{words[0]}"*'
-    return f'"{" ".join(words)}"'
+    if match_type == 'exact':
+        return f'"{" ".join(words)}"'
+    elif match_type == 'any':
+        return ' OR '.join(f'"{w}"' for w in words)
+    else:  # fuzzy (default)
+        return ' '.join(f'"{w}"*' for w in words)
 
 
 # ── Reusable keyword-search function ─────────────────────────────────────────
@@ -119,6 +122,7 @@ async def keyword_search(
     suno_team: str             = "all",
     min_words: int             = 0,
     limit:     int             = 200,
+    match_type: str            = 'fuzzy',
 ) -> list[dict]:
     """
     Run a keyword search against the messages table.
@@ -133,7 +137,7 @@ async def keyword_search(
 
     conn = get_db()
     try:
-        fts_expr      = _build_fts_query(keyword)
+        fts_expr      = _build_fts_query(keyword, match_type)
         candidate_cap = limit * 20
         fts_rows = conn.execute(
             "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? LIMIT ?",
@@ -164,8 +168,14 @@ async def keyword_search(
     except Exception as fts_exc:
         logger.warning("FTS5 keyword search failed (%s), falling back to LIKE", fts_exc)
         uid_sql, uid_params = _sql_upload_ids_clause(uid_list)
-        params_fb: list = [f"%{keyword}%"]
-        sql_fb = "SELECT * FROM messages WHERE LOWER(content) LIKE LOWER(?)"
+        if match_type == 'any':
+            words_fb = keyword.split()
+            conds = ' OR '.join('LOWER(content) LIKE LOWER(?)' for _ in words_fb)
+            sql_fb = f"SELECT * FROM messages WHERE ({conds})"
+            params_fb: list = [f"%{w}%" for w in words_fb]
+        else:
+            sql_fb = "SELECT * FROM messages WHERE LOWER(content) LIKE LOWER(?)"
+            params_fb: list = [f"%{keyword}%"]
         if username:
             sql_fb += " AND LOWER(username) LIKE LOWER(?)"
             params_fb.append(f"%{username}%")

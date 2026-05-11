@@ -127,10 +127,8 @@ async function loadStats() {
     const d = await apiFetch('/api/stats');
     document.getElementById('stats-bar').innerHTML =
       `${d.total_messages.toLocaleString()} msgs &bull; ` +
-      `${d.total_uploads} uploads &bull; ` +
-      `${d.embedded_messages.toLocaleString()} embedded &bull; ` +
-      `<span style="color:#c4b5fd">${esc(d.current_model_label)}</span>` +
-      (d.api_key_set ? ' &bull; <span style="color:#86efac">API key ...</span>' : '');
+      `${d.total_uploads} dataset &bull; ` +
+      `${d.embedded_messages.toLocaleString()} embedded &bull; ` ;
   } catch (_) {}
 }
 
@@ -944,7 +942,7 @@ async function renderLabelManager() {
                   style="background:${l.color};color:${tc}">
               ${esc(l.name)}
               <button class="label-delete-btn opacity-70 hover:opacity-100 font-bold leading-none"
-                      data-code-id="${l.id}" data-code-name="${esc(l.name)}" title="Delete code">Ã—</button>
+                      data-code-id="${l.id}" data-code-name="${esc(l.name)}" title="Delete code">—</button>
             </span>`;
   }).join('');
 }
@@ -1059,12 +1057,42 @@ document.getElementById('suno-team-table').addEventListener('click', async e => 
 });
 
 // -- SEARCH TABS -----------------------------------------------------------
+
+// Top-level Chat / Users tab switching
+document.querySelectorAll('[data-cat]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-cat]').forEach(b => {
+      b.classList.remove('subtab-btn-active');
+      b.setAttribute('aria-selected', 'false');
+    });
+    btn.classList.add('subtab-btn-active');
+    btn.setAttribute('aria-selected', 'true');
+    document.getElementById('search-cat-panel-chat').classList.add('hidden');
+    document.getElementById('search-cat-panel-users').classList.add('hidden');
+    document.getElementById('search-cat-panel-' + btn.dataset.cat).classList.remove('hidden');
+  });
+});
+
+// Inner chat search tab switching
 document.querySelectorAll('.search-tab').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.search-tab').forEach(b => b.classList.remove('tab-active'));
     btn.classList.add('tab-active');
     document.querySelectorAll('.search-panel').forEach(p => p.classList.add('hidden'));
     document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+  });
+});
+
+// Keyword match type toggle
+let keywordMatchType = 'fuzzy';
+['fuzzy', 'exact', 'any'].forEach(mt => {
+  document.getElementById(`kw-match-${mt}`).addEventListener('click', () => {
+    keywordMatchType = mt;
+    ['fuzzy', 'exact', 'any'].forEach(t => {
+      const b = document.getElementById(`kw-match-${t}`);
+      b.classList.toggle('range-mode-active', t === mt);
+      b.setAttribute('aria-pressed', t === mt ? 'true' : 'false');
+    });
   });
 });
 
@@ -1135,7 +1163,7 @@ async function doSearch(type) {
     const dTo     = document.getElementById('keyword-date-to').value;
     const suno    = document.getElementById('keyword-suno').value;
     const minW    = parseInt(document.getElementById('keyword-min-words').value) || 0;
-    url = `/api/search/keyword?keyword=${enc(keyword)}&limit=${limit}`;
+    url = `/api/search/keyword?keyword=${enc(keyword)}&limit=${limit}&match_type=${keywordMatchType}`;
     if (uFilter)        url += `&username=${enc(uFilter)}`;
     if (scope)          url += `&upload_ids=${enc(scope)}`;
     if (suno !== 'all') url += `&suno_team=${enc(suno)}`;
@@ -2320,7 +2348,7 @@ function _bmCodeChipsHtml(bm) {
     return `<span class="bm-code-chip text-xs px-2 py-0.5 rounded-full font-medium cursor-pointer select-none"
                   style="background:${l.color};color:${tc}"
                   data-bm-id="${bm.bookmark_id}" data-code-id="${l.id}"
-                  title="Remove code">${esc(l.name)} Ã—</span>`;
+                  title="Remove code">${esc(l.name)} —</span>`;
   }).join('');
   return chips + `<button class="bm-code-btn text-xs text-gray-400 hover:text-indigo-600 border border-dashed border-gray-300 hover:border-indigo-400 rounded-full px-2 py-0.5 transition-colors"
                           data-bm-id="${bm.bookmark_id}">+ code</button>`;
@@ -2490,7 +2518,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     return;
   }
 
-  // Remove code chip (Ã— click on assigned label)
+  // Remove code chip (— click on assigned label)
   const labelChip = e.target.closest('.bm-code-chip');
   if (labelChip) {
     const bmId    = parseInt(labelChip.dataset.bmId);
@@ -3733,10 +3761,9 @@ if (APP_MODE === 'multi' && CURRENT_USER) {
       const keySet = !!localStorage.getItem(STORAGE_KEY);
       document.getElementById('stats-bar').innerHTML =
         `${d.total_messages.toLocaleString()} msgs &bull; ` +
-        `${d.total_uploads} uploads &bull; ` +
-        `${d.embedded_messages.toLocaleString()} embedded &bull; ` +
-        `<span style="color:#c4b5fd">${esc(d.current_model_label)}</span>` +
-        (keySet ? ' &bull; <span style="color:#86efac">API key ...</span>' : '');
+        `${d.total_uploads} datasets &bull; ` +
+        `${d.embedded_messages.toLocaleString()} embedded ` +
+        (keySet ? ' &bull; <span style="color:#86efac">API key set</span>' : '');
       if (!keySet) showApiKeyPopup(true);
     } catch (_) {}
   } else {

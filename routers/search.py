@@ -73,6 +73,7 @@ async def search_by_keyword(
     suno_team:  str           = "all",
     min_words:  int           = 0,
     limit:      int           = 200,
+    match_type: str           = "fuzzy",
 ):
     return await keyword_search(
         keyword=keyword,
@@ -83,6 +84,7 @@ async def search_by_keyword(
         suno_team=suno_team,
         min_words=min_words,
         limit=limit,
+        match_type=match_type,
     )
 
 
