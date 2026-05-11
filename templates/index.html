@@ -298,7 +298,15 @@
               <input id="keyword-input" type="text" placeholder="Keyword or phrase…" class="search-input flex-1" />
               <button id="keyword-search-btn" class="search-btn">Search</button>
             </div>
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+            <button id="keyword-opts-toggle" type="button"
+                    class="flex items-center gap-1 text-xs text-gray-500 hover:text-indigo-600 mb-2 transition-colors"
+                    aria-expanded="false" aria-controls="keyword-opts">
+              <svg class="w-3 h-3 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+              </svg>
+              <span>Options</span>
+            </button>
+            <div id="keyword-opts" class="hidden grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
               <div class="flex flex-col gap-1">
                 <label for="keyword-username-filter" class="filter-label">Author</label>
                 <input id="keyword-username-filter" type="text" placeholder="Optional username…" class="search-input" />
@@ -337,7 +345,15 @@
               <input id="semantic-input" type="text" placeholder="Describe what you're looking for…" class="search-input flex-1" />
               <button id="semantic-search-btn" class="search-btn">Search</button>
             </div>
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+            <button id="semantic-opts-toggle" type="button"
+                    class="flex items-center gap-1 text-xs text-gray-500 hover:text-indigo-600 mb-2 transition-colors"
+                    aria-expanded="false" aria-controls="semantic-opts">
+              <svg class="w-3 h-3 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+              </svg>
+              <span>Options</span>
+            </button>
+            <div id="semantic-opts" class="hidden grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
               <div class="flex flex-col gap-1">
                 <label for="semantic-username-filter" class="filter-label">Author</label>
                 <input id="semantic-username-filter" type="text" placeholder="Optional username…" class="search-input" />
@@ -385,7 +401,15 @@
               <input id="username-input" type="text" placeholder="Username or partial match…" class="search-input flex-1" />
               <button id="username-search-btn" class="search-btn">Search</button>
             </div>
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+            <button id="username-opts-toggle" type="button"
+                    class="flex items-center gap-1 text-xs text-gray-500 hover:text-indigo-600 mb-2 transition-colors"
+                    aria-expanded="false" aria-controls="username-opts">
+              <svg class="w-3 h-3 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+              </svg>
+              <span>Options</span>
+            </button>
+            <div id="username-opts" class="hidden grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
               <div class="flex flex-col gap-1">
                 <label for="username-date-from" class="filter-label">From Date</label>
                 <input id="username-date-from" type="date" class="search-input" />
@@ -933,31 +957,7 @@
         </div>
       </section>
 
-      <!-- Label management -->
-      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="labels-heading">
-        <h2 id="labels-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">Manage Labels</h2>
-        <p class="text-xs text-gray-600 mb-4">Create coding labels to categorize bookmarked chats. Labels are filterable on the Bookmarks page.</p>
-        <!-- Create form -->
-        <form id="label-create-form" class="flex items-center gap-2 mb-4 flex-wrap" aria-label="Create new label">
-          <label for="label-name-input" class="sr-only">Label name</label>
-          <input id="label-name-input" type="text" placeholder="Label name…" maxlength="40"
-                 class="flex-1 min-w-[10rem] border border-gray-400 rounded-lg px-3 py-1.5 text-sm text-gray-900
-                        focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600" />
-          <label for="label-color-input" class="sr-only">Label colour</label>
-          <input id="label-color-input" type="color" value="#6366f1"
-                 class="w-9 h-9 rounded-lg border border-gray-400 cursor-pointer p-0.5" title="Pick a colour" />
-          <button type="submit"
-                  class="px-4 py-1.5 text-sm font-semibold bg-indigo-700 text-white rounded-lg hover:bg-indigo-800 transition-colors shrink-0
-                         focus-visible:outline focus-visible:outline-3 focus-visible:outline-indigo-900 focus-visible:outline-offset-2">
-            Create
-          </button>
-          <p id="label-create-msg" class="text-xs text-red-700 hidden w-full" aria-live="polite" role="alert"></p>
-        </form>
-        <!-- Existing labels -->
-        <div id="labels-list" class="flex flex-wrap gap-2" aria-live="polite">
-          <p class="text-sm text-gray-600">Loading…</p>
-        </div>
-      </section>
+      
 
       <!-- Suno Team management (admin only) -->
       <section id="section-suno-team" class="bg-white rounded-2xl shadow p-5" aria-labelledby="suno-team-heading">

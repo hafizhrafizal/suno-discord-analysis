@@ -136,7 +136,7 @@ async function loadStats() {
 function renderScopeChips() {
   const container = document.getElementById('scope-chips');
   if (!allUploads.length) {
-    container.innerHTML = '<span class="text-xs text-gray-400 italic">No uploads yet€” go to the Data page to add data.</span>';
+    container.innerHTML = '<span class="text-xs text-gray-400 italic">No uploads yet go to the Data page to add data.</span>';
     return;
   }
   container.innerHTML = allUploads.map(u => {
@@ -258,10 +258,10 @@ function showApiKeyPopup(dismissable = false) {
   const errorEl   = document.getElementById('apikey-popup-error');
   const descEl    = document.getElementById('apikey-popup-desc');
 
-  // Key is always stored in browser localStorage only€” never on the server.
+  // Key is always stored in browser localStorage only never on the server.
   const stored = localStorage.getItem(STORAGE_KEY) || '';
   input.value = stored;
-  if (descEl) descEl.innerHTML = 'Stored in <strong>your browser\'s localStorage</strong> only€” never saved to the server or database. Sent to your own server per session to make OpenAI requests on your behalf.';
+  if (descEl) descEl.innerHTML = 'Stored in <strong>your browser\'s localStorage</strong> only never saved to the server or database. Sent to your own server per session to make OpenAI requests on your behalf.';
 
   errorEl.textContent = '';
   errorEl.classList.add('hidden');
@@ -294,7 +294,7 @@ function updateSettingsKeyStatus(apiKeySet) {
   if (!statusEl) return;
   const stored = localStorage.getItem(STORAGE_KEY);
   statusEl.textContent = stored
-    ? 'API key saved in your browser (localStorage)€” not stored on the server.'
+    ? 'API key saved in your browser (localStorage) not stored on the server.'
     : 'No API key set. Click "Change Key" to add one.';
 }
 
@@ -479,7 +479,7 @@ function uploadCard(u) {
     const labels = {openai:'OpenAI'};
     return has
       ? `<span class="embed-badge embed-badge-yes">${labels[mid] || mid}</span>`
-      : `<span class="embed-badge embed-badge-no">${labels[mid] || mid}€”</span>`;
+      : `<span class="embed-badge embed-badge-no">${labels[mid] || mid}</span>`;
   }).join('');
 
   const safeId = u.id.replace(/[^a-zA-Z0-9-]/g, '');
@@ -553,7 +553,7 @@ async function doReembed(uploadId, btn) {
   }
   function setError(msg) {
     if (fillEl) fillEl.classList.add('error');
-    if (labelEl) labelEl.textContent = 'Failed€” see details below';
+    if (labelEl) labelEl.textContent = 'Failed see details below';
     if (errEl)  { errEl.textContent = msg; errEl.classList.remove('hidden'); }
     if (progressEl) progressEl.classList.remove('hidden');
   }
@@ -583,12 +583,12 @@ async function doReembed(uploadId, btn) {
     if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
     jobId = d.job_id;
     if (d.already_running) {
-      setProgress(0, 'Job already running€” resuming progress display...');
+      setProgress(0, 'Job already running resuming progress display...');
     } else {
       const skip = d.skipped || 0;
       setProgress(0, skip > 0
         ? `Resuming: ${skip.toLocaleString()} already embedded, checking remainder...`
-        : `Job started€” ${(d.total_messages || 0).toLocaleString()} messages queued`);
+        : `Job started ${(d.total_messages || 0).toLocaleString()} messages queued`);
     }
   } catch (e) {
     setError(`Failed to start job:\n${e.message}`);
@@ -603,10 +603,10 @@ async function doReembed(uploadId, btn) {
     let job;
     try {
       const r = await fetch(`/api/jobs/${enc(jobId)}`);
-      if (!r.ok) return;   // transient€” keep polling
+      if (!r.ok) return;   // transient keep polling
       job = await r.json();
     } catch {
-      return;              // network blip€” keep polling
+      return;              // network blip keep polling
     }
 
     const embedded = job.embedded  || 0;
@@ -624,13 +624,13 @@ async function doReembed(uploadId, btn) {
       } else {
         const batchInfo = job.current_batch ? ` (batch ${job.current_batch})` : '';
         const skipNote  = skipped > 0 ? `· ${skipped.toLocaleString()} skipped` : '';
-        setProgress(pct, `Embedding... ${pct}%€” ${embedded.toLocaleString()}/${total.toLocaleString()} new messages${skipNote}${batchInfo}`);
+        setProgress(pct, `Embedding... ${pct}% ${embedded.toLocaleString()}/${total.toLocaleString()} new messages${skipNote}${batchInfo}`);
       }
 
     } else if (job.status === 'completed') {
       const skipNote = skipped > 0 ? `, ${skipped.toLocaleString()} already embedded` : '';
-      const errNote  = job.batch_errors.length > 0 ? ` (${job.batch_errors.length} batch error(s)€” see below)` : '';
-      setProgress(100, `Done€” ${embedded.toLocaleString()} embedded${skipNote}${errNote}`);
+      const errNote  = job.batch_errors.length > 0 ? ` (${job.batch_errors.length} batch error(s) see below)` : '';
+      setProgress(100, `Done ${embedded.toLocaleString()} embedded${skipNote}${errNote}`);
 
       if (job.batch_errors.length > 0) {
         const detail = job.batch_errors.map(be =>
@@ -712,7 +712,7 @@ document.getElementById('confirm-ok').onclick = async () => {
     try {
       d = await res.json();
     } catch {
-      throw new Error(`Server returned a non-JSON response (HTTP ${res.status}). The operation may have timed out€” check server logs.`);
+      throw new Error(`Server returned a non-JSON response (HTTP ${res.status}). The operation may have timed out check server logs.`);
     }
     if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
 
@@ -763,7 +763,7 @@ function applyAdminUI() {
   const adminMenuItem = document.getElementById('user-menu-admin');
   if (adminMenuItem) adminMenuItem.classList.toggle('hidden', !currentUserIsAdmin);
 
-  // Account section€” visible in multi mode only
+  // Account section visible in multi mode only
   const accountSection = document.getElementById('section-account');
   if (accountSection && APP_MODE === 'multi') {
     accountSection.classList.remove('hidden');
@@ -863,7 +863,7 @@ function _renderAdminTable(users) {
             ? '<span class="text-[10px] text-gray-400 ml-1">(you)</span>'
             : '';
           const actions = isSelf
-            ? '<span class="text-xs text-gray-400 italic">â€”</span>'
+            ? '<span class="text-xs text-gray-400 italic">â</span>'
             : `<div class="flex gap-2 justify-end flex-wrap">
                  <button class="admin-toggle-btn action-btn-primary text-xs py-1 px-2.5"
                          data-id="${u.id}" data-admin="${u.is_admin ? 1 : 0}">
@@ -932,6 +932,7 @@ document.getElementById('admin-refresh-btn')?.addEventListener('click', loadAdmi
 async function renderLabelManager() {
   await loadAllCodes();   // refreshes _allCodes + filter chips if bookmark page was open
   const list = document.getElementById('labels-list');
+  if (!list) return;
   if (!_allCodes.length) {
     list.innerHTML = '<p class="text-sm text-gray-400">No codes yet. Create one above.</p>';
     return;
@@ -947,7 +948,7 @@ async function renderLabelManager() {
   }).join('');
 }
 
-document.getElementById('labels-list').addEventListener('click', async e => {
+document.getElementById('labels-list')?.addEventListener('click', async e => {
   const btn = e.target.closest('.label-delete-btn');
   if (!btn) return;
   const id   = parseInt(btn.dataset.codeId);
@@ -963,7 +964,7 @@ document.getElementById('labels-list').addEventListener('click', async e => {
   renderBmCodeFilterChips();
 });
 
-document.getElementById('label-create-form').addEventListener('submit', async e => {
+document.getElementById('label-create-form')?.addEventListener('submit', async e => {
   e.preventDefault();
   const nameInput  = document.getElementById('label-name-input');
   const colorInput = document.getElementById('label-color-input');
@@ -1098,13 +1099,37 @@ let keywordMatchType = 'fuzzy';
 
 [
   ['username-input',           'username'],
+  ['username-date-from',       'username'],
+  ['username-date-to',         'username'],
+  ['username-limit',           'username'],
+  ['username-min-words',       'username'],
   ['keyword-input',            'keyword'],
   ['keyword-username-filter',  'keyword'],
+  ['keyword-date-from',        'keyword'],
+  ['keyword-date-to',          'keyword'],
+  ['keyword-limit',            'keyword'],
+  ['keyword-min-words',        'keyword'],
   ['semantic-input',           'semantic'],
   ['semantic-username-filter', 'semantic'],
+  ['semantic-date-from',       'semantic'],
+  ['semantic-date-to',         'semantic'],
+  ['semantic-n',               'semantic'],
+  ['semantic-min-words',       'semantic'],
 ].forEach(([id, type]) => {
-  document.getElementById(id).addEventListener('keydown', e => {
+  document.getElementById(id)?.addEventListener('keydown', e => {
     if (e.key === 'Enter') doSearch(type);
+  });
+});
+
+// Collapsible options panels
+['keyword', 'username', 'semantic'].forEach(type => {
+  const toggle = document.getElementById(`${type}-opts-toggle`);
+  const opts   = document.getElementById(`${type}-opts`);
+  if (!toggle || !opts) return;
+  toggle.addEventListener('click', () => {
+    const nowHidden = opts.classList.toggle('hidden');
+    toggle.setAttribute('aria-expanded', String(!nowHidden));
+    toggle.querySelector('svg').style.transform = nowHidden ? '' : 'rotate(180deg)';
   });
 });
 
@@ -1224,6 +1249,9 @@ async function doSearch(type) {
 
   currentSearchType = type;
   currentKeyword    = keyword;
+  currentResults    = [];
+  document.getElementById('results-section').classList.add('hidden');
+  document.getElementById('results-container').innerHTML = '';
   setBtnLoading(type, true);
 
   try {
@@ -1244,7 +1272,7 @@ function _sortSemanticResults(results) {
   } else if (mode === 'date_desc') {
     copy.sort((a, b) => new Date(b.date) - new Date(a.date));
   } else {
-    // 'score'€” restore original API order (highest similarity first)
+    // 'score' restore original API order (highest similarity first)
     copy.sort((a, b) => (b.similarity_score ?? 0) - (a.similarity_score ?? 0));
   }
   return copy;
@@ -1267,6 +1295,63 @@ function renderError(msg) {
   showErrorPopup(msg);
 }
 
+// -- Scroll pagination state -----------------------------------------------
+const PAGE_SIZE   = 50;
+let _pageItems    = [];   // full list being paged
+let _pageOffset   = 0;    // how many have been rendered
+let _pageObserver = null; // IntersectionObserver
+
+function _stopPageObserver() {
+  if (_pageObserver) { _pageObserver.disconnect(); _pageObserver = null; }
+  const s = document.getElementById('scroll-sentinel');
+  if (s) s.remove();
+}
+
+function _appendResultCards(msgs) {
+  const container = document.getElementById('results-container');
+  const sentinel  = document.getElementById('scroll-sentinel');
+  if (sentinel) sentinel.remove();
+  const temp = document.createElement('div');
+  temp.innerHTML = msgs.map(m => msgCard(m)).join('');
+  temp.querySelectorAll('.ctx-toggle').forEach(btn => {
+    btn.addEventListener('click', () => toggleContext(parseInt(btn.dataset.id), btn));
+  });
+  while (temp.firstChild) container.appendChild(temp.firstChild);
+}
+
+function _renderNextPage() {
+  const page = _pageItems.slice(_pageOffset, _pageOffset + PAGE_SIZE);
+  if (!page.length) { _stopPageObserver(); return; }
+  // Disconnect old observer before appending — do NOT call _stopPageObserver()
+  // here as that would also remove the sentinel we're about to create.
+  if (_pageObserver) { _pageObserver.disconnect(); _pageObserver = null; }
+  _appendResultCards(page);  // removes previous sentinel, appends new cards
+  _pageOffset += page.length;
+  if (_pageOffset < _pageItems.length) {
+    const sentinel = document.createElement('div');
+    sentinel.id = 'scroll-sentinel';
+    sentinel.className = 'py-3 text-center text-xs text-gray-400';
+    sentinel.textContent = `Showing ${_pageOffset.toLocaleString()} of ${_pageItems.length.toLocaleString()}…`;
+    document.getElementById('results-container').appendChild(sentinel);
+    _pageObserver = new IntersectionObserver(
+      entries => { if (entries[0].isIntersecting) _renderNextPage(); },
+      { rootMargin: '200px' }
+    );
+    _pageObserver.observe(sentinel);
+  } else {
+    _stopPageObserver();
+  }
+}
+
+function _startPaging(items) {
+  _stopPageObserver();
+  _pageItems  = items;
+  _pageOffset = 0;
+  document.getElementById('results-container').innerHTML = '';
+  _renderNextPage();
+}
+// --------------------------------------------------------------------------
+
 function renderResults(results) {
   const sec = document.getElementById('results-section');
   sec.classList.remove('hidden');
@@ -1284,13 +1369,11 @@ function renderResults(results) {
   const container = document.getElementById('results-container');
   sec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   if (!results.length) {
+    _stopPageObserver();
     container.innerHTML = '<p class="text-center text-gray-400 py-10 text-sm">No results found.</p>';
     return;
   }
-  container.innerHTML = results.map(msg => msgCard(msg)).join('');
-  container.querySelectorAll('.ctx-toggle').forEach(btn => {
-    btn.addEventListener('click', () => toggleContext(parseInt(btn.dataset.id), btn));
-  });
+  _startPaging(results);
 
   // Trend chart + summarize panel
   renderTrendChart(currentResults, _trendBucket);
@@ -1448,7 +1531,7 @@ function renderTrendChart(results, bucket) {
               if (!r) return items[0].label;
               return r.from === r.to ? r.from : `${r.from} → ${r.to}`;
             },
-            label: item => `${item.raw} messages€” click to filter`,
+            label: item => `${item.raw} messages click to filter`,
           },
         },
       },
@@ -1816,7 +1899,7 @@ document.getElementById('sr-retrieval-mode').addEventListener('change', () => {
   const mode = document.getElementById('sr-retrieval-mode').value;
   hint.textContent = mode === 'cluster'
     ? 'Deduplicates and samples representative messages across semantic clusters.'
-    : 'All messages passed directly to the LLM€” no clustering or deduplication.';
+    : 'All messages passed directly to the LLM no clustering or deduplication.';
 });
 document.getElementById('sr-btn').addEventListener('click', doSummarizeResults);
 document.getElementById('sr-log-toggle').addEventListener('click', () => {
@@ -1901,23 +1984,21 @@ function _attachCtxListeners(container) {
 
 function _renderFilteredCards(msgs, total) {
   const countLabel = document.getElementById('results-filter-count');
-  const container  = document.getElementById('results-container');
   countLabel.textContent = `${msgs.length} of ${total}`;
   countLabel.classList.remove('hidden');
   if (!msgs.length) {
-    container.innerHTML = '<p class="text-center text-gray-400 py-10 text-sm">No results match the filter.</p>';
+    _stopPageObserver();
+    document.getElementById('results-container').innerHTML =
+      '<p class="text-center text-gray-400 py-10 text-sm">No results match the filter.</p>';
     return;
   }
-  container.innerHTML = msgs.map(m => msgCard(m)).join('');
-  _attachCtxListeners(container);
+  _startPaging(msgs);
 }
 
 function _resetToAllResults() {
   activeFilterTokens = [];
   document.getElementById('results-filter-count').classList.add('hidden');
-  const container = document.getElementById('results-container');
-  container.innerHTML = currentResults.map(m => msgCard(m)).join('');
-  _attachCtxListeners(container);
+  _startPaging(currentResults);
 }
 
 /* -- Exact filter (instant, client-side) -- */
@@ -1951,7 +2032,7 @@ function _applyExactFilter(term) {
       // All words must be present as substrings (AND gate)
       if (!subRegexes.every(rx => rx.test(text))) return { m, s: 0 };
 
-      // Phrase match€” highest score
+      // Phrase match highest score
       if (phraseRegex) {
         if (phraseRegex.test(user))    return { m, s: 1500 };
         if (phraseRegex.test(content)) return { m, s: 1000 };
@@ -1979,7 +2060,7 @@ function _applyAnyWordFilter(term) {
   // Highlight all individual words
   activeFilterTokens = words;
 
-  // Substring match (OR logic)€” partial words work while typing
+  // Substring match (OR logic) partial words work while typing
   const tokenRegexes = words.map(w => new RegExp(_escapeRegex(w), 'i'));
 
   const matched = currentResults
@@ -2043,8 +2124,7 @@ async function _applySemanticFilter(term) {
       </p>`;
       return;
     }
-    container.innerHTML = hits.map(m => msgCard(m)).join('');
-    _attachCtxListeners(container);
+    _startPaging(hits);
   } catch (e) {
     showErrorPopup(`Semantic filter error: ${e.message}`);
     _resetToAllResults();
@@ -2172,7 +2252,7 @@ async function toggleContext(id, btn) {
     ctxEl.innerHTML = `
       <div class="border-t bg-slate-50 p-4 space-y-2">
         <p class="text-xs text-gray-500 font-medium mb-3">
-          Context€” ${msgs.length} messages (${before} before &bull; ${after} after)
+          Context ${msgs.length} messages (${before} before &bull; ${after} after)
         </p>
         ${msgs.map(m => ctxMsg(m)).join('')}
       </div>`;
@@ -2286,7 +2366,7 @@ function _sortBookmarks(bms) {
   } else if (mode === 'username') {
     sorted.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
   } else {
-    // 'added'€” sort by bookmark_id ascending (insertion order)
+    // 'added' sort by bookmark_id ascending (insertion order)
     sorted.sort((a, b) => a.bookmark_id - b.bookmark_id);
   }
   return sorted;
@@ -2589,7 +2669,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
       });
       const newLabel = await labelRes.json();
       if (!labelRes.ok) {
-        // Label may already exist€” find it in _allCodes
+        // Label may already exist find it in _allCodes
         const existing = _allCodes.find(l => l.name.toLowerCase() === name.toLowerCase());
         if (!existing) { createBtn.disabled = false; createBtn.textContent = 'Add'; return; }
         newLabel.id = existing.id; newLabel.name = existing.name; newLabel.color = existing.color;
@@ -2641,7 +2721,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     ctxEl.innerHTML = `
       <div class="border-t bg-slate-50 p-4 space-y-2">
         <p class="text-xs text-gray-500 font-medium mb-3">
-          Context€” ${msgs.length} messages (${before} before &bull; ${after} after)
+          Context ${msgs.length} messages (${before} before &bull; ${after} after)
         </p>
         ${msgs.map(m => ctxMsg(m)).join('')}
       </div>`;
@@ -3046,6 +3126,15 @@ async function searchUsersInRange() {
   const suno     = document.getElementById('users-suno').value;
   const minWords = parseInt(document.getElementById('users-min-words').value, 10) || 0;
 
+  _usersData    = [];
+  currentResults = [];
+  document.getElementById('users-results').classList.add('hidden');
+  document.getElementById('results-section').classList.add('hidden');
+  document.getElementById('results-container').innerHTML = '';
+  document.getElementById('sr-section').classList.add('hidden');
+  const _trendSec = document.getElementById('trend-section');
+  if (_trendSec) _trendSec.classList.add('hidden');
+  if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
   btn.disabled    = true;
   btn.textContent = 'Searching...';
 
@@ -3132,9 +3221,9 @@ function _sortAndRenderUsers() {
     const totalWeeks = u.total_weeks_in_range;
     const weeksDisp  = totalWeeks != null
       ? `${u.weeks_with_messages}<span class="text-gray-400">/${totalWeeks}</span>`
-      : String(u.weeks_with_messages ?? 'â€”');
-    const pctDisp    = u.pct_weeks_active != null ? `${u.pct_weeks_active}%` : 'â€”';
-    const avgWords   = u.avg_word_count != null ? Number(u.avg_word_count).toFixed(1) : 'â€”';
+      : String(u.weeks_with_messages ?? 'â');
+    const pctDisp    = u.pct_weeks_active != null ? `${u.pct_weeks_active}%` : 'â';
+    const avgWords   = u.avg_word_count != null ? Number(u.avg_word_count).toFixed(1) : 'â';
 
     const teamBadge = truthy(u.is_suno_team)
       ? `<span class="ml-1.5 text-[0.6rem] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-semibold leading-none">Team</span>`
@@ -3148,8 +3237,8 @@ function _sortAndRenderUsers() {
                 data-username="${esc(u.username)}">${esc(u.username)}</button>${teamBadge}
       </td>
       <td class="users-td text-right tabular-nums">${(u.total_messages || 0).toLocaleString()}</td>
-      <td class="users-td">${u.first_message_date || 'â€”'}</td>
-      <td class="users-td">${u.last_message_date || 'â€”'}</td>
+      <td class="users-td">${u.first_message_date || 'â'}</td>
+      <td class="users-td">${u.last_message_date || 'â'}</td>
       <td class="users-td text-right tabular-nums">${avgWords}</td>
       <td class="users-td text-right tabular-nums">${weeksDisp}</td>
       <td class="users-td text-right tabular-nums">${pctDisp}</td>
@@ -3204,7 +3293,7 @@ document.getElementById('users-tbody').addEventListener('click', e => {
   openUserProfile(username, row || null);
 });
 
-// Live filters€” month pickers fire 'change'; number/text inputs fire 'input'
+// Live filters month pickers fire 'change'; number/text inputs fire 'input'
 ['users-month-from', 'users-month-to'].forEach(id => {
   document.getElementById(id).addEventListener('change', _sortAndRenderUsers);
 });
@@ -3249,15 +3338,15 @@ async function openUserProfile(username, stats) {
     const totalWeeks = stats.total_weeks_in_range;
     const weeksStr = totalWeeks != null
       ? `${stats.weeks_with_messages} / ${totalWeeks}`
-      : String(stats.weeks_with_messages ?? 'â€”');
-    const pctStr = stats.pct_weeks_active != null ? `${stats.pct_weeks_active}%` : 'â€”';
-    const avgStr = stats.avg_word_count != null ? Number(stats.avg_word_count).toFixed(1) : 'â€”';
+      : String(stats.weeks_with_messages ?? 'â');
+    const pctStr = stats.pct_weeks_active != null ? `${stats.pct_weeks_active}%` : '—';
+    const avgStr = stats.avg_word_count != null ? Number(stats.avg_word_count).toFixed(1) : '—';
 
     document.getElementById('upo-stats').innerHTML =
       `<div class="flex flex-wrap">` +
       _statPill('Total Messages', (stats.total_messages || 0).toLocaleString()) +
-      _statPill('First Message',  stats.first_message_date || 'â€”') +
-      _statPill('Last Message',   stats.last_message_date  || 'â€”') +
+      _statPill('First Message',  stats.first_message_date || 'â') +
+      _statPill('Last Message',   stats.last_message_date  || 'â') +
       _statPill('Avg Words',      avgStr) +
       _statPill('Weeks Active',   weeksStr) +
       _statPill('% Weeks Active', pctStr) +
@@ -3392,7 +3481,7 @@ function _upoSumLog(step, label, msg) {
   const div = document.createElement('div');
   div.className = 'text-xs text-gray-600 flex items-start gap-1.5 py-0.5';
   div.innerHTML = `<span class="shrink-0">${icons[step] || 'â€¢'}</span>
-    <span><strong>${esc(label)}</strong>€” ${esc(msg)}</span>`;
+    <span><strong>${esc(label)}</strong> ${esc(msg)}</span>`;
   document.getElementById('upo-sum-log').appendChild(div);
 }
 
@@ -3432,9 +3521,9 @@ async function doUpoSummarize() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ msg_ids: msgIds, before, after }),
     });
-    _upoSumLog('context', 'Context fetch', `Done€” ${Object.keys(contextMap).length} messages enriched`);
+    _upoSumLog('context', 'Context fetch', `Done ${Object.keys(contextMap).length} messages enriched`);
   } catch (e) {
-    _upoSumLog('fallback', 'Context fetch failed', `${e.message}€” proceeding without context`);
+    _upoSumLog('fallback', 'Context fetch failed', `${e.message} proceeding without context`);
   }
 
   // Build formatted blocks: context before /˜… user message / context after
@@ -3454,7 +3543,7 @@ async function doUpoSummarize() {
 
   const conv   = blocks.join('\n\n---\n\n');
   const n      = msgs.length;
-  const header = `USER PROFILE ANALYSIS€” ${_upoUsername} (${n} messages with context)`;
+  const header = `USER PROFILE ANALYSIS ${_upoUsername} (${n} messages with context)`;
 
   const defaultPrompt = `Each block below contains one message from **${_upoUsername}** (marked˜…) with surrounding conversation context. Concisely identify persona, topics, attitudes, actions, narratives, and identified changes in attitude and stance if present. Use tight bullet points. No padding, no repetition across sections.`;
 
@@ -3775,7 +3864,7 @@ if (APP_MODE === 'multi' && CURRENT_USER) {
         await _sendKeyToServer(storedKey);
         loadStats();
       } catch (_) {
-        // Stored key is invalid/rejected€” clear it and prompt again
+        // Stored key is invalid/rejected clear it and prompt again
         localStorage.removeItem(STORAGE_KEY);
         showApiKeyPopup(false);
       }
