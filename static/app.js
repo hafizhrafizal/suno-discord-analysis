@@ -1,17 +1,15 @@
-/* ══════════════════════════════════════════════════════════════════════════
-   MARKED CONFIGURATION
-══════════════════════════════════════════════════════════════════════════ */
+// -- MARKED CONFIGURATION --------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
   if (typeof marked !== 'undefined') {
     marked.use({ gfm: true, breaks: true });
   }
 });
 
-/* ══════════════════════════════════════════════════════════════════════════
+/*
    FETCH HELPER
    Wraps fetch() so non-JSON responses (proxy 502/504, nginx error pages,
    HTTP→HTTPS redirects) produce a clear error instead of "Unexpected token '<'".
-══════════════════════════════════════════════════════════════════════════ */
+ */
 async function apiFetch(url, options = {}) {
   const r = await fetch(url, options);
   const ct = r.headers.get('content-type') || '';
@@ -34,9 +32,7 @@ async function apiFetch(url, options = {}) {
   return r.json();
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   ERROR POPUP
-══════════════════════════════════════════════════════════════════════════ */
+// -- ERROR POPUP -----------------------------------------------------------
 function showErrorPopup(msg) {
   document.getElementById('error-popup-msg').textContent = msg;
   const popup = document.getElementById('error-popup');
@@ -52,16 +48,12 @@ function _errorPopupEscHandler(e) {
   if (e.key === 'Escape') dismissErrorPopup();
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   APP MODE
-══════════════════════════════════════════════════════════════════════════ */
+// -- APP MODE --------------------------------------------------------------
 const APP_MODE     = document.querySelector('meta[name="app-mode"]')?.content    || 'single';
 const CURRENT_USER = document.querySelector('meta[name="current-user"]')?.content || '';
 let   currentUserIsAdmin = APP_MODE !== 'multi';  // single mode = always admin
 
-/* ══════════════════════════════════════════════════════════════════════════
-   STATE
-══════════════════════════════════════════════════════════════════════════ */
+// -- STATE -----------------------------------------------------------------
 let currentResults   = [];
 let currentSearchType = '';
 let currentKeyword   = '';
@@ -74,12 +66,10 @@ let allUploads       = [];           // [{id, filename, row_count, upload_time, 
 let selectedUploadIds = new Set();   // empty = search all
 let bookmarkedIds    = new Set();    // msg ids that are bookmarked
 let activeFilterTokens = [];         // tokens to highlight in filter results (exact mode)
-let _allLabels       = [];           // all defined labels [{id, name, color}]
-let _bmLabelFilter   = new Set();    // label IDs selected as bookmark filter
+let _allCodes       = [];           // all defined codes [{id, name, color, description, category_id}]
+let _bmCodeFilter   = new Set();    // code IDs selected as bookmark filter
 
-/* ══════════════════════════════════════════════════════════════════════════
-   USERNAME COLOUR PALETTE
-══════════════════════════════════════════════════════════════════════════ */
+// -- USERNAME COLOUR PALETTE -----------------------------------------------
 const _usernameColors = {};
 let _colorIdx = 0;
 const PALETTE = [
@@ -93,9 +83,7 @@ function usernameStyle(u) {
   return `background:${bg};color:${text}`;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   UTILITIES
-══════════════════════════════════════════════════════════════════════════ */
+// -- UTILITIES -------------------------------------------------------------
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
 function highlight(text, kw) {
   if (!kw || !text) return esc(text);
@@ -115,18 +103,17 @@ function truthy(v) { return v === 'True' || v === 'true' || v === '1' || v === 1
 function hasContent(v) { return v && v !== '' && v !== 'nan' && v !== '[]' && v !== 'None'; }
 function enc(s) { return encodeURIComponent(s); }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   PAGE NAVIGATION
-══════════════════════════════════════════════════════════════════════════ */
+// -- PAGE NAVIGATION -------------------------------------------------------
 function navigateTo(page) {
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('nav-active', b.dataset.page === page));
   document.getElementById('page-search').classList.toggle('hidden', page !== 'search');
   document.getElementById('page-settings').classList.toggle('hidden', page !== 'settings');
-  document.getElementById('page-chat').classList.toggle('hidden', page !== 'chat');
   document.getElementById('page-bookmarks').classList.toggle('hidden', page !== 'bookmarks');
+  document.getElementById('page-coding').classList.toggle('hidden', page !== 'coding');
   document.getElementById('page-admin')?.classList.toggle('hidden', page !== 'admin');
   if (page === 'settings')  loadSettingsPage();
   if (page === 'bookmarks') loadBookmarksPage();
+  if (page === 'coding')    loadCodingPage();
   if (page === 'admin')     loadAdminPage();
 }
 
@@ -134,9 +121,7 @@ document.querySelectorAll('.nav-tab').forEach(btn => {
   btn.addEventListener('click', () => navigateTo(btn.dataset.page));
 });
 
-/* ══════════════════════════════════════════════════════════════════════════
-   STATS
-══════════════════════════════════════════════════════════════════════════ */
+// -- STATS -----------------------------------------------------------------
 async function loadStats() {
   try {
     const d = await apiFetch('/api/stats');
@@ -145,17 +130,15 @@ async function loadStats() {
       `${d.total_uploads} uploads &bull; ` +
       `${d.embedded_messages.toLocaleString()} embedded &bull; ` +
       `<span style="color:#c4b5fd">${esc(d.current_model_label)}</span>` +
-      (d.api_key_set ? ' &bull; <span style="color:#86efac">API key ✓</span>' : '');
+      (d.api_key_set ? ' &bull; <span style="color:#86efac">API key ...</span>' : '');
   } catch (_) {}
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   SCOPE SELECTOR (Search page — which uploads to search)
-══════════════════════════════════════════════════════════════════════════ */
+// -- SCOPE SELECTOR (Search page - which uploads to search) ----------------
 function renderScopeChips() {
   const container = document.getElementById('scope-chips');
   if (!allUploads.length) {
-    container.innerHTML = '<span class="text-xs text-gray-400 italic">No uploads yet — go to the Data page to add data.</span>';
+    container.innerHTML = '<span class="text-xs text-gray-400 italic">No uploads yet€” go to the Data page to add data.</span>';
     return;
   }
   container.innerHTML = allUploads.map(u => {
@@ -203,9 +186,7 @@ function getScopeParam() {
   return [...selectedUploadIds].join(',');
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   SETTINGS PAGE
-══════════════════════════════════════════════════════════════════════════ */
+// -- SETTINGS PAGE ---------------------------------------------------------
 async function loadModelOptions() {
   try {
     const models = await apiFetch('/api/embedding-models');
@@ -229,7 +210,7 @@ async function loadModelOptions() {
               ${m.active ? '<span class="text-xs px-1.5 py-0.5 rounded font-medium" style="background:#ede9fe;color:#5b21b6">active</span>' : ''}
             </div>
             <p class="text-xs text-gray-500 mt-0.5">${esc(m.description)}</p>
-            <p class="text-xs text-gray-400">${m.dims}-dim · ${m.embedded_count.toLocaleString()} msgs embedded</p>
+            <p class="text-xs text-gray-400">${m.dims}-dim· ${m.embedded_count.toLocaleString()} msgs embedded</p>
             ${availabilityNote}
           </div>
         </div>
@@ -249,7 +230,7 @@ async function loadModelOptions() {
           const cnt     = models.find(m => m.id === radio.value)?.embedded_count || 0;
           const msg = document.getElementById('model-msg');
           msg.textContent = `Switched to ${d.label}.` +
-            (isLocal && cnt === 0 ? ' Weights will download on first use (~0.4–1.3 GB).' : '');
+            (isLocal && cnt === 0 ? ' Weights will download on first use (~0.4â€“1.3 GB).' : '');
           msg.classList.remove('hidden');
           loadStats();
           loadModelOptions();
@@ -259,9 +240,7 @@ async function loadModelOptions() {
   } catch (_) {}
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   API KEY POPUP
-══════════════════════════════════════════════════════════════════════════ */
+// -- API KEY POPUP ---------------------------------------------------------
 const STORAGE_KEY = 'openai_api_key';
 
 async function _sendKeyToServer(key) {
@@ -281,10 +260,10 @@ function showApiKeyPopup(dismissable = false) {
   const errorEl   = document.getElementById('apikey-popup-error');
   const descEl    = document.getElementById('apikey-popup-desc');
 
-  // Key is always stored in browser localStorage only — never on the server.
+  // Key is always stored in browser localStorage only€” never on the server.
   const stored = localStorage.getItem(STORAGE_KEY) || '';
   input.value = stored;
-  if (descEl) descEl.innerHTML = 'Stored in <strong>your browser\'s localStorage</strong> only — never saved to the server or database. Sent to your own server per session to make OpenAI requests on your behalf.';
+  if (descEl) descEl.innerHTML = 'Stored in <strong>your browser\'s localStorage</strong> only€” never saved to the server or database. Sent to your own server per session to make OpenAI requests on your behalf.';
 
   errorEl.textContent = '';
   errorEl.classList.add('hidden');
@@ -317,7 +296,7 @@ function updateSettingsKeyStatus(apiKeySet) {
   if (!statusEl) return;
   const stored = localStorage.getItem(STORAGE_KEY);
   statusEl.textContent = stored
-    ? 'API key saved in your browser (localStorage) — not stored on the server.'
+    ? 'API key saved in your browser (localStorage)€” not stored on the server.'
     : 'No API key set. Click "Change Key" to add one.';
 }
 
@@ -336,7 +315,7 @@ document.getElementById('apikey-popup-save').onclick = async () => {
   }
 
   saveBtn.disabled = true;
-  saveBtn.textContent = 'Saving…';
+  saveBtn.textContent = 'Saving...';
   errorEl.textContent = '';
   errorEl.classList.add('hidden');
 
@@ -366,18 +345,16 @@ document.getElementById('apikey-popup-input').addEventListener('keydown', e => {
 // "Change Key" button on settings page
 document.getElementById('settings-change-key').onclick = () => showApiKeyPopup(true);
 
-/* ══════════════════════════════════════════════════════════════════════════
-   DATA PAGE
-══════════════════════════════════════════════════════════════════════════ */
+// -- DATA PAGE -------------------------------------------------------------
 
-/* ── Upload new CSV ── */
+/* -- Upload new CSV -- */
 document.getElementById('upload-btn').onclick = async () => {
   const input = document.getElementById('csv-file');
   if (!input.files.length) { setUploadStatus('Please select a CSV file.', 'error'); return; }
   const btn = document.getElementById('upload-btn');
-  btn.disabled = true; btn.textContent = 'Starting…';
+  btn.disabled = true; btn.textContent = 'Starting...';
   hideUploadProgress();
-  showUploadProgress(0, 'Starting upload…');
+  showUploadProgress(0, 'Starting upload...');
   const form = new FormData();
   form.append('file', input.files[0]);
   try {
@@ -465,7 +442,7 @@ function hideUploadProgress() {
   labelEl.textContent = '';
 }
 
-/* ── Uploads table ── */
+/* -- Uploads table -- */
 async function refreshUploads() {
   try {
     allUploads = await apiFetch('/api/uploads');
@@ -504,7 +481,7 @@ function uploadCard(u) {
     const labels = {openai:'OpenAI'};
     return has
       ? `<span class="embed-badge embed-badge-yes">${labels[mid] || mid}</span>`
-      : `<span class="embed-badge embed-badge-no">${labels[mid] || mid} —</span>`;
+      : `<span class="embed-badge embed-badge-no">${labels[mid] || mid}€”</span>`;
   }).join('');
 
   const safeId = u.id.replace(/[^a-zA-Z0-9-]/g, '');
@@ -547,7 +524,7 @@ function uploadCard(u) {
         <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div id="reembed-fill-${safeId}" class="progress-fill"></div>
         </div>
-        <p id="reembed-label-${safeId}" class="mt-1 text-xs text-gray-600" aria-live="polite">Starting…</p>
+        <p id="reembed-label-${safeId}" class="mt-1 text-xs text-gray-600" aria-live="polite">Starting...</p>
       </div>
     </div>`;
 }
@@ -578,7 +555,7 @@ async function doReembed(uploadId, btn) {
   }
   function setError(msg) {
     if (fillEl) fillEl.classList.add('error');
-    if (labelEl) labelEl.textContent = 'Failed — see details below';
+    if (labelEl) labelEl.textContent = 'Failed€” see details below';
     if (errEl)  { errEl.textContent = msg; errEl.classList.remove('hidden'); }
     if (progressEl) progressEl.classList.remove('hidden');
   }
@@ -593,11 +570,11 @@ async function doReembed(uploadId, btn) {
   if (_reembedTimers[uploadId]) return;
 
   btn.disabled    = true;
-  btn.textContent = 'Starting…';
+  btn.textContent = 'Starting...';
   if (errEl) errEl.classList.add('hidden');
-  setProgress(0, 'Submitting job…');
+  setProgress(0, 'Submitting job...');
 
-  // ── 1. POST to start the background job ──────────────────────────────────
+  // -- 1. POST to start the background job ----------------------------------
   let jobId;
   try {
     const res = await fetch(`/api/uploads/${enc(uploadId)}/reembed`, { method: 'POST' });
@@ -608,12 +585,12 @@ async function doReembed(uploadId, btn) {
     if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
     jobId = d.job_id;
     if (d.already_running) {
-      setProgress(0, 'Job already running — resuming progress display…');
+      setProgress(0, 'Job already running€” resuming progress display...');
     } else {
       const skip = d.skipped || 0;
       setProgress(0, skip > 0
-        ? `Resuming: ${skip.toLocaleString()} already embedded, checking remainder…`
-        : `Job started — ${(d.total_messages || 0).toLocaleString()} messages queued`);
+        ? `Resuming: ${skip.toLocaleString()} already embedded, checking remainder...`
+        : `Job started€” ${(d.total_messages || 0).toLocaleString()} messages queued`);
     }
   } catch (e) {
     setError(`Failed to start job:\n${e.message}`);
@@ -621,17 +598,17 @@ async function doReembed(uploadId, btn) {
     return;
   }
 
-  // ── 2. Poll GET /api/jobs/{jobId} every 1.5 s ────────────────────────────
-  btn.textContent = 'Embedding…';
+  // -- 2. Poll GET /api/jobs/{jobId} every 1.5 s ----------------------------
+  btn.textContent = 'Embedding...';
 
   _reembedTimers[uploadId] = setInterval(async () => {
     let job;
     try {
       const r = await fetch(`/api/jobs/${enc(jobId)}`);
-      if (!r.ok) return;   // transient — keep polling
+      if (!r.ok) return;   // transient€” keep polling
       job = await r.json();
     } catch {
-      return;              // network blip — keep polling
+      return;              // network blip€” keep polling
     }
 
     const embedded = job.embedded  || 0;
@@ -643,24 +620,24 @@ async function doReembed(uploadId, btn) {
       if (job.phase === 'checking') {
         // During the skip-check phase: show how many are already embedded (grows over time)
         const checkLabel = skipped > 0
-          ? `Checking… ${skipped.toLocaleString()} already embedded so far`
-          : 'Checking which messages are already embedded…';
+          ? `Checking... ${skipped.toLocaleString()} already embedded so far`
+          : 'Checking which messages are already embedded...';
         setProgress(0, checkLabel);
       } else {
         const batchInfo = job.current_batch ? ` (batch ${job.current_batch})` : '';
-        const skipNote  = skipped > 0 ? ` · ${skipped.toLocaleString()} skipped` : '';
-        setProgress(pct, `Embedding… ${pct}% — ${embedded.toLocaleString()}/${total.toLocaleString()} new messages${skipNote}${batchInfo}`);
+        const skipNote  = skipped > 0 ? `· ${skipped.toLocaleString()} skipped` : '';
+        setProgress(pct, `Embedding... ${pct}%€” ${embedded.toLocaleString()}/${total.toLocaleString()} new messages${skipNote}${batchInfo}`);
       }
 
     } else if (job.status === 'completed') {
       const skipNote = skipped > 0 ? `, ${skipped.toLocaleString()} already embedded` : '';
-      const errNote  = job.batch_errors.length > 0 ? ` (${job.batch_errors.length} batch error(s) — see below)` : '';
-      setProgress(100, `Done — ${embedded.toLocaleString()} embedded${skipNote}${errNote}`);
+      const errNote  = job.batch_errors.length > 0 ? ` (${job.batch_errors.length} batch error(s)€” see below)` : '';
+      setProgress(100, `Done€” ${embedded.toLocaleString()} embedded${skipNote}${errNote}`);
 
       if (job.batch_errors.length > 0) {
         const detail = job.batch_errors.map(be =>
           `Batch ${be.batch}:\n${be.error}\n\n${be.traceback}`
-        ).join('\n─────────────────\n');
+        ).join('\n-----------------\n');
         setError(detail);
       }
       refreshUploads();
@@ -678,7 +655,7 @@ async function doReembed(uploadId, btn) {
   }, 1500);
 }
 
-/* ── Delete with confirm modal ── */
+/* -- Delete with confirm modal -- */
 let _pendingDeleteId   = null;
 let _pendingDeleteType = null; // 'full' | 'sqlite' | 'embeddings'
 
@@ -737,7 +714,7 @@ document.getElementById('confirm-ok').onclick = async () => {
     try {
       d = await res.json();
     } catch {
-      throw new Error(`Server returned a non-JSON response (HTTP ${res.status}). The operation may have timed out — check server logs.`);
+      throw new Error(`Server returned a non-JSON response (HTTP ${res.status}). The operation may have timed out€” check server logs.`);
     }
     if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
 
@@ -788,7 +765,7 @@ function applyAdminUI() {
   const adminMenuItem = document.getElementById('user-menu-admin');
   if (adminMenuItem) adminMenuItem.classList.toggle('hidden', !currentUserIsAdmin);
 
-  // Account section — visible in multi mode only
+  // Account section€” visible in multi mode only
   const accountSection = document.getElementById('section-account');
   if (accountSection && APP_MODE === 'multi') {
     accountSection.classList.remove('hidden');
@@ -813,7 +790,7 @@ function applyAdminUI() {
 document.getElementById('settings-logout-btn').addEventListener('click', async () => {
   const btn = document.getElementById('settings-logout-btn');
   btn.disabled    = true;
-  btn.textContent = 'Logging out…';
+  btn.textContent = 'Logging out...';
   try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
   window.location.href = '/login';
 });
@@ -824,6 +801,7 @@ async function loadSettingsPage() {
   renderUploadsTable();
   renderLabelManager();
   if (currentUserIsAdmin) renderSunoTeamTable();
+  document.getElementById('goto-coding-btn')?.addEventListener('click', () => navigateTo('coding'));
   try {
     const d = await apiFetch('/api/stats');
     updateSettingsKeyStatus(d.api_key_set);
@@ -832,9 +810,7 @@ async function loadSettingsPage() {
   }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   ADMIN PAGE
-══════════════════════════════════════════════════════════════════════════ */
+// -- ADMIN PAGE ------------------------------------------------------------
 
 function _adminMsg(text, type) {
   const el = document.getElementById('admin-msg');
@@ -852,7 +828,7 @@ function _adminMsg(text, type) {
 async function loadAdminPage() {
   const table = document.getElementById('admin-users-table');
   if (!table) return;
-  table.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">Loading…</p>';
+  table.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">Loading...</p>';
   try {
     const users = await apiFetch('/api/admin/users');
     _renderAdminTable(users);
@@ -889,7 +865,7 @@ function _renderAdminTable(users) {
             ? '<span class="text-[10px] text-gray-400 ml-1">(you)</span>'
             : '';
           const actions = isSelf
-            ? '<span class="text-xs text-gray-400 italic">—</span>'
+            ? '<span class="text-xs text-gray-400 italic">â€”</span>'
             : `<div class="flex gap-2 justify-end flex-wrap">
                  <button class="admin-toggle-btn action-btn-primary text-xs py-1 px-2.5"
                          data-id="${u.id}" data-admin="${u.is_admin ? 1 : 0}">
@@ -919,7 +895,7 @@ function _renderAdminTable(users) {
       const uid       = parseInt(btn.dataset.id, 10);
       const wasAdmin  = btn.dataset.admin === '1';
       btn.disabled    = true;
-      btn.textContent = '…';
+      btn.textContent = '...';
       try {
         const res = await apiFetch(`/api/admin/users/${uid}/toggle-admin`, { method: 'POST' });
         _adminMsg(`${res.username} is now ${res.is_admin ? 'an Admin' : 'a regular User'}.`, 'ok');
@@ -939,7 +915,7 @@ function _renderAdminTable(users) {
       const name = btn.dataset.name;
       if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
       btn.disabled    = true;
-      btn.textContent = 'Deleting…';
+      btn.textContent = 'Deleting...';
       try {
         await apiFetch(`/api/admin/users/${uid}`, { method: 'DELETE' });
         _adminMsg(`User "${name}" deleted.`, 'ok');
@@ -956,19 +932,19 @@ function _renderAdminTable(users) {
 document.getElementById('admin-refresh-btn')?.addEventListener('click', loadAdminPage);
 
 async function renderLabelManager() {
-  await loadAllLabels();   // refreshes _allLabels + filter chips if bookmark page was open
+  await loadAllCodes();   // refreshes _allCodes + filter chips if bookmark page was open
   const list = document.getElementById('labels-list');
-  if (!_allLabels.length) {
-    list.innerHTML = '<p class="text-sm text-gray-400">No labels yet. Create one above.</p>';
+  if (!_allCodes.length) {
+    list.innerHTML = '<p class="text-sm text-gray-400">No codes yet. Create one above.</p>';
     return;
   }
-  list.innerHTML = _allLabels.map(l => {
+  list.innerHTML = _allCodes.map(l => {
     const tc = labelTextColor(l.color);
     return `<span class="inline-flex items-center gap-1.5 text-xs font-medium rounded-full px-3 py-1"
                   style="background:${l.color};color:${tc}">
               ${esc(l.name)}
               <button class="label-delete-btn opacity-70 hover:opacity-100 font-bold leading-none"
-                      data-label-id="${l.id}" data-label-name="${esc(l.name)}" title="Delete label">×</button>
+                      data-code-id="${l.id}" data-code-name="${esc(l.name)}" title="Delete code">Ã—</button>
             </span>`;
   }).join('');
 }
@@ -976,17 +952,17 @@ async function renderLabelManager() {
 document.getElementById('labels-list').addEventListener('click', async e => {
   const btn = e.target.closest('.label-delete-btn');
   if (!btn) return;
-  const id   = parseInt(btn.dataset.labelId);
-  const name = btn.dataset.labelName;
-  if (!confirm(`Delete label "${name}"? It will be removed from all bookmarks.`)) return;
+  const id   = parseInt(btn.dataset.codeId);
+  const name = btn.dataset.codeName;
+  if (!confirm(`Delete code "${name}"? It will be removed from all bookmarks.`)) return;
   btn.disabled = true;
-  const res = await fetch(`/api/labels/${id}`, { method: 'DELETE' });
+  const res = await fetch(`/api/codes/${id}`, { method: 'DELETE' });
   if (!res.ok) { btn.disabled = false; return; }
-  _allLabels = _allLabels.filter(l => l.id !== id);
-  _bmLabelFilter.delete(id);
-  _cachedBookmarks.forEach(bm => { bm.labels = (bm.labels || []).filter(l => l.id !== id); });
+  _allCodes = _allCodes.filter(l => l.id !== id);
+  _bmCodeFilter.delete(id);
+  _cachedBookmarks.forEach(bm => { bm.codes = (bm.codes || []).filter(l => l.id !== id); });
   renderLabelManager();
-  renderBmLabelFilterChips();
+  renderBmCodeFilterChips();
 });
 
 document.getElementById('label-create-form').addEventListener('submit', async e => {
@@ -998,28 +974,28 @@ document.getElementById('label-create-form').addEventListener('submit', async e 
   const color = colorInput.value;
   if (!name) return;
   msgEl.classList.add('hidden');
-  const res = await fetch('/api/labels', {
+  const res = await fetch('/api/codes', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, color }),
   });
   if (!res.ok) {
-    msgEl.textContent = (await res.json()).detail || 'Failed to create label.';
+    msgEl.textContent = (await res.json()).detail || 'Failed to create code.';
     msgEl.classList.remove('hidden');
     return;
   }
   const newLabel = await res.json();
-  _allLabels = [..._allLabels, newLabel].sort((a, b) =>
+  _allCodes = [..._allCodes, newLabel].sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
   );
   nameInput.value = '';
   renderLabelManager();
-  renderBmLabelFilterChips();
+  renderBmCodeFilterChips();
 });
 
 async function renderSunoTeamTable() {
   const el = document.getElementById('suno-team-table');
-  el.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">Loading…</p>';
+  el.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">Loading...</p>';
   try {
     const members = await apiFetch('/api/suno-team');
     if (!members.length) {
@@ -1063,7 +1039,7 @@ document.getElementById('suno-team-table').addEventListener('click', async e => 
   if (!btn) return;
   const username = btn.dataset.username;
   btn.disabled = true;
-  btn.textContent = 'Removing…';
+  btn.textContent = 'Removing...';
   try {
     const res = await fetch(`/api/suno-team/${encodeURIComponent(username)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(await res.text());
@@ -1082,9 +1058,7 @@ document.getElementById('suno-team-table').addEventListener('click', async e => 
   }
 });
 
-/* ══════════════════════════════════════════════════════════════════════════
-   SEARCH TABS
-══════════════════════════════════════════════════════════════════════════ */
+// -- SEARCH TABS -----------------------------------------------------------
 document.querySelectorAll('.search-tab').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.search-tab').forEach(b => b.classList.remove('tab-active'));
@@ -1127,9 +1101,7 @@ document.getElementById('range-mode-month').addEventListener('click', () => {
   document.getElementById('range-exact-inputs').classList.add('hidden');
 });
 
-/* ══════════════════════════════════════════════════════════════════════════
-   SEARCH
-══════════════════════════════════════════════════════════════════════════ */
+// -- SEARCH ----------------------------------------------------------------
 function appendDateParams(url, from, to) {
   if (from) url += `&date_from=${enc(from)}`;
   if (to)   url += `&date_to=${enc(to)}`;
@@ -1244,7 +1216,7 @@ function _sortSemanticResults(results) {
   } else if (mode === 'date_desc') {
     copy.sort((a, b) => new Date(b.date) - new Date(a.date));
   } else {
-    // 'score' — restore original API order (highest similarity first)
+    // 'score'€” restore original API order (highest similarity first)
     copy.sort((a, b) => (b.similarity_score ?? 0) - (a.similarity_score ?? 0));
   }
   return copy;
@@ -1259,12 +1231,10 @@ document.getElementById('semantic-sort').addEventListener('change', () => {
 function setBtnLoading(type, loading) {
   const btn = document.getElementById(`${type}-search-btn`);
   btn.disabled   = loading;
-  btn.textContent = loading ? 'Searching…' : 'Search';
+  btn.textContent = loading ? 'Searching...' : 'Search';
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   RESULTS
-══════════════════════════════════════════════════════════════════════════ */
+// -- RESULTS ---------------------------------------------------------------
 function renderError(msg) {
   showErrorPopup(msg);
 }
@@ -1300,9 +1270,7 @@ function renderResults(results) {
   if (results.length) document.getElementById('sr-section').classList.remove('hidden');
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   TREND CHART
-══════════════════════════════════════════════════════════════════════════ */
+// -- TREND CHART -----------------------------------------------------------
 const _MONTH_NAMES = ['January','February','March','April','May','June',
                       'July','August','September','October','November','December'];
 
@@ -1381,7 +1349,7 @@ function _applyChartRangeFilter(range) {
             d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/>
     </svg>
     <span>Showing <strong>${filtered.length}</strong> of <strong>${currentResults.length}</strong> messages &mdash; <strong>${esc(range.label)}</strong> (${range.from === range.to ? range.from : range.from + ' → ' + range.to})</span>
-    <button id="chart-filter-clear" class="ml-auto text-indigo-600 hover:text-indigo-900 font-semibold">✕ Clear</button>
+    <button id="chart-filter-clear" class="ml-auto text-indigo-600 hover:text-indigo-900 font-semibold">âœ• Clear</button>
   `;
   banner.classList.remove('hidden');
   document.getElementById('chart-filter-clear').addEventListener('click', () => {
@@ -1452,7 +1420,7 @@ function renderTrendChart(results, bucket) {
               if (!r) return items[0].label;
               return r.from === r.to ? r.from : `${r.from} → ${r.to}`;
             },
-            label: item => `${item.raw} messages — click to filter`,
+            label: item => `${item.raw} messages€” click to filter`,
           },
         },
       },
@@ -1484,9 +1452,18 @@ function renderTrendChart(results, bucket) {
   document.getElementById('trend-btn-day').addEventListener('click',   () => _setTrendBucket('day'));
 }());
 
-/* ══════════════════════════════════════════════════════════════════════════
-   SUMMARIZE RESULTS
-══════════════════════════════════════════════════════════════════════════ */
+// -- SUMMARIZE RESULTS -----------------------------------------------------
+const LOG_ICONS = {
+  filter:      'ðŸ”',
+  retrieval:   'ðŸ“¡',
+  dedup:       'ðŸ§¹',
+  cluster:     'ðŸ”®',
+  sample:      'ðŸŽ¯',
+  llm:         'âœ¨',
+  fallback:    'âš ï¸',
+  meta:        'ðŸ“…',
+  instruction: 'ðŸ“',
+};
 function _updateSrCountLabel() {
   const el = document.getElementById('sr-count-label');
   if (el) el.textContent = currentResults.length.toLocaleString();
@@ -1496,7 +1473,7 @@ function renderSrLogEntry(entry) {
   const logEl = document.getElementById('sr-process-log');
   const div   = document.createElement('div');
   div.className = `log-entry log-step-${entry.step || 'fallback'}`;
-  const icon = LOG_ICONS[entry.step] || '•';
+  const icon = LOG_ICONS[entry.step] || 'â€¢';
   div.innerHTML =
     `<span class="log-icon">${icon}</span>` +
     `<span class="log-label">${esc(entry.label || '')}</span>` +
@@ -1517,7 +1494,7 @@ async function doSummarizeResults() {
   const retrievalMode = document.getElementById('sr-retrieval-mode').value;
 
   btn.disabled    = true;
-  btn.textContent = 'Summarizing…';
+  btn.textContent = 'Summarizing...';
 
   document.getElementById('sr-results-panel').classList.remove('hidden');
   logEl.innerHTML    = '';
@@ -1593,7 +1570,7 @@ async function doSummarizeResults() {
   }
 }
 
-/* ── SR follow-up bubble helpers ── */
+/* -- SR follow-up bubble helpers -- */
 function _appendSrUserBubble(text) {
   const c = document.getElementById('sr-followup-history');
   const w = document.createElement('div'); w.className = 'flex justify-end';
@@ -1623,7 +1600,7 @@ function _renderSrFuLogEntry(strip, entry) {
   const div = document.createElement('div');
   div.className = `fu-log-entry fu-log-step-${entry.step || 'fallback'}`;
   div.innerHTML =
-    `<span class="fu-log-icon">${LOG_ICONS[entry.step] || '•'}</span>` +
+    `<span class="fu-log-icon">${LOG_ICONS[entry.step] || 'â€¢'}</span>` +
     `<span class="fu-log-label">${esc(entry.label || '')}</span>` +
     `<span class="fu-log-msg">${esc(entry.msg || '')}</span>`;
   strip.appendChild(div);
@@ -1641,7 +1618,7 @@ async function sendSrFollowUp() {
   input.value      = '';
   input.disabled   = true;
   sendBtn.disabled = true;
-  sendBtn.textContent = '…';
+  sendBtn.textContent = '...';
 
   srFollowUpHistory.push({ role: 'user', content: question });
   _appendSrUserBubble(question);
@@ -1704,7 +1681,7 @@ async function sendSrFollowUp() {
   }
 }
 
-/* ── SR PDF export ── */
+/* -- SR PDF export -- */
 function exportSrPDF() {
   const summaryHTML = document.getElementById('sr-result').innerHTML;
   const dateStr     = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -1787,7 +1764,7 @@ ${qaHTML ? '<h2>Follow-up Q&amp;A</h2><div class="qa-body">' + qaHTML + '</div>'
   win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
 }
 
-/* ── Trend chart PNG export ── */
+/* -- Trend chart PNG export -- */
 function exportTrendChartPNG() {
   if (!_trendChart) return;
   const src = document.getElementById('trend-chart');
@@ -1805,13 +1782,13 @@ function exportTrendChartPNG() {
 }
 document.getElementById('trend-export-png').addEventListener('click', exportTrendChartPNG);
 
-/* ── SR event wiring ── */
+/* -- SR event wiring -- */
 document.getElementById('sr-retrieval-mode').addEventListener('change', () => {
   const hint = document.getElementById('sr-mode-hint');
   const mode = document.getElementById('sr-retrieval-mode').value;
   hint.textContent = mode === 'cluster'
     ? 'Deduplicates and samples representative messages across semantic clusters.'
-    : 'All messages passed directly to the LLM — no clustering or deduplication.';
+    : 'All messages passed directly to the LLM€” no clustering or deduplication.';
 });
 document.getElementById('sr-btn').addEventListener('click', doSummarizeResults);
 document.getElementById('sr-log-toggle').addEventListener('click', () => {
@@ -1831,14 +1808,12 @@ document.getElementById('sr-followup-clear').addEventListener('click', () => {
 document.getElementById('sr-export-pdf').addEventListener('click', exportSrPDF);
 document.getElementById('sr-export-pdf-followup').addEventListener('click', exportSrPDF);
 
-/* ══════════════════════════════════════════════════════════════════════════
-   RESULTS FILTER
-══════════════════════════════════════════════════════════════════════════ */
+// -- RESULTS FILTER --------------------------------------------------------
 
 let filterMode        = 'exact';  // 'exact' | 'any' | 'semantic'
 let _semanticDebounce = null;
 
-/* ── Set active mode + update UI ── */
+/* -- Set active mode + update UI -- */
 const _EXACT_ACTIVE    = ['bg-indigo-700','text-white'];
 const _EXACT_INACTIVE  = ['bg-slate-100','text-slate-500'];
 const _ANY_ACTIVE      = ['bg-emerald-600','text-white'];
@@ -1875,9 +1850,9 @@ function setFilterMode(mode) {
   semBtn.setAttribute(  'aria-pressed', String(mode === 'semantic'));
 
   const placeholders = {
-    exact:    'Exact: whole-word match, multi-word phrase scores highest…',
-    any:      'Any Word: returns messages containing at least one query word…',
-    semantic: 'Semantic: re-rank results by embedding similarity…',
+    exact:    'Exact: whole-word match, multi-word phrase scores highest...',
+    any:      'Any Word: returns messages containing at least one query word...',
+    semantic: 'Semantic: re-rank results by embedding similarity...',
   };
   document.getElementById('results-filter').placeholder = placeholders[mode];
 }
@@ -1889,7 +1864,7 @@ document.getElementById('filter-mode-any')
 document.getElementById('filter-mode-semantic')
   .addEventListener('click', () => { setFilterMode('semantic'); applyResultsFilter(); });
 
-/* ── Shared render helpers ── */
+/* -- Shared render helpers -- */
 function _attachCtxListeners(container) {
   container.querySelectorAll('.ctx-toggle').forEach(btn => {
     btn.addEventListener('click', () => toggleContext(parseInt(btn.dataset.id), btn));
@@ -1917,7 +1892,7 @@ function _resetToAllResults() {
   _attachCtxListeners(container);
 }
 
-/* ── Exact filter (instant, client-side) ── */
+/* -- Exact filter (instant, client-side) -- */
 function _escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 function _applyExactFilter(term) {
@@ -1948,7 +1923,7 @@ function _applyExactFilter(term) {
       // All words must be present as substrings (AND gate)
       if (!subRegexes.every(rx => rx.test(text))) return { m, s: 0 };
 
-      // Phrase match — highest score
+      // Phrase match€” highest score
       if (phraseRegex) {
         if (phraseRegex.test(user))    return { m, s: 1500 };
         if (phraseRegex.test(content)) return { m, s: 1000 };
@@ -1968,7 +1943,7 @@ function _applyExactFilter(term) {
   _renderFilteredCards(scored.map(x => x.m), currentResults.length);
 }
 
-/* ── Any-word filter (instant, client-side) ── */
+/* -- Any-word filter (instant, client-side) -- */
 function _applyAnyWordFilter(term) {
   if (!term) { _resetToAllResults(); return; }
 
@@ -1976,7 +1951,7 @@ function _applyAnyWordFilter(term) {
   // Highlight all individual words
   activeFilterTokens = words;
 
-  // Substring match (OR logic) — partial words work while typing
+  // Substring match (OR logic)€” partial words work while typing
   const tokenRegexes = words.map(w => new RegExp(_escapeRegex(w), 'i'));
 
   const matched = currentResults
@@ -1989,7 +1964,7 @@ function _applyAnyWordFilter(term) {
   _renderFilteredCards(matched, currentResults.length);
 }
 
-/* ── Semantic filter (debounced, API-backed) ── */
+/* -- Semantic filter (debounced, API-backed) -- */
 async function _applySemanticFilter(term) {
   if (!term) { _resetToAllResults(); return; }
   if (!currentResults.length) return;
@@ -2015,7 +1990,7 @@ async function _applySemanticFilter(term) {
     const { results: ranked, threshold, query_used, warning } = data;
     if (warning) {
       document.getElementById('results-container').innerHTML =
-        `<p class="text-center text-amber-600 py-10 text-sm">⚠ ${esc(warning)}</p>`;
+        `<p class="text-center text-amber-600 py-10 text-sm">âš  ${esc(warning)}</p>`;
       spinner.classList.add('hidden');
       return;
     }
@@ -2027,9 +2002,9 @@ async function _applySemanticFilter(term) {
 
     // Show count with threshold label, and query interpretation if it changed
     const interpreted = query_used && query_used !== term
-      ? ` · searched: "${query_used}"` : '';
+      ? `· searched: "${query_used}"` : '';
     const countLabel2 = document.getElementById('results-filter-count');
-    countLabel2.textContent = `${hits.length} of ${currentResults.length} · similarity ≥ ${threshold}${interpreted}`;
+    countLabel2.textContent = `${hits.length} of ${currentResults.length}· similarity‰¥ ${threshold}${interpreted}`;
     countLabel2.classList.remove('hidden');
 
     const container = document.getElementById('results-container');
@@ -2050,7 +2025,7 @@ async function _applySemanticFilter(term) {
   }
 }
 
-/* ── Unified dispatcher ── */
+/* -- Unified dispatcher -- */
 function applyResultsFilter() {
   const term     = document.getElementById('results-filter').value.trim().toLowerCase();
   const clearBtn = document.getElementById('results-filter-clear');
@@ -2109,9 +2084,9 @@ function msgCard(msg) {
     ? highlightTerms(msg.username, activeFilterTokens)
     : esc(msg.username);
   const attachLine = hasContent(msg.attachments)
-    ? `<p class="text-xs text-gray-500 mt-1">📎 ${esc(msg.attachments)}</p>` : '';
+    ? `<p class="text-xs text-gray-500 mt-1">ðŸ“Ž ${esc(msg.attachments)}</p>` : '';
   const reactLine = hasContent(msg.reactions)
-    ? `<p class="text-xs text-gray-500 mt-1">💬 ${esc(msg.reactions)}</p>` : '';
+    ? `<p class="text-xs text-gray-500 mt-1">ðŸ'¬ ${esc(msg.reactions)}</p>` : '';
 
   // Find source filename
   const src = allUploads.find(u => u.id === msg.upload_id);
@@ -2150,9 +2125,7 @@ function msgCard(msg) {
     </div>`;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   CONTEXT EXPANSION
-══════════════════════════════════════════════════════════════════════════ */
+// -- CONTEXT EXPANSION -----------------------------------------------------
 async function toggleContext(id, btn) {
   const ctxEl = document.getElementById(`ctx-${id}`);
   if (btn.dataset.open === 'true') {
@@ -2163,7 +2136,7 @@ async function toggleContext(id, btn) {
   }
   const before = document.getElementById('ctx-before').value || 5;
   const after  = document.getElementById('ctx-after').value  || 5;
-  btn.textContent = 'Loading…'; btn.disabled = true;
+  btn.textContent = 'Loading...'; btn.disabled = true;
   try {
     const res  = await fetch(`/api/context/${id}?before=${before}&after=${after}`);
     if (!res.ok) throw new Error('Failed to load context');
@@ -2171,7 +2144,7 @@ async function toggleContext(id, btn) {
     ctxEl.innerHTML = `
       <div class="border-t bg-slate-50 p-4 space-y-2">
         <p class="text-xs text-gray-500 font-medium mb-3">
-          Context — ${msgs.length} messages (${before} before &bull; ${after} after)
+          Context€” ${msgs.length} messages (${before} before &bull; ${after} after)
         </p>
         ${msgs.map(m => ctxMsg(m)).join('')}
       </div>`;
@@ -2186,7 +2159,7 @@ function ctxMsg(msg) {
   const cls = msg.is_target ? 'ctx-target' : 'ctx-regular';
   const targetBadge = msg.is_target
     ? `<span class="text-xs px-1.5 py-0.5 rounded font-semibold"
-             style="background:#fef08a;color:#78350f">★ result</span>` : '';
+             style="background:#fef08a;color:#78350f">â˜… result</span>` : '';
   const teamBadge = truthy(msg.is_suno_team)
     ? `<span class="text-xs px-1.5 py-0.5 rounded" style="background:#fef3c7;color:#92400e">Team</span>` : '';
   return `
@@ -2202,9 +2175,7 @@ function ctxMsg(msg) {
     </div>`;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   EXPORT
-══════════════════════════════════════════════════════════════════════════ */
+// -- EXPORT ----------------------------------------------------------------
 document.getElementById('export-btn').onclick = () => {
   if (!currentResults.length) return;
   const cols = ['id','username','date','content','attachments','reactions',
@@ -2222,9 +2193,7 @@ document.getElementById('export-btn').onclick = () => {
   a.click();
 };
 
-/* ══════════════════════════════════════════════════════════════════════════
-   BOOKMARKS
-══════════════════════════════════════════════════════════════════════════ */
+// -- BOOKMARKS -------------------------------------------------------------
 
 async function loadBookmarkIds() {
   try {
@@ -2289,7 +2258,7 @@ function _sortBookmarks(bms) {
   } else if (mode === 'username') {
     sorted.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
   } else {
-    // 'added' — sort by bookmark_id ascending (insertion order)
+    // 'added'€” sort by bookmark_id ascending (insertion order)
     sorted.sort((a, b) => a.bookmark_id - b.bookmark_id);
   }
   return sorted;
@@ -2299,8 +2268,8 @@ let _cachedBookmarks = [];
 
 async function loadBookmarksPage() {
   const container = document.getElementById('bookmarks-container');
-  container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">Loading…</p>';
-  await loadAllLabels();
+  container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">Loading...</p>';
+  await loadAllCodes();
   try {
     _cachedBookmarks = await apiFetch('/api/bookmarks');
     _renderBookmarksSorted();
@@ -2309,7 +2278,7 @@ async function loadBookmarksPage() {
   }
 }
 
-// ── Label colour helpers ──────────────────────────────────────────────────────
+// -- Label colour helpers ------------------------------------------------------
 function labelTextColor(hex) {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -2317,63 +2286,63 @@ function labelTextColor(hex) {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.55 ? '#1f2937' : '#ffffff';
 }
 
-// ── Load & render label filter chips ─────────────────────────────────────────
-async function loadAllLabels() {
+// -- Load & render code filter chips -----------------------------------------
+async function loadAllCodes() {
   try {
-    _allLabels = await apiFetch('/api/labels');
-  } catch (_) { _allLabels = []; }
-  renderBmLabelFilterChips();
+    _allCodes = await apiFetch('/api/codes');
+  } catch (_) { _allCodes = []; }
+  renderBmCodeFilterChips();
 }
 
-function renderBmLabelFilterChips() {
+function renderBmCodeFilterChips() {
   const container = document.getElementById('bm-label-filter-chips');
-  if (!_allLabels.length) {
-    container.innerHTML = '<span class="text-xs text-gray-400">No labels yet. Create labels in Settings → Manage Labels.</span>';
+  if (!_allCodes.length) {
+    container.innerHTML = '<span class="text-xs text-gray-400">No codes yet. Create codes in Settings or the Coding Manager.</span>';
     return;
   }
-  container.innerHTML = _allLabels.map(l => {
-    const active = _bmLabelFilter.has(l.id);
+  container.innerHTML = _allCodes.map(l => {
+    const active = _bmCodeFilter.has(l.id);
     const bg     = active ? l.color : '#f1f5f9';
     const tc     = active ? labelTextColor(l.color) : '#64748b';
     const border = active ? l.color : '#e2e8f0';
-    return `<button class="bm-label-filter-chip text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all"
-                    data-label-id="${l.id}"
+    return `<button class="bm-code-filter-chip text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all"
+                    data-code-id="${l.id}"
                     style="background:${bg};color:${tc};border-color:${border}">
               ${esc(l.name)}
             </button>`;
   }).join('');
 }
 
-// ── Bookmark label chips inside card ─────────────────────────────────────────
-function _bmLabelChipsHtml(bm) {
-  const chips = (bm.labels || []).map(l => {
+// -- Bookmark code chips inside card -----------------------------------------
+function _bmCodeChipsHtml(bm) {
+  const chips = (bm.codes || []).map(l => {
     const tc = labelTextColor(l.color);
-    return `<span class="bm-label-chip text-xs px-2 py-0.5 rounded-full font-medium cursor-pointer select-none"
+    return `<span class="bm-code-chip text-xs px-2 py-0.5 rounded-full font-medium cursor-pointer select-none"
                   style="background:${l.color};color:${tc}"
-                  data-bm-id="${bm.bookmark_id}" data-label-id="${l.id}"
-                  title="Remove label">${esc(l.name)} ×</span>`;
+                  data-bm-id="${bm.bookmark_id}" data-code-id="${l.id}"
+                  title="Remove code">${esc(l.name)} Ã—</span>`;
   }).join('');
-  return chips + `<button class="bm-label-btn text-xs text-gray-400 hover:text-indigo-600 border border-dashed border-gray-300 hover:border-indigo-400 rounded-full px-2 py-0.5 transition-colors"
-                          data-bm-id="${bm.bookmark_id}">+ label</button>`;
+  return chips + `<button class="bm-code-btn text-xs text-gray-400 hover:text-indigo-600 border border-dashed border-gray-300 hover:border-indigo-400 rounded-full px-2 py-0.5 transition-colors"
+                          data-bm-id="${bm.bookmark_id}">+ code</button>`;
 }
 
-// ── Render the inline label picker panel ─────────────────────────────────────
-function _renderBmLabelPanel(bookmarkId) {
-  const panel = document.getElementById(`bm-label-panel-${bookmarkId}`);
+// -- Render the inline code picker panel -------------------------------------
+function _renderBmCodePanel(bookmarkId) {
+  const panel = document.getElementById(`bm-code-panel-${bookmarkId}`);
   const bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
   if (!panel || !bm) return;
-  const assignedIds = new Set((bm.labels || []).map(l => l.id));
-  const existingChips = _allLabels.length
+  const assignedIds = new Set((bm.codes || []).map(l => l.id));
+  const existingChips = _allCodes.length
     ? `<div class="flex flex-wrap gap-1.5 mb-2">
-        ${_allLabels.map(l => {
+        ${_allCodes.map(l => {
           const active = assignedIds.has(l.id);
           const bg     = active ? l.color : '#f8fafc';
           const tc     = active ? labelTextColor(l.color) : '#64748b';
           const border = active ? l.color : '#cbd5e1';
-          return `<button class="bm-label-toggle text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all"
-                          data-bm-id="${bookmarkId}" data-label-id="${l.id}"
+          return `<button class="bm-code-toggle text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all"
+                          data-bm-id="${bookmarkId}" data-code-id="${l.id}"
                           style="background:${bg};color:${tc};border-color:${border}">
-                    ${active ? '✓ ' : ''}${esc(l.name)}
+                    ${active ? 'âœ“ ' : ''}${esc(l.name)}
                   </button>`;
         }).join('')}
       </div>`
@@ -2382,17 +2351,17 @@ function _renderBmLabelPanel(bookmarkId) {
     <div class="p-2">
       ${existingChips}
       <div class="flex items-center gap-1.5 pt-1 border-t border-gray-100">
-        <input class="bm-new-label-input flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
-               placeholder="New label name…" maxlength="40" data-bm-id="${bookmarkId}" />
-        <input class="bm-new-label-color w-7 h-7 rounded cursor-pointer border border-gray-200 p-0.5"
+        <input class="bm-new-code-input flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
+               placeholder="New code name..." maxlength="40" data-bm-id="${bookmarkId}" />
+        <input class="bm-new-code-color w-7 h-7 rounded cursor-pointer border border-gray-200 p-0.5"
                type="color" value="#6366f1" data-bm-id="${bookmarkId}" title="Pick colour" />
-        <button class="bm-new-label-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
+        <button class="bm-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
                 data-bm-id="${bookmarkId}">Add</button>
       </div>
     </div>`;
 }
 
-// ── filter bookmarks ─────────────────────────────────────────────────────────
+// -- filter bookmarks ---------------------------------------------------------
 function _filterBookmarks(bms) {
   const userTerm = (document.getElementById('bm-filter-user').value || '').trim().toLowerCase();
   const sunoMode = document.getElementById('bm-filter-suno').value;
@@ -2409,9 +2378,9 @@ function _filterBookmarks(bms) {
     if (userTerm && !(bm.username || '').toLowerCase().includes(userTerm)) return false;
     if (sunoMode === 'only'    && !truthy(bm.is_suno_team)) return false;
     if (sunoMode === 'exclude' &&  truthy(bm.is_suno_team)) return false;
-    if (_bmLabelFilter.size > 0) {
-      const bmLabelIds = new Set((bm.labels || []).map(l => l.id));
-      const hasMatch = [..._bmLabelFilter].some(id => bmLabelIds.has(id));
+    if (_bmCodeFilter.size > 0) {
+      const bmLabelIds = new Set((bm.codes || []).map(l => l.id));
+      const hasMatch = [..._bmCodeFilter].some(id => bmLabelIds.has(id));
       if (!hasMatch) return false;
     }
     if (textRegexes.length > 0) {
@@ -2474,14 +2443,14 @@ function bookmarkCard(bm) {
           ${srcLabel}
         </div>
         <p class="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words">${esc(bm.content)}</p>
-        ${hasContent(bm.attachments) ? `<p class="text-xs text-gray-500 mt-1">📎 ${esc(bm.attachments)}</p>` : ''}
-        ${hasContent(bm.reactions)   ? `<p class="text-xs text-gray-500 mt-1">💬 ${esc(bm.reactions)}</p>`   : ''}
-        <!-- Labels -->
-        <div class="flex items-center flex-wrap gap-1 mt-2 min-h-[1.5rem]" id="bm-labels-${bm.bookmark_id}">
-          ${_bmLabelChipsHtml(bm)}
+        ${hasContent(bm.attachments) ? `<p class="text-xs text-gray-500 mt-1">ðŸ“Ž ${esc(bm.attachments)}</p>` : ''}
+        ${hasContent(bm.reactions)   ? `<p class="text-xs text-gray-500 mt-1">ðŸ'¬ ${esc(bm.reactions)}</p>`   : ''}
+        <!-- Codes -->
+        <div class="flex items-center flex-wrap gap-1 mt-2 min-h-[1.5rem]" id="bm-codes-${bm.bookmark_id}">
+          ${_bmCodeChipsHtml(bm)}
         </div>
-        <!-- Inline label picker (hidden until opened) -->
-        <div id="bm-label-panel-${bm.bookmark_id}" class="hidden mt-1 border border-dashed border-gray-200 rounded-xl bg-gray-50"></div>
+        <!-- Inline code picker (hidden until opened) -->
+        <div id="bm-code-panel-${bm.bookmark_id}" class="hidden mt-1 border border-dashed border-gray-200 rounded-xl bg-gray-50"></div>
       </div>
       <div class="border-t bg-gray-50 px-4 py-2 flex justify-end">
         <button class="bm-ctx-toggle text-xs text-indigo-600 hover:text-indigo-800 font-medium"
@@ -2521,26 +2490,26 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     return;
   }
 
-  // Remove label chip (× click on assigned label)
-  const labelChip = e.target.closest('.bm-label-chip');
+  // Remove code chip (Ã— click on assigned label)
+  const labelChip = e.target.closest('.bm-code-chip');
   if (labelChip) {
     const bmId    = parseInt(labelChip.dataset.bmId);
-    const labelId = parseInt(labelChip.dataset.labelId);
-    await fetch(`/api/bookmarks/${bmId}/labels/${labelId}`, { method: 'DELETE' });
+    const codeId = parseInt(labelChip.dataset.codeId);
+    await fetch(`/api/bookmarks/${bmId}/codes/${codeId}`, { method: 'DELETE' });
     const bm = _cachedBookmarks.find(b => b.bookmark_id === bmId);
-    if (bm) bm.labels = (bm.labels || []).filter(l => l.id !== labelId);
-    const labelsRow = document.getElementById(`bm-labels-${bmId}`);
-    if (labelsRow) labelsRow.innerHTML = _bmLabelChipsHtml(bm);
+    if (bm) bm.codes = (bm.codes || []).filter(l => l.id !== codeId);
+    const labelsRow = document.getElementById(`bm-codes-${bmId}`);
+    if (labelsRow) labelsRow.innerHTML = _bmCodeChipsHtml(bm);
     return;
   }
 
-  // Open/close label picker panel
-  const labelBtn = e.target.closest('.bm-label-btn');
+  // Open/close code picker panel
+  const labelBtn = e.target.closest('.bm-code-btn');
   if (labelBtn) {
     const bmId = parseInt(labelBtn.dataset.bmId);
-    const panel = document.getElementById(`bm-label-panel-${bmId}`);
+    const panel = document.getElementById(`bm-code-panel-${bmId}`);
     if (panel.classList.contains('hidden')) {
-      _renderBmLabelPanel(bmId);
+      _renderBmCodePanel(bmId);
       panel.classList.remove('hidden');
     } else {
       panel.classList.add('hidden');
@@ -2548,70 +2517,71 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     return;
   }
 
-  // Toggle label assignment in picker panel
-  const labelToggle = e.target.closest('.bm-label-toggle');
+  // Toggle code assignment in picker panel
+  const labelToggle = e.target.closest('.bm-code-toggle');
   if (labelToggle) {
     const bmId    = parseInt(labelToggle.dataset.bmId);
-    const labelId = parseInt(labelToggle.dataset.labelId);
+    const codeId = parseInt(labelToggle.dataset.codeId);
     const bm      = _cachedBookmarks.find(b => b.bookmark_id === bmId);
     if (!bm) return;
-    const isAssigned = (bm.labels || []).some(l => l.id === labelId);
+    const isAssigned = (bm.codes || []).some(l => l.id === codeId);
     if (isAssigned) {
-      await fetch(`/api/bookmarks/${bmId}/labels/${labelId}`, { method: 'DELETE' });
-      bm.labels = (bm.labels || []).filter(l => l.id !== labelId);
+      await fetch(`/api/bookmarks/${bmId}/codes/${codeId}`, { method: 'DELETE' });
+      bm.codes = (bm.codes || []).filter(l => l.id !== codeId);
     } else {
-      await fetch(`/api/bookmarks/${bmId}/labels/${labelId}`, { method: 'POST' });
-      const label = _allLabels.find(l => l.id === labelId);
-      if (label) bm.labels = [...(bm.labels || []), { id: label.id, name: label.name, color: label.color }];
+      await fetch(`/api/bookmarks/${bmId}/codes/${codeId}`, { method: 'POST' });
+      const label = _allCodes.find(l => l.id === codeId);
+      if (label) bm.codes = [...(bm.codes || []), { id: label.id, name: label.name, color: label.color }];
     }
     // Update chips row and re-render panel
-    const labelsRow = document.getElementById(`bm-labels-${bmId}`);
-    if (labelsRow) labelsRow.innerHTML = _bmLabelChipsHtml(bm);
-    _renderBmLabelPanel(bmId);
+    const labelsRow = document.getElementById(`bm-codes-${bmId}`);
+    if (labelsRow) labelsRow.innerHTML = _bmCodeChipsHtml(bm);
+    _renderBmCodePanel(bmId);
     return;
   }
 
-  // Create new label inline and assign it
-  const createBtn = e.target.closest('.bm-new-label-create');
+  // Create new code inline and assign it
+  const createBtn = e.target.closest('.bm-new-code-create');
   if (createBtn) {
     const bmId  = parseInt(createBtn.dataset.bmId);
-    const panel = document.getElementById(`bm-label-panel-${bmId}`);
-    const nameInput  = panel.querySelector('.bm-new-label-input');
-    const colorInput = panel.querySelector('.bm-new-label-color');
+    const panel = document.getElementById(`bm-code-panel-${bmId}`);
+    const nameInput  = panel.querySelector('.bm-new-code-input');
+    const colorInput = panel.querySelector('.bm-new-code-color');
     const name  = (nameInput?.value || '').trim();
     const color = colorInput?.value || '#6366f1';
     if (!name) { nameInput?.focus(); return; }
     createBtn.disabled = true;
-    createBtn.textContent = '…';
+    createBtn.textContent = '...';
     try {
-      // Create the label
-      const labelRes = await fetch('/api/labels', {
+      // Create the code
+      const labelRes = await fetch('/api/codes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, color }),
       });
       const newLabel = await labelRes.json();
       if (!labelRes.ok) {
-        // Label may already exist — find it in _allLabels
-        const existing = _allLabels.find(l => l.name.toLowerCase() === name.toLowerCase());
+        // Label may already exist€” find it in _allCodes
+        const existing = _allCodes.find(l => l.name.toLowerCase() === name.toLowerCase());
         if (!existing) { createBtn.disabled = false; createBtn.textContent = 'Add'; return; }
         newLabel.id = existing.id; newLabel.name = existing.name; newLabel.color = existing.color;
       } else {
         // Add to global cache, keep sorted
-        _allLabels = [..._allLabels, newLabel].sort((a, b) =>
+        _allCodes = [..._allCodes, newLabel].sort((a, b) =>
           a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
         );
-        renderBmLabelFilterChips();
+        renderBmCodeFilterChips();
       }
       // Assign to this bookmark
-      await fetch(`/api/bookmarks/${bmId}/labels/${newLabel.id}`, { method: 'POST' });
+      await fetch(`/api/bookmarks/${bmId}/codes/${newLabel.id}`, { method: 'POST' });
       const bm = _cachedBookmarks.find(b => b.bookmark_id === bmId);
-      if (bm && !(bm.labels || []).some(l => l.id === newLabel.id)) {
-        bm.labels = [...(bm.labels || []), { id: newLabel.id, name: newLabel.name, color: newLabel.color }];
+      if (bm && !(bm.codes || []).some(l => l.id === newLabel.id)) {
+        bm.codes = [...(bm.codes || []), { id: newLabel.id, name: newLabel.name, color: newLabel.color }];
       }
-      const labelsRow = document.getElementById(`bm-labels-${bmId}`);
-      if (labelsRow) labelsRow.innerHTML = _bmLabelChipsHtml(bm);
-      _renderBmLabelPanel(bmId);
+      const labelsRow = document.getElementById(`bm-codes-${bmId}`);
+      if (labelsRow) labelsRow.innerHTML = _bmCodeChipsHtml(bm);
+      _renderBmCodePanel(bmId);
+      document.dispatchEvent(new CustomEvent('codebook-updated'));
     } catch (_) {
       createBtn.disabled = false;
       createBtn.textContent = 'Add';
@@ -2636,14 +2606,14 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
   const before = parseInt(document.getElementById('bm-ctx-before').value) || 5;
   const after  = parseInt(document.getElementById('bm-ctx-after').value)  || 5;
 
-  ctxBtn.textContent = 'Loading…';
+  ctxBtn.textContent = 'Loading...';
   ctxBtn.disabled    = true;
   try {
     const msgs = await apiFetch(`/api/context/${id}?before=${before}&after=${after}`);
     ctxEl.innerHTML = `
       <div class="border-t bg-slate-50 p-4 space-y-2">
         <p class="text-xs text-gray-500 font-medium mb-3">
-          Context — ${msgs.length} messages (${before} before &bull; ${after} after)
+          Context€” ${msgs.length} messages (${before} before &bull; ${after} after)
         </p>
         ${msgs.map(m => ctxMsg(m)).join('')}
       </div>`;
@@ -2679,24 +2649,24 @@ document.getElementById('bm-filter-suno').addEventListener('change', () => {
   _renderBookmarksSorted();
 });
 
-// Enter key in inline label name input → click the Add button
+// Enter key in inline code name input → click the Add button
 document.getElementById('bookmarks-container').addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
-  const input = e.target.closest('.bm-new-label-input');
+  const input = e.target.closest('.bm-new-code-input');
   if (!input) return;
   e.preventDefault();
   const bmId = input.dataset.bmId;
-  document.querySelector(`.bm-new-label-create[data-bm-id="${bmId}"]`)?.click();
+  document.querySelector(`.bm-new-code-create[data-bm-id="${bmId}"]`)?.click();
 });
 
-// Label filter chip toggle
+// Code filter chip toggle
 document.getElementById('bm-label-filter-chips').addEventListener('click', e => {
-  const chip = e.target.closest('.bm-label-filter-chip');
+  const chip = e.target.closest('.bm-code-filter-chip');
   if (!chip) return;
-  const id = parseInt(chip.dataset.labelId);
-  if (_bmLabelFilter.has(id)) _bmLabelFilter.delete(id);
-  else _bmLabelFilter.add(id);
-  renderBmLabelFilterChips();
+  const id = parseInt(chip.dataset.codeId);
+  if (_bmCodeFilter.has(id)) _bmCodeFilter.delete(id);
+  else _bmCodeFilter.add(id);
+  renderBmCodeFilterChips();
   _collapseAllBmContext();
   _renderBookmarksSorted();
 });
@@ -2718,1087 +2688,324 @@ document.getElementById('bm-filter-text').addEventListener('input', () => {
   }, 250);
 });
 
-/* ══════════════════════════════════════════════════════════════════════════
-   HYBRID SUMMARY PAGE
-══════════════════════════════════════════════════════════════════════════ */
+// -- CODING MANAGER --------------------------------------------------------
 
-/* ── Date mode toggle ── */
-document.getElementById('sum-mode-exact').addEventListener('click', () => {
-  document.getElementById('sum-mode-exact').classList.add('range-mode-active');
-  document.getElementById('sum-mode-month').classList.remove('range-mode-active');
-  document.getElementById('sum-exact-inputs').classList.remove('hidden');
-  document.getElementById('sum-month-inputs').classList.add('hidden');
-});
-document.getElementById('sum-mode-month').addEventListener('click', () => {
-  document.getElementById('sum-mode-month').classList.add('range-mode-active');
-  document.getElementById('sum-mode-exact').classList.remove('range-mode-active');
-  document.getElementById('sum-month-inputs').classList.remove('hidden');
-  document.getElementById('sum-exact-inputs').classList.add('hidden');
-});
+let _cmCodes      = [];
+let _cmCategories = [];
+let _cmSelected   = new Set();
+let _cmMergeMode  = false;
+let _cmOpenCodeId = null;
 
-/* ── Follow-up chat state ── */
-// Index 0 is always the initial summary (assistant turn).
-// Subsequent turns are user/assistant pairs for follow-up Q&A.
-let sumFollowUpHistory = [];
-// Filter params stored after a successful summary so follow-up
-// can search the same filtered message pool.
-let sumLastFilterParams = null;
-// Custom instruction text from the last summary run (used for PDF export).
-let sumLastPrompt = '';
-
-/* ── Form collapse / expand ── */
-function _buildCompactInfo(p) {
-  if (!p) return '—';
-  const parts = [];
-  if (p.date_from || p.date_to) {
-    parts.push(`${p.date_from || '…'} → ${p.date_to || '…'}`);
-  }
-  if (p.username) parts.push(`@${p.username}`);
-  if (p.min_words) parts.push(`≥${p.min_words} words`);
-  if (p.suno_team !== 'all') parts.push(p.suno_team === 'only' ? 'Suno Team only' : 'excl. Suno Team');
-  return parts.length ? parts.join(' · ') : 'All messages';
+async function loadCodingPage() {
+  await _cmRefresh();
 }
 
-function collapseSumForm(filterParams) {
-  document.getElementById('sum-compact-info').textContent = _buildCompactInfo(filterParams);
-  document.getElementById('sum-form-full').classList.add('hidden');
-  document.getElementById('sum-form-compact').classList.remove('hidden');
-}
-
-function expandSumForm() {
-  document.getElementById('sum-form-compact').classList.add('hidden');
-  document.getElementById('sum-form-full').classList.remove('hidden');
-}
-
-document.getElementById('sum-form-expand').addEventListener('click', expandSumForm);
-document.getElementById('sum-form-collapse').addEventListener('click', () => collapseSumForm(sumLastFilterParams));
-
-/* ── Process log ── */
-const LOG_ICONS = {
-  filter:      '🔍',
-  retrieval:   '📡',
-  dedup:       '🧹',
-  cluster:     '🔮',
-  sample:      '🎯',
-  llm:         '✨',
-  fallback:    '⚠️',
-  meta:        '📅',
-  instruction: '📝',
-};
-
-function renderProcessLogEntry(entry) {
-  const logEl = document.getElementById('sum-process-log');
-  const div = document.createElement('div');
-  div.className = `log-entry log-step-${entry.step || 'fallback'}`;
-  const icon  = LOG_ICONS[entry.step] || '•';
-  const label = entry.label || entry.step || '';
-  const msg   = entry.msg   || '';
-  div.innerHTML =
-    `<span class="log-icon">${icon}</span>` +
-    `<span class="log-label">${esc(label)}</span>` +
-    `<span class="log-msg">${esc(msg)}</span>`;
-  logEl.appendChild(div);
-}
-
-/* ── Log panel toggle ── */
-document.getElementById('sum-log-toggle').addEventListener('click', () => {
-  const logEl    = document.getElementById('sum-process-log');
-  const toggleEl = document.getElementById('sum-log-toggle');
-  const hidden   = logEl.classList.toggle('hidden');
-  toggleEl.innerHTML = hidden ? '&#9660; Show' : '&#9650; Hide';
-});
-
-/* ── Follow-up bubble helpers ── */
-function appendFollowUpUserBubble(text) {
-  const container = document.getElementById('sum-followup-history');
-  const wrap = document.createElement('div');
-  wrap.className = 'flex justify-end';
-  const bubble = document.createElement('div');
-  bubble.className = 'chat-bubble-user';
-  bubble.textContent = text;
-  wrap.appendChild(bubble);
-  container.appendChild(wrap);
-  container.scrollTop = container.scrollHeight;
-}
-
-function appendFollowUpAssistantBubble(text) {
-  const container = document.getElementById('sum-followup-history');
-  const wrap = document.createElement('div');
-  wrap.className = 'flex justify-start';
-  const bubble = document.createElement('div');
-  bubble.className = 'chat-bubble-assistant markdown-body';
-  bubble.textContent = text;
-  wrap.appendChild(bubble);
-  container.appendChild(wrap);
-  container.scrollTop = container.scrollHeight;
-  return bubble; // caller streams content into bubble.innerHTML
-}
-
-function appendFollowUpLogStrip() {
-  const container = document.getElementById('sum-followup-history');
-  const strip = document.createElement('div');
-  strip.className = 'fu-log-strip';
-  container.appendChild(strip);
-  container.scrollTop = container.scrollHeight;
-  return strip;
-}
-
-function renderFollowUpLogEntry(strip, entry) {
-  const div = document.createElement('div');
-  div.className = `fu-log-entry fu-log-step-${entry.step || 'fallback'}`;
-  const icon  = LOG_ICONS[entry.step] || '•';
-  const label = entry.label || entry.step || '';
-  const msg   = entry.msg   || '';
-  div.innerHTML =
-    `<span class="fu-log-icon">${icon}</span>` +
-    `<span class="fu-log-label">${esc(label)}</span>` +
-    `<span class="fu-log-msg">${esc(msg)}</span>`;
-  strip.appendChild(div);
-  document.getElementById('sum-followup-history').scrollTop =
-    document.getElementById('sum-followup-history').scrollHeight;
-}
-
-/* ── Generate Hybrid Summary ── */
-async function doSummarize() {
-  const btn      = document.getElementById('sum-btn');
-  const resultEl = document.getElementById('sum-result');
-  const logEl    = document.getElementById('sum-process-log');
-
-  const username    = document.getElementById('sum-username').value.trim();
-  const isMonthMode = document.getElementById('sum-mode-month').classList.contains('range-mode-active');
-  const minW        = parseInt(document.getElementById('sum-min-words').value) || 0;
-  const suno        = document.getElementById('sum-suno').value;
-  const prompt         = document.getElementById('sum-prompt').value.trim();
-  sumLastPrompt        = prompt;
-  const retrievalMode  = document.getElementById('sum-retrieval-mode').value;
-  const scope          = getScopeParam();
-  const sumModel    = document.getElementById('sum-model').value;
-
-  let dateFrom = '', dateTo = '';
-  if (isMonthMode) {
-    const mFrom = document.getElementById('sum-month-from').value;
-    const mTo   = document.getElementById('sum-month-to').value;
-    if (mFrom) dateFrom = mFrom + '-01';
-    if (mTo) {
-      const parts = mTo.split('-');
-      const lastDay = new Date(parseInt(parts[0]), parseInt(parts[1]), 0).getDate();
-      dateTo = mTo + '-' + String(lastDay).padStart(2, '0');
-    }
-  } else {
-    dateFrom = document.getElementById('sum-date-from').value;
-    dateTo   = document.getElementById('sum-date-to').value;
-  }
-
-  btn.disabled = true;
-  btn.textContent = 'Summarizing…';
-
-  // Show results panel and reset its contents
-  document.getElementById('sum-results-panel').classList.remove('hidden');
-  logEl.innerHTML = '';
-  resultEl.innerHTML = '';
-  // Make sure log panel is visible
-  logEl.classList.remove('hidden');
-  document.getElementById('sum-log-toggle').innerHTML = '&#9650; Hide';
-
-  // Show custom instruction at top of log if provided
-  if (prompt) {
-    const div = document.createElement('div');
-    div.className = 'log-entry log-step-instruction';
-    div.innerHTML =
-      `<span class="log-icon">📝</span>` +
-      `<span class="log-label">Custom instructions</span>` +
-      `<span class="log-msg log-msg-wrap">${esc(prompt)}</span>`;
-    logEl.appendChild(div);
-  }
-
-  // Reset follow-up section whenever a new summary starts
-  document.getElementById('sum-followup-section').classList.add('hidden');
-  document.getElementById('sum-followup-history').innerHTML = '';
-  sumFollowUpHistory = [];
-  sumLastFilterParams = null;
-
-  // Show collapse button while generating
-  document.getElementById('sum-form-collapse').classList.remove('hidden');
-
+async function _cmRefresh() {
   try {
-    const currentParams = {
-      username:   username  || null,
-      date_from:  dateFrom  || null,
-      date_to:    dateTo    || null,
-      upload_ids: scope ? scope.split(',') : [],
-      min_words:  minW,
-      suno_team:  suno,
-      model:      sumModel,
-    };
-
-    const res = await fetch('/api/summarize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...currentParams, prompt: prompt || null, retrieval_mode: retrievalMode }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
-      throw new Error(err.detail || 'Request failed');
-    }
-
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let summaryText = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const raw = line.slice(6).trim();
-        if (raw === '[DONE]') break;
-        try {
-          const delta = JSON.parse(raw);
-          if (delta.type === 'log') {
-            renderProcessLogEntry(delta);
-          } else if (delta.content) {
-            summaryText += delta.content;
-            resultEl.innerHTML = marked.parse(summaryText);
-          } else if (delta.error) {
-            throw new Error(delta.error);
-          }
-        } catch (parseErr) {
-          if (!(parseErr instanceof SyntaxError)) throw parseErr;
-        }
-      }
-    }
-
-    if (!summaryText) {
-      showErrorPopup('No response received from the model. The model may be unavailable or the request was rejected. Check your API key and selected model.');
-      return;
-    }
-
-    // Persist filter params for follow-up retrieval against the same pool
-    sumLastFilterParams = currentParams;
-    // Seed history with the summary so follow-up LLM has full context
-    sumFollowUpHistory = [{ role: 'assistant', content: summaryText }];
-
-    // Reveal follow-up section
-    document.getElementById('sum-followup-section').classList.remove('hidden');
-
-    // Collapse the form so results are easily readable
-    collapseSumForm(currentParams);
-
+    [_cmCodes, _cmCategories] = await Promise.all([
+      apiFetch('/api/codes'),
+      apiFetch('/api/code-categories'),
+    ]);
   } catch (e) {
-    showErrorPopup(e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Generate Hybrid Summary';
-  }
-}
-
-document.getElementById('sum-btn').addEventListener('click', doSummarize);
-
-/* ── Retrieval mode toggle ── */
-(function () {
-  const modeEl  = document.getElementById('sum-retrieval-mode');
-  const hintEl  = document.getElementById('sum-mode-hint');
-  const HINTS = {
-    cluster: 'Semantic retrieval \u2192 HDBSCAN clustering \u2192 representative sampling',
-    all:     'All messages matching the filters above are sent directly to the LLM',
-  };
-  function applyMode(mode) {
-    hintEl.textContent = HINTS[mode] || '';
-  }
-  modeEl.addEventListener('change', () => applyMode(modeEl.value));
-  applyMode(modeEl.value); // initialise on page load
-}());
-
-/* ── Follow-up Q&A ── */
-async function sendSumFollowUp() {
-  const input    = document.getElementById('sum-followup-input');
-  const sendBtn  = document.getElementById('sum-followup-send');
-  const question = input.value.trim();
-
-  if (!question) return;
-  if (!sumLastFilterParams) {
-    showErrorPopup('Generate a summary first before asking follow-up questions.');
+    document.getElementById('cm-code-list').innerHTML =
+      `<p class="text-sm text-red-500 text-center py-8">Failed to load: ${esc(e.message)}</p>`;
     return;
   }
-
-  input.value     = '';
-  input.disabled  = true;
-  sendBtn.disabled = true;
-  sendBtn.textContent = '…';
-
-  sumFollowUpHistory.push({ role: 'user', content: question });
-  appendFollowUpUserBubble(question);
-
-  const fuLogStrip = appendFollowUpLogStrip();
-  const bubble = appendFollowUpAssistantBubble('');
-  let answerText = '';
-
-  try {
-    const res = await fetch('/api/summarize/followup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        question,
-        // History excludes the current question (already in 'question' field).
-        // history[0] = initial summary; rest = prior Q&A turns.
-        history: sumFollowUpHistory.slice(0, -1),
-        // Original custom instructions so the backend can include them as context.
-        prompt: sumLastPrompt || null,
-        ...sumLastFilterParams,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
-      throw new Error(err.detail || 'Request failed');
-    }
-
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const raw = line.slice(6).trim();
-        if (raw === '[DONE]') break;
-        try {
-          const delta = JSON.parse(raw);
-          if (delta.type === 'log') {
-            renderFollowUpLogEntry(fuLogStrip, delta);
-          } else if (delta.content) {
-            answerText += delta.content;
-            bubble.innerHTML = marked.parse(answerText);
-            document.getElementById('sum-followup-history').scrollTop =
-              document.getElementById('sum-followup-history').scrollHeight;
-          } else if (delta.error) {
-            throw new Error(delta.error);
-          }
-        } catch (parseErr) {
-          if (!(parseErr instanceof SyntaxError)) throw parseErr;
-        }
-      }
-    }
-
-    sumFollowUpHistory.push({ role: 'assistant', content: answerText });
-
-  } catch (e) {
-    bubble.remove();
-    sumFollowUpHistory.pop(); // roll back the user turn
-    showErrorPopup(e.message);
-  } finally {
-    input.disabled   = false;
-    sendBtn.disabled = false;
-    sendBtn.textContent = 'Ask';
-    input.focus();
+  _cmPopulateCategorySelects();
+  _cmRenderCodeList();
+  if (_cmOpenCodeId !== null) {
+    const code = _cmCodes.find(c => c.id === _cmOpenCodeId);
+    if (code) _cmOpenDetail(code);
+    else _cmCloseDetail();
   }
 }
 
-document.getElementById('sum-followup-send').addEventListener('click', sendSumFollowUp);
-document.getElementById('sum-followup-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); sendSumFollowUp(); }
-});
-document.getElementById('sum-followup-clear').addEventListener('click', () => {
-  // Keep index-0 (initial summary) so follow-up context is preserved
-  const init = sumFollowUpHistory[0];
-  sumFollowUpHistory = init ? [init] : [];
-  document.getElementById('sum-followup-history').innerHTML = '';
-});
+function _cmPopulateCategorySelects() {
+  const opts = '<option value="">— Uncategorized —</option>' +
+    _cmCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  document.getElementById('cm-nc-category').innerHTML = opts;
+  document.getElementById('cm-edit-category').innerHTML = opts;
+}
 
-/* ── PDF Export ── */
-function exportSummaryPDF() {
-  const summaryHTML = document.getElementById('sum-result').innerHTML;
-  const dateStr     = new Date().toLocaleDateString('en-US', {
-    year: 'numeric', month: 'long', day: 'numeric',
+function _cmRenderCodeList() {
+  const list = document.getElementById('cm-code-list');
+  if (!_cmCodes.length) {
+    list.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No codes yet. Click "+ New Code" to create your first code.</p>';
+    return;
+  }
+  const grouped = {};
+  _cmCodes.forEach(c => {
+    const key = c.category_id ?? '__none__';
+    (grouped[key] = grouped[key] || []).push(c);
   });
-
-  // ── Build filename: Summary_<date range>_<excerpt> ────────────────────────
-  // Date/month range from filter params (YYYY-MM-DD → keep YYYY-MM for brevity)
-  let dateRangePart = 'All';
-  if (sumLastFilterParams) {
-    const df = sumLastFilterParams.date_from;
-    const dt = sumLastFilterParams.date_to;
-    if (df && dt)   dateRangePart = `${df.slice(0, 7)}_${dt.slice(0, 7)}`;
-    else if (df)    dateRangePart = `from_${df.slice(0, 7)}`;
-    else if (dt)    dateRangePart = `to_${dt.slice(0, 7)}`;
-  }
-
-  // Plain-text excerpt: strip HTML tags, collapse whitespace, take first ~55 chars
-  const rawText = (document.getElementById('sum-result').innerText || '')
-    .replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
-    .replace(/^[#\s*_]+/, '')   // drop any leading markdown artefacts
-    .trim();
-  let excerpt = rawText.slice(0, 55);
-  if (rawText.length > 55) {
-    const lastSpace = excerpt.lastIndexOf(' ');
-    if (lastSpace > 20) excerpt = excerpt.slice(0, lastSpace);
-  }
-  // Sanitize: keep alphanumerics, spaces, hyphens; convert spaces to underscores
-  const excerptSafe = excerpt
-    .replace(/[^\w\s-]/g, '')
-    .replace(/\s+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_|_$/g, '')
-    .slice(0, 50);
-
-  const pdfFilename = ['Summary', dateRangePart, excerptSafe]
-    .filter(Boolean)
-    .join('_');
-
-  // Build custom instruction block if present
-  let instructionHTML = '';
-  if (sumLastPrompt) {
-    const safe = sumLastPrompt
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    instructionHTML = `<div class="custom-instruction"><span class="ci-label">Custom Instructions</span>${safe}</div>`;
-  }
-
-  // Build Q&A section from history (skip index 0 = initial summary)
-  let qaHTML = '';
-  const qaHistory = sumFollowUpHistory.slice(1);
-  for (const turn of qaHistory) {
-    if (turn.role === 'user') {
-      const safe = turn.content
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      qaHTML += `<div class="q-block"><span class="q-label">Question</span>${safe}</div>`;
-    } else {
-      qaHTML += `<div class="a-block">${marked.parse(turn.content)}</div>`;
-    }
-  }
-
-  // Build a self-contained HTML string and open it via a Blob URL so we
-  // avoid the deprecated document.write() API entirely.
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>${pdfFilename}</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  max-width: 820px; margin: 40px auto; padding: 0 28px;
-  color: #1e293b; line-height: 1.65; font-size: 14px;
-}
-h1  { font-size: 1.5rem; color: #3730a3; padding-bottom: 10px;
-      border-bottom: 2px solid #e2e8f0; margin-bottom: 6px; }
-.meta { font-size: 0.75rem; color: #6b7280; margin-bottom: 1.75rem; }
-h2  { font-size: 1.15rem; font-weight: 700; color: #1e293b; margin-top: 2rem;
-      border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 1rem; }
-h3  { font-size: 1rem; font-weight: 600; color: #374151; margin: 1rem 0 0.4rem; }
-h4  { font-size: 0.9rem; font-weight: 600; margin: 0.8rem 0 0.3rem; }
-p   { margin-bottom: 0.65rem; }
-ul, ol { padding-left: 1.4rem; margin-bottom: 0.65rem; }
-li  { margin-bottom: 0.2rem; }
-blockquote {
-  border-left: 3px solid #6366f1; margin: 0.75rem 0;
-  padding: 6px 14px; background: #f5f3ff; color: #3730a3;
-  border-radius: 0 6px 6px 0; font-style: italic;
-}
-code {
-  background: #f1f5f9; border-radius: 4px;
-  padding: 1px 5px; font-size: 0.82em; font-family: monospace;
-}
-pre  {
-  background: #1e293b; color: #e2e8f0; border-radius: 6px;
-  padding: 12px; overflow-x: auto; margin-bottom: 0.65rem;
-}
-pre code { background: none; padding: 0; color: inherit; }
-hr   { border: none; border-top: 1px solid #e2e8f0; margin: 1.25rem 0; }
-strong { font-weight: 700; }
-em     { font-style: italic; }
-a      { color: #3730a3; text-decoration: underline; }
-table  { border-collapse: collapse; width: 100%; margin-bottom: 0.65rem; font-size: 0.85rem; }
-th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
-th     { background: #f8fafc; font-weight: 700; }
-.custom-instruction {
-  background: #fefce8; border: 1px solid #fde68a; border-radius: 6px;
-  padding: 8px 14px; margin-bottom: 1.75rem; font-size: 0.8rem; color: #713f12;
-}
-.ci-label {
-  display: block; font-size: 0.68rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: #92400e; margin-bottom: 4px;
-}
-.q-block {
-  background: #eef2ff; border-radius: 10px 10px 10px 2px;
-  padding: 10px 14px; margin: 14px 0 4px; color: #1e1b4b; font-weight: 600;
-}
-.q-label {
-  display: block; font-size: 0.68rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: #6366f1; margin-bottom: 4px;
-}
-.a-block {
-  background: #f8fafc; border-left: 3px solid #94a3b8;
-  border-radius: 0 10px 10px 0; padding: 10px 14px; margin: 4px 0 14px;
-}
-@media print { body { margin: 16px 28px; } }
-</style>
-</head>
-<body>
-<h1>Hybrid Summary</h1>
-<p class="meta">Exported ${dateStr}</p>
-${instructionHTML}
-<div class="summary-body">${summaryHTML}</div>
-${qaHTML ? '<h2>Follow-up Q&amp;A</h2><div class="qa-body">' + qaHTML + '</div>' : ''}
-<script>window.onload = function() { window.print(); };<\/script>
-</body>
-</html>`;
-
-  const blob = new Blob([html], { type: 'text/html' });
-  const url  = URL.createObjectURL(blob);
-  const win  = window.open(url, '_blank', 'width=920,height=750');
-  if (!win) {
-    URL.revokeObjectURL(url);
-    showErrorPopup('Pop-up blocked. Please allow pop-ups for this page, then try again.');
-    return;
-  }
-  // Release the object URL once the new window has loaded the document
-  win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
-}
-
-document.getElementById('sum-export-pdf').addEventListener('click', exportSummaryPDF);
-document.getElementById('sum-export-pdf-followup').addEventListener('click', exportSummaryPDF);
-
-/* ══════════════════════════════════════════════════════════════════════════
-   SUB-TAB SWITCHING (Chat Summary ↔ User Profile)
-══════════════════════════════════════════════════════════════════════════ */
-(function () {
-  function switchSubtab(tab) {
-    const isChatTab = tab === 'chat';
-    document.getElementById('subtab-chat').classList.toggle('hidden', !isChatTab);
-    document.getElementById('subtab-profile').classList.toggle('hidden', isChatTab);
-    document.getElementById('subtab-btn-chat').classList.toggle('subtab-btn-active', isChatTab);
-    document.getElementById('subtab-btn-profile').classList.toggle('subtab-btn-active', !isChatTab);
-  }
-  document.getElementById('subtab-btn-chat').addEventListener('click', () => switchSubtab('chat'));
-  document.getElementById('subtab-btn-profile').addEventListener('click', () => switchSubtab('profile'));
-}());
-
-/* ══════════════════════════════════════════════════════════════════════════
-   USER PROFILE
-══════════════════════════════════════════════════════════════════════════ */
-
-/* ── State ── */
-let profFollowUpHistory  = [];
-let profLastFilterParams = null;
-let profLastPrompt       = '';
-
-/* ── Form collapse / expand ── */
-function _buildProfCompactInfo(p) {
-  if (!p) return '—';
-  const parts = [];
-  if (p.profile_username) parts.push(`@${p.profile_username}`);
-  if (p.date_from || p.date_to) {
-    parts.push(`${p.date_from || '…'} → ${p.date_to || '…'}`);
-  }
-  return parts.length ? parts.join(' · ') : 'All messages';
-}
-
-function collapseProfForm(filterParams) {
-  document.getElementById('prof-compact-info').textContent = _buildProfCompactInfo(filterParams);
-  document.getElementById('prof-form-full').classList.add('hidden');
-  document.getElementById('prof-form-compact').classList.remove('hidden');
-}
-
-function expandProfForm() {
-  document.getElementById('prof-form-compact').classList.add('hidden');
-  document.getElementById('prof-form-full').classList.remove('hidden');
-}
-
-document.getElementById('prof-form-expand').addEventListener('click', expandProfForm);
-document.getElementById('prof-form-collapse').addEventListener('click', () => collapseProfForm(profLastFilterParams));
-
-/* ── Date mode toggle ── */
-(function () {
-  const exactBtn  = document.getElementById('prof-mode-exact');
-  const monthBtn  = document.getElementById('prof-mode-month');
-  const exactDiv  = document.getElementById('prof-exact-inputs');
-  const monthDiv  = document.getElementById('prof-month-inputs');
-
-  function setMode(mode) {
-    const isExact = mode === 'exact';
-    exactBtn.classList.toggle('range-mode-active', isExact);
-    exactBtn.setAttribute('aria-pressed', String(isExact));
-    monthBtn.classList.toggle('range-mode-active', !isExact);
-    monthBtn.setAttribute('aria-pressed', String(!isExact));
-    exactDiv.classList.toggle('hidden', !isExact);
-    monthDiv.classList.toggle('hidden', isExact);
-  }
-
-  exactBtn.addEventListener('click', () => setMode('exact'));
-  monthBtn.addEventListener('click', () => setMode('month'));
-  setMode('exact'); // default
-}());
-
-/* ── Retrieval mode hint ── */
-(function () {
-  const modeEl = document.getElementById('prof-retrieval-mode');
-  const hintEl = document.getElementById('prof-mode-hint');
-  const HINTS = {
-    cluster: 'Semantic retrieval → HDBSCAN clustering → representative sampling',
-    all:     'All messages by this user matching the filters are sent directly to the LLM',
-  };
-  function applyMode(mode) { hintEl.textContent = HINTS[mode] || ''; }
-  modeEl.addEventListener('change', () => applyMode(modeEl.value));
-  applyMode(modeEl.value);
-}());
-
-/* ── Process log ── */
-function renderProfLogEntry(entry) {
-  const logEl = document.getElementById('prof-process-log');
-  const div = document.createElement('div');
-  div.className = `log-entry log-step-${entry.step || 'fallback'}`;
-  const icon  = LOG_ICONS[entry.step] || '•';
-  const label = entry.label || entry.step || '';
-  const msg   = entry.msg   || '';
-  div.innerHTML =
-    `<span class="log-icon">${icon}</span>` +
-    `<span class="log-label">${esc(label)}</span>` +
-    `<span class="log-msg">${esc(msg)}</span>`;
-  logEl.appendChild(div);
-}
-
-document.getElementById('prof-log-toggle').addEventListener('click', () => {
-  const logEl    = document.getElementById('prof-process-log');
-  const toggleEl = document.getElementById('prof-log-toggle');
-  const hidden   = logEl.classList.toggle('hidden');
-  toggleEl.innerHTML = hidden ? '&#9660; Show' : '&#9650; Hide';
-});
-
-/* ── Follow-up bubble helpers ── */
-function appendProfFollowUpUserBubble(text) {
-  const container = document.getElementById('prof-followup-history');
-  const wrap   = document.createElement('div');
-  wrap.className = 'flex justify-end';
-  const bubble = document.createElement('div');
-  bubble.className = 'chat-bubble-user';
-  bubble.textContent = text;
-  wrap.appendChild(bubble);
-  container.appendChild(wrap);
-  container.scrollTop = container.scrollHeight;
-}
-
-function appendProfFollowUpAssistantBubble(text) {
-  const container = document.getElementById('prof-followup-history');
-  const wrap   = document.createElement('div');
-  wrap.className = 'flex justify-start';
-  const bubble = document.createElement('div');
-  bubble.className = 'chat-bubble-assistant markdown-body';
-  bubble.textContent = text;
-  wrap.appendChild(bubble);
-  container.appendChild(wrap);
-  container.scrollTop = container.scrollHeight;
-  return bubble;
-}
-
-function appendProfFollowUpLogStrip() {
-  const container = document.getElementById('prof-followup-history');
-  const strip = document.createElement('div');
-  strip.className = 'fu-log-strip';
-  container.appendChild(strip);
-  container.scrollTop = container.scrollHeight;
-  return strip;
-}
-
-function renderProfFollowUpLogEntry(strip, entry) {
-  const div = document.createElement('div');
-  div.className = `fu-log-entry fu-log-step-${entry.step || 'fallback'}`;
-  const icon  = LOG_ICONS[entry.step] || '•';
-  const label = entry.label || entry.step || '';
-  const msg   = entry.msg   || '';
-  div.innerHTML =
-    `<span class="fu-log-icon">${icon}</span>` +
-    `<span class="fu-log-label">${esc(label)}</span>` +
-    `<span class="fu-log-msg">${esc(msg)}</span>`;
-  strip.appendChild(div);
-  document.getElementById('prof-followup-history').scrollTop =
-    document.getElementById('prof-followup-history').scrollHeight;
-}
-
-/* ── Analyse User ── */
-async function doUserProfile() {
-  const btn       = document.getElementById('prof-btn');
-  const resultEl  = document.getElementById('prof-result');
-  const logEl     = document.getElementById('prof-process-log');
-
-  const profileUsername = document.getElementById('prof-username').value.trim();
-  if (!profileUsername) {
-    showErrorPopup('Please enter a username to analyse.');
-    return;
-  }
-
-  const isMonthMode    = document.getElementById('prof-mode-month').classList.contains('range-mode-active');
-  const prompt         = document.getElementById('prof-prompt').value.trim();
-  profLastPrompt       = prompt;
-  const retrievalMode  = document.getElementById('prof-retrieval-mode').value;
-  const profModel      = document.getElementById('prof-model').value;
-  const scope          = getScopeParam();
-
-  let dateFrom = '', dateTo = '';
-  if (isMonthMode) {
-    const mFrom = document.getElementById('prof-month-from').value;
-    const mTo   = document.getElementById('prof-month-to').value;
-    if (mFrom) dateFrom = mFrom + '-01';
-    if (mTo) {
-      const parts = mTo.split('-');
-      const lastDay = new Date(parseInt(parts[0]), parseInt(parts[1]), 0).getDate();
-      dateTo = mTo + '-' + String(lastDay).padStart(2, '0');
-    }
-  } else {
-    dateFrom = document.getElementById('prof-date-from').value;
-    dateTo   = document.getElementById('prof-date-to').value;
-  }
-
-  btn.disabled    = true;
-  btn.textContent = 'Analysing…';
-
-  document.getElementById('prof-results-panel').classList.remove('hidden');
-  logEl.innerHTML  = '';
-  resultEl.innerHTML = '';
-  logEl.classList.remove('hidden');
-  document.getElementById('prof-log-toggle').innerHTML = '&#9650; Hide';
-
-  // Show custom instruction in log if provided
-  if (prompt) {
-    const div = document.createElement('div');
-    div.className = 'log-entry log-step-instruction';
-    div.innerHTML =
-      `<span class="log-icon">📝</span>` +
-      `<span class="log-label">Custom instructions</span>` +
-      `<span class="log-msg log-msg-wrap">${esc(prompt)}</span>`;
-    logEl.appendChild(div);
-  }
-
-  // Reset follow-up section
-  document.getElementById('prof-followup-section').classList.add('hidden');
-  document.getElementById('prof-followup-history').innerHTML = '';
-  profFollowUpHistory  = [];
-  profLastFilterParams = null;
-
-  // Show collapse button
-  document.getElementById('prof-form-collapse').classList.remove('hidden');
-
-  try {
-    const currentParams = {
-      profile_username: profileUsername,
-      date_from:        dateFrom  || null,
-      date_to:          dateTo    || null,
-      upload_ids:       scope ? scope.split(',') : [],
-      model:            profModel,
-    };
-
-    const res = await fetch('/api/user-profile', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...currentParams,
-        prompt:         prompt || null,
-        retrieval_mode: retrievalMode,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
-      throw new Error(err.detail || 'Request failed');
-    }
-
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let profileText = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const raw = line.slice(6).trim();
-        if (raw === '[DONE]') break;
-        try {
-          const delta = JSON.parse(raw);
-          if (delta.type === 'log') {
-            renderProfLogEntry(delta);
-          } else if (delta.content) {
-            profileText += delta.content;
-            resultEl.innerHTML = marked.parse(profileText);
-          } else if (delta.error) {
-            throw new Error(delta.error);
-          }
-        } catch (parseErr) {
-          if (!(parseErr instanceof SyntaxError)) throw parseErr;
-        }
-      }
-    }
-
-    if (!profileText) {
-      showErrorPopup('No response received from the model. Check your API key and selected model.');
-      return;
-    }
-
-    profLastFilterParams = currentParams;
-    profFollowUpHistory  = [{ role: 'assistant', content: profileText }];
-
-    document.getElementById('prof-followup-section').classList.remove('hidden');
-    collapseProfForm(currentParams);
-
-  } catch (e) {
-    showErrorPopup(e.message);
-  } finally {
-    btn.disabled    = false;
-    btn.textContent = 'Analyse User';
-  }
-}
-
-document.getElementById('prof-btn').addEventListener('click', doUserProfile);
-
-/* ── Follow-up Q&A ── */
-async function sendProfileFollowUp() {
-  const input    = document.getElementById('prof-followup-input');
-  const sendBtn  = document.getElementById('prof-followup-send');
-  const question = input.value.trim();
-
-  if (!question) return;
-  if (!profLastFilterParams) {
-    showErrorPopup('Run a User Profile analysis first before asking follow-up questions.');
-    return;
-  }
-
-  input.value      = '';
-  input.disabled   = true;
-  sendBtn.disabled = true;
-  sendBtn.textContent = '…';
-
-  profFollowUpHistory.push({ role: 'user', content: question });
-  appendProfFollowUpUserBubble(question);
-
-  const fuLogStrip = appendProfFollowUpLogStrip();
-  const bubble     = appendProfFollowUpAssistantBubble('');
-  let answerText   = '';
-
-  try {
-    const res = await fetch('/api/user-profile/followup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        question,
-        history:  profFollowUpHistory.slice(0, -1),
-        prompt:   profLastPrompt || null,
-        ...profLastFilterParams,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
-      throw new Error(err.detail || 'Request failed');
-    }
-
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const raw = line.slice(6).trim();
-        if (raw === '[DONE]') break;
-        try {
-          const delta = JSON.parse(raw);
-          if (delta.type === 'log') {
-            renderProfFollowUpLogEntry(fuLogStrip, delta);
-          } else if (delta.content) {
-            answerText += delta.content;
-            bubble.innerHTML = marked.parse(answerText);
-            document.getElementById('prof-followup-history').scrollTop =
-              document.getElementById('prof-followup-history').scrollHeight;
-          } else if (delta.error) {
-            throw new Error(delta.error);
-          }
-        } catch (parseErr) {
-          if (!(parseErr instanceof SyntaxError)) throw parseErr;
-        }
-      }
-    }
-
-    profFollowUpHistory.push({ role: 'assistant', content: answerText });
-
-  } catch (e) {
-    bubble.remove();
-    profFollowUpHistory.pop();
-    showErrorPopup(e.message);
-  } finally {
-    input.disabled   = false;
-    sendBtn.disabled = false;
-    sendBtn.textContent = 'Ask';
-    input.focus();
-  }
-}
-
-document.getElementById('prof-followup-send').addEventListener('click', sendProfileFollowUp);
-document.getElementById('prof-followup-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); sendProfileFollowUp(); }
-});
-document.getElementById('prof-followup-clear').addEventListener('click', () => {
-  const init = profFollowUpHistory[0];
-  profFollowUpHistory = init ? [init] : [];
-  document.getElementById('prof-followup-history').innerHTML = '';
-});
-
-/* ── PDF Export ── */
-function exportProfilePDF() {
-  const profileHTML = document.getElementById('prof-result').innerHTML;
-  const dateStr     = new Date().toLocaleDateString('en-US', {
-    year: 'numeric', month: 'long', day: 'numeric',
+  const sections = [];
+  const sortedCats = [..._cmCategories].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  sortedCats.forEach(cat => {
+    const codes = grouped[cat.id];
+    if (!codes) return;
+    sections.push(_cmCategorySection(cat, codes));
   });
-
-  const username = profLastFilterParams ? (profLastFilterParams.profile_username || 'User') : 'User';
-
-  // Filename: Profile_<username>_<date range>
-  let dateRangePart = 'All';
-  if (profLastFilterParams) {
-    const df = profLastFilterParams.date_from;
-    const dt = profLastFilterParams.date_to;
-    if (df && dt)   dateRangePart = `${df.slice(0, 7)}_${dt.slice(0, 7)}`;
-    else if (df)    dateRangePart = `from_${df.slice(0, 7)}`;
-    else if (dt)    dateRangePart = `to_${dt.slice(0, 7)}`;
+  if (grouped['__none__']?.length) {
+    sections.push(_cmCategorySection(null, grouped['__none__']));
   }
-  const pdfFilename = `Profile_${username}_${dateRangePart}`;
+  list.innerHTML = sections.join('');
+}
 
-  // Build custom instruction block if present
-  let instructionHTML = '';
-  if (profLastPrompt) {
-    const safe = profLastPrompt
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    instructionHTML = `<div class="custom-instruction"><span class="ci-label">Custom Instructions</span>${safe}</div>`;
-  }
+function _cmCategorySection(cat, codes) {
+  const catHeader = cat
+    ? `<div class="flex items-center gap-2 mb-2">
+         <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${cat.color}"></span>
+         <span class="text-xs font-semibold text-gray-600 uppercase tracking-wide">${esc(cat.name)}</span>
+       </div>`
+    : `<div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Uncategorized</div>`;
+  const cards = codes.map(c => {
+    const tc       = labelTextColor(c.color);
+    const selected = _cmSelected.has(c.id);
+    const selCls   = selected ? 'ring-2 ring-amber-400 bg-amber-50' : 'bg-white hover:border-indigo-200';
+    return `
+      <div class="cm-code-card border rounded-xl p-3 flex items-start gap-3 cursor-pointer transition-all ${selCls}"
+           data-code-id="${c.id}">
+        ${_cmMergeMode ? `<input type="checkbox" class="mt-0.5 accent-amber-500 shrink-0 cm-select-cb" ${selected ? 'checked' : ''} data-code-id="${c.id}" />` : ''}
+        <span class="w-3 h-3 rounded-full shrink-0 mt-0.5" style="background:${c.color}"></span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-sm font-semibold text-gray-800">${esc(c.name)}</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style="background:${c.color};color:${tc}">${c.groundedness} quotes</span>
+          </div>
+          ${c.description ? `<p class="text-xs text-gray-500 mt-0.5 truncate">${esc(c.description)}</p>` : ''}
+        </div>
+        <span class="text-[10px] text-gray-400 shrink-0 mt-0.5">density ${c.density}</span>
+      </div>`;
+  }).join('');
+  return `<div class="space-y-2 mb-4">${catHeader}${cards}</div>`;
+}
 
-  // Build Q&A section
-  let qaHTML = '';
-  const qaHistory = profFollowUpHistory.slice(1);
-  for (const turn of qaHistory) {
-    if (turn.role === 'user') {
-      const safe = turn.content
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      qaHTML += `<div class="q-block"><span class="q-label">Question</span>${safe}</div>`;
-    } else {
-      qaHTML += `<div class="a-block">${marked.parse(turn.content)}</div>`;
-    }
-  }
+function _cmOpenDetail(code) {
+  _cmOpenCodeId = code.id;
+  const panel = document.getElementById('cm-detail-panel');
+  panel.classList.remove('hidden');
+  document.getElementById('cm-edit-name').value  = code.name;
+  document.getElementById('cm-edit-color').value = code.color;
+  document.getElementById('cm-edit-desc').value  = code.description || '';
+  document.getElementById('cm-edit-category').value = code.category_id ?? '';
+  document.getElementById('cm-edit-ground').textContent  = code.groundedness ?? '—';
+  document.getElementById('cm-edit-density').textContent = code.density ?? '—';
+  document.getElementById('cm-edit-msg').classList.add('hidden');
+}
 
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>${pdfFilename}</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  max-width: 820px; margin: 40px auto; padding: 0 28px;
-  color: #1e293b; line-height: 1.65; font-size: 14px;
+function _cmCloseDetail() {
+  _cmOpenCodeId = null;
+  document.getElementById('cm-detail-panel').classList.add('hidden');
 }
-h1  { font-size: 1.5rem; color: #0f766e; padding-bottom: 10px;
-      border-bottom: 2px solid #e2e8f0; margin-bottom: 6px; }
-.meta { font-size: 0.75rem; color: #6b7280; margin-bottom: 1.75rem; }
-h2  { font-size: 1.15rem; font-weight: 700; color: #1e293b; margin-top: 2rem;
-      border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 1rem; }
-h3  { font-size: 1rem; font-weight: 600; color: #374151; margin: 1rem 0 0.4rem; }
-h4  { font-size: 0.9rem; font-weight: 600; margin: 0.8rem 0 0.3rem; }
-p   { margin-bottom: 0.65rem; }
-ul, ol { padding-left: 1.4rem; margin-bottom: 0.65rem; }
-li  { margin-bottom: 0.2rem; }
-blockquote {
-  border-left: 3px solid #0d9488; margin: 0.75rem 0;
-  padding: 6px 14px; background: #f0fdfa; color: #134e4a;
-  border-radius: 0 6px 6px 0; font-style: italic;
-}
-code {
-  background: #f1f5f9; border-radius: 4px;
-  padding: 1px 5px; font-size: 0.82em; font-family: monospace;
-}
-pre  {
-  background: #1e293b; color: #e2e8f0; border-radius: 6px;
-  padding: 12px; overflow-x: auto; margin-bottom: 0.65rem;
-}
-pre code { background: none; padding: 0; color: inherit; }
-hr   { border: none; border-top: 1px solid #e2e8f0; margin: 1.25rem 0; }
-strong { font-weight: 700; }
-em     { font-style: italic; }
-a      { color: #0f766e; text-decoration: underline; }
-table  { border-collapse: collapse; width: 100%; margin-bottom: 0.65rem; font-size: 0.85rem; }
-th, td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
-th     { background: #f8fafc; font-weight: 700; }
-.custom-instruction {
-  background: #fefce8; border: 1px solid #fde68a; border-radius: 6px;
-  padding: 8px 14px; margin-bottom: 1.75rem; font-size: 0.8rem; color: #713f12;
-}
-.ci-label {
-  display: block; font-size: 0.68rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: #92400e; margin-bottom: 4px;
-}
-.q-block {
-  background: #f0fdfa; border-radius: 10px 10px 10px 2px;
-  padding: 10px 14px; margin: 14px 0 4px; color: #134e4a; font-weight: 600;
-}
-.q-label {
-  display: block; font-size: 0.68rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: #0d9488; margin-bottom: 4px;
-}
-.a-block {
-  background: #f8fafc; border-left: 3px solid #94a3b8;
-  border-radius: 0 10px 10px 0; padding: 10px 14px; margin: 4px 0 14px;
-}
-@media print { body { margin: 16px 28px; } }
-</style>
-</head>
-<body>
-<h1>User Profile: ${username.replace(/</g, '&lt;')}</h1>
-<p class="meta">Exported ${dateStr}</p>
-${instructionHTML}
-<div class="profile-body">${profileHTML}</div>
-${qaHTML ? '<h2>Follow-up Q&amp;A</h2><div class="qa-body">' + qaHTML + '</div>' : ''}
-<script>window.onload = function() { window.print(); };<\/script>
-</body>
-</html>`;
 
-  const blob = new Blob([html], { type: 'text/html' });
-  const url  = URL.createObjectURL(blob);
-  const win  = window.open(url, '_blank', 'width=920,height=750');
-  if (!win) {
-    URL.revokeObjectURL(url);
-    showErrorPopup('Pop-up blocked. Please allow pop-ups for this page, then try again.');
+document.getElementById('cm-code-list').addEventListener('click', e => {
+  const cb = e.target.closest('.cm-select-cb');
+  if (cb) {
+    const id = parseInt(cb.dataset.codeId);
+    if (_cmSelected.has(id)) _cmSelected.delete(id); else _cmSelected.add(id);
+    _cmUpdateMergeBtn();
+    _cmRenderCodeList();
     return;
   }
-  win.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+  const card = e.target.closest('.cm-code-card');
+  if (!card) return;
+  if (_cmMergeMode) {
+    const id = parseInt(card.dataset.codeId);
+    if (_cmSelected.has(id)) _cmSelected.delete(id); else _cmSelected.add(id);
+    _cmUpdateMergeBtn();
+    _cmRenderCodeList();
+    return;
+  }
+  const code = _cmCodes.find(c => c.id === parseInt(card.dataset.codeId));
+  if (code) _cmOpenDetail(code);
+});
+
+document.getElementById('cm-edit-save').addEventListener('click', async () => {
+  if (_cmOpenCodeId === null) return;
+  const name        = document.getElementById('cm-edit-name').value.trim();
+  const color       = document.getElementById('cm-edit-color').value;
+  const description = document.getElementById('cm-edit-desc').value.trim();
+  const catVal      = document.getElementById('cm-edit-category').value;
+  const category_id = catVal ? parseInt(catVal) : null;
+  if (!name) return;
+  try {
+    await apiFetch(`/api/codes/${_cmOpenCodeId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, color, description, category_id }),
+    });
+    const msgEl = document.getElementById('cm-edit-msg');
+    msgEl.textContent = 'Saved.';
+    msgEl.classList.remove('hidden');
+    setTimeout(() => msgEl.classList.add('hidden'), 2500);
+    _allCodes = _allCodes.map(c => c.id === _cmOpenCodeId ? { ...c, name, color, description, category_id } : c);
+    _cachedBookmarks.forEach(bm => { (bm.codes || []).forEach(c => { if (c.id === _cmOpenCodeId) { c.name = name; c.color = color; } }); });
+    renderBmCodeFilterChips();
+    await _cmRefresh();
+    document.dispatchEvent(new CustomEvent('codebook-updated'));
+  } catch (e) { showErrorPopup('Failed to save: ' + e.message); }
+});
+
+document.getElementById('cm-edit-delete').addEventListener('click', async () => {
+  if (_cmOpenCodeId === null) return;
+  const code = _cmCodes.find(c => c.id === _cmOpenCodeId);
+  if (!code) return;
+  if (!confirm(`Delete code "${code.name}"? It will be removed from all bookmarks.`)) return;
+  const deletingId = _cmOpenCodeId;
+  try {
+    await apiFetch(`/api/codes/${deletingId}`, { method: 'DELETE' });
+    _cmCloseDetail();
+    _allCodes = _allCodes.filter(c => c.id !== deletingId);
+    _bmCodeFilter.delete(deletingId);
+    _cachedBookmarks.forEach(bm => { bm.codes = (bm.codes || []).filter(c => c.id !== deletingId); });
+    renderBmCodeFilterChips();
+    await _cmRefresh();
+    document.dispatchEvent(new CustomEvent('codebook-updated'));
+  } catch (e) { showErrorPopup('Failed to delete: ' + e.message); }
+});
+
+document.getElementById('cm-detail-close').addEventListener('click', _cmCloseDetail);
+
+document.getElementById('cm-new-code-btn').addEventListener('click', () => {
+  document.getElementById('cm-new-code-panel').classList.toggle('hidden');
+  document.getElementById('cm-new-cat-panel').classList.add('hidden');
+  document.getElementById('cm-nc-name').focus();
+});
+document.getElementById('cm-nc-cancel').addEventListener('click', () => {
+  document.getElementById('cm-new-code-panel').classList.add('hidden');
+});
+document.getElementById('cm-nc-save').addEventListener('click', async () => {
+  const name        = document.getElementById('cm-nc-name').value.trim();
+  const color       = document.getElementById('cm-nc-color').value;
+  const catVal      = document.getElementById('cm-nc-category').value;
+  const category_id = catVal ? parseInt(catVal) : null;
+  const msgEl       = document.getElementById('cm-nc-msg');
+  msgEl.classList.add('hidden');
+  if (!name) { document.getElementById('cm-nc-name').focus(); return; }
+  try {
+    const code = await apiFetch('/api/codes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, color, category_id }),
+    });
+    document.getElementById('cm-nc-name').value  = '';
+    document.getElementById('cm-nc-color').value = '#6366f1';
+    document.getElementById('cm-nc-category').value = '';
+    document.getElementById('cm-new-code-panel').classList.add('hidden');
+    _allCodes = [..._allCodes, code].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    renderBmCodeFilterChips();
+    await _cmRefresh();
+    document.dispatchEvent(new CustomEvent('codebook-updated'));
+  } catch (e) {
+    msgEl.textContent = e.message || 'Failed to create code.';
+    msgEl.classList.remove('hidden');
+  }
+});
+
+document.getElementById('cm-new-cat-btn').addEventListener('click', () => {
+  document.getElementById('cm-new-cat-panel').classList.toggle('hidden');
+  document.getElementById('cm-new-code-panel').classList.add('hidden');
+  document.getElementById('cm-cat-name').focus();
+});
+document.getElementById('cm-cat-cancel').addEventListener('click', () => {
+  document.getElementById('cm-new-cat-panel').classList.add('hidden');
+});
+document.getElementById('cm-cat-save').addEventListener('click', async () => {
+  const name  = document.getElementById('cm-cat-name').value.trim();
+  const color = document.getElementById('cm-cat-color').value;
+  const msgEl = document.getElementById('cm-cat-msg');
+  msgEl.classList.add('hidden');
+  if (!name) { document.getElementById('cm-cat-name').focus(); return; }
+  try {
+    await apiFetch('/api/code-categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, color }),
+    });
+    document.getElementById('cm-cat-name').value  = '';
+    document.getElementById('cm-cat-color').value = '#94a3b8';
+    document.getElementById('cm-new-cat-panel').classList.add('hidden');
+    await _cmRefresh();
+  } catch (e) {
+    msgEl.textContent = e.message || 'Failed to create category.';
+    msgEl.classList.remove('hidden');
+  }
+});
+
+document.getElementById('cm-select-mode-toggle').addEventListener('change', e => {
+  _cmMergeMode = e.target.checked;
+  _cmSelected.clear();
+  document.getElementById('cm-merge-btn').classList.add('hidden');
+  document.getElementById('cm-merge-cancel').classList.add('hidden');
+  _cmRenderCodeList();
+});
+
+function _cmUpdateMergeBtn() {
+  const n = _cmSelected.size;
+  const mergeBtn  = document.getElementById('cm-merge-btn');
+  const cancelBtn = document.getElementById('cm-merge-cancel');
+  if (n === 2) {
+    mergeBtn.textContent = 'Merge Selected (2)';
+    mergeBtn.classList.remove('hidden');
+    cancelBtn.classList.remove('hidden');
+  } else {
+    mergeBtn.classList.add('hidden');
+    cancelBtn.classList.toggle('hidden', n === 0);
+  }
 }
 
-document.getElementById('prof-export-pdf').addEventListener('click', exportProfilePDF);
-document.getElementById('prof-export-pdf-followup').addEventListener('click', exportProfilePDF);
+document.getElementById('cm-merge-cancel').addEventListener('click', () => {
+  _cmSelected.clear();
+  document.getElementById('cm-select-mode-toggle').checked = false;
+  _cmMergeMode = false;
+  document.getElementById('cm-merge-btn').classList.add('hidden');
+  document.getElementById('cm-merge-cancel').classList.add('hidden');
+  _cmRenderCodeList();
+});
 
-/* ══════════════════════════════════════════════════════════════════════════
-   USERS IN RANGE
-══════════════════════════════════════════════════════════════════════════ */
+document.getElementById('cm-merge-btn').addEventListener('click', async () => {
+  if (_cmSelected.size !== 2) return;
+  const [srcId, tgtId] = [..._cmSelected];
+  const src = _cmCodes.find(c => c.id === srcId);
+  const tgt = _cmCodes.find(c => c.id === tgtId);
+  if (!src || !tgt) return;
+  if (!confirm(`Merge "${src.name}" into "${tgt.name}"? "${src.name}" will be deleted and its bookmarks reassigned to "${tgt.name}".`)) return;
+  try {
+    await apiFetch('/api/codes/merge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_id: srcId, target_id: tgtId }),
+    });
+    _cmSelected.clear();
+    _cmMergeMode = false;
+    document.getElementById('cm-select-mode-toggle').checked = false;
+    document.getElementById('cm-merge-btn').classList.add('hidden');
+    document.getElementById('cm-merge-cancel').classList.add('hidden');
+    _allCodes = _allCodes.filter(c => c.id !== srcId);
+    _cachedBookmarks.forEach(bm => {
+      const hadSrc = (bm.codes || []).some(c => c.id === srcId);
+      bm.codes = (bm.codes || []).filter(c => c.id !== srcId);
+      if (hadSrc && !bm.codes.some(c => c.id === tgtId)) {
+        const tgtCode = _allCodes.find(c => c.id === tgtId);
+        if (tgtCode) bm.codes.push({ id: tgtCode.id, name: tgtCode.name, color: tgtCode.color });
+      }
+    });
+    renderBmCodeFilterChips();
+    if (_cmOpenCodeId === srcId) _cmCloseDetail();
+    await _cmRefresh();
+    document.dispatchEvent(new CustomEvent('codebook-updated'));
+  } catch (e) { showErrorPopup('Merge failed: ' + e.message); }
+});
+
+document.getElementById('cm-refresh-btn').addEventListener('click', _cmRefresh);
+
+document.addEventListener('codebook-updated', () => {
+  if (!document.getElementById('page-coding').classList.contains('hidden')) {
+    _cmRefresh();
+  }
+});
+
+// -- USERS IN RANGE --------------------------------------------------------
 
 let _usersData    = [];
 let _usersSortCol = 'total_messages';
@@ -3812,7 +3019,7 @@ async function searchUsersInRange() {
   const minWords = parseInt(document.getElementById('users-min-words').value, 10) || 0;
 
   btn.disabled    = true;
-  btn.textContent = 'Searching…';
+  btn.textContent = 'Searching...';
 
   try {
     const params = new URLSearchParams();
@@ -3897,9 +3104,9 @@ function _sortAndRenderUsers() {
     const totalWeeks = u.total_weeks_in_range;
     const weeksDisp  = totalWeeks != null
       ? `${u.weeks_with_messages}<span class="text-gray-400">/${totalWeeks}</span>`
-      : String(u.weeks_with_messages ?? '—');
-    const pctDisp    = u.pct_weeks_active != null ? `${u.pct_weeks_active}%` : '—';
-    const avgWords   = u.avg_word_count != null ? Number(u.avg_word_count).toFixed(1) : '—';
+      : String(u.weeks_with_messages ?? 'â€”');
+    const pctDisp    = u.pct_weeks_active != null ? `${u.pct_weeks_active}%` : 'â€”';
+    const avgWords   = u.avg_word_count != null ? Number(u.avg_word_count).toFixed(1) : 'â€”';
 
     const teamBadge = truthy(u.is_suno_team)
       ? `<span class="ml-1.5 text-[0.6rem] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-semibold leading-none">Team</span>`
@@ -3913,8 +3120,8 @@ function _sortAndRenderUsers() {
                 data-username="${esc(u.username)}">${esc(u.username)}</button>${teamBadge}
       </td>
       <td class="users-td text-right tabular-nums">${(u.total_messages || 0).toLocaleString()}</td>
-      <td class="users-td">${u.first_message_date || '—'}</td>
-      <td class="users-td">${u.last_message_date || '—'}</td>
+      <td class="users-td">${u.first_message_date || 'â€”'}</td>
+      <td class="users-td">${u.last_message_date || 'â€”'}</td>
       <td class="users-td text-right tabular-nums">${avgWords}</td>
       <td class="users-td text-right tabular-nums">${weeksDisp}</td>
       <td class="users-td text-right tabular-nums">${pctDisp}</td>
@@ -3929,7 +3136,7 @@ function _sortAndRenderUsers() {
     const ind = th.querySelector('.sort-ind');
     if (!ind) return;
     if (col === _usersSortCol) {
-      ind.textContent = _usersSortDir === 'asc' ? ' ↑' : ' ↓';
+      ind.textContent = _usersSortDir === 'asc' ? ' →' : ' ↓';
       ind.style.color = '#4f46e5';
     } else {
       ind.textContent = ' ↕';
@@ -3969,7 +3176,7 @@ document.getElementById('users-tbody').addEventListener('click', e => {
   openUserProfile(username, row || null);
 });
 
-// Live filters — month pickers fire 'change'; number/text inputs fire 'input'
+// Live filters€” month pickers fire 'change'; number/text inputs fire 'input'
 ['users-month-from', 'users-month-to'].forEach(id => {
   document.getElementById(id).addEventListener('change', _sortAndRenderUsers);
 });
@@ -3990,9 +3197,7 @@ document.getElementById('users-search-btn').addEventListener('click', searchUser
 document.getElementById('users-date-from').addEventListener('keydown', e => { if (e.key === 'Enter') searchUsersInRange(); });
 document.getElementById('users-date-to').addEventListener('keydown', e => { if (e.key === 'Enter') searchUsersInRange(); });
 
-/* ══════════════════════════════════════════════════════════════════════════
-   USER PROFILE OVERLAY
-══════════════════════════════════════════════════════════════════════════ */
+// -- USER PROFILE OVERLAY --------------------------------------------------
 
 let _upoUsername    = '';
 let _profileMessages = [];
@@ -4016,15 +3221,15 @@ async function openUserProfile(username, stats) {
     const totalWeeks = stats.total_weeks_in_range;
     const weeksStr = totalWeeks != null
       ? `${stats.weeks_with_messages} / ${totalWeeks}`
-      : String(stats.weeks_with_messages ?? '—');
-    const pctStr = stats.pct_weeks_active != null ? `${stats.pct_weeks_active}%` : '—';
-    const avgStr = stats.avg_word_count != null ? Number(stats.avg_word_count).toFixed(1) : '—';
+      : String(stats.weeks_with_messages ?? 'â€”');
+    const pctStr = stats.pct_weeks_active != null ? `${stats.pct_weeks_active}%` : 'â€”';
+    const avgStr = stats.avg_word_count != null ? Number(stats.avg_word_count).toFixed(1) : 'â€”';
 
     document.getElementById('upo-stats').innerHTML =
       `<div class="flex flex-wrap">` +
       _statPill('Total Messages', (stats.total_messages || 0).toLocaleString()) +
-      _statPill('First Message',  stats.first_message_date || '—') +
-      _statPill('Last Message',   stats.last_message_date  || '—') +
+      _statPill('First Message',  stats.first_message_date || 'â€”') +
+      _statPill('Last Message',   stats.last_message_date  || 'â€”') +
       _statPill('Avg Words',      avgStr) +
       _statPill('Weeks Active',   weeksStr) +
       _statPill('% Weeks Active', pctStr) +
@@ -4069,7 +3274,7 @@ async function _fetchProfileMessages() {
   const keyword  = document.getElementById('upo-keyword').value.trim();
   const filterEl = document.getElementById('upo-filter-count');
 
-  msgEl.innerHTML = '<p class="text-sm text-gray-400 py-6 text-center">Loading…</p>';
+  msgEl.innerHTML = '<p class="text-sm text-gray-400 py-6 text-center">Loading...</p>';
   filterEl.textContent = '';
 
   try {
@@ -4129,12 +3334,12 @@ async function _fetchProfileMessages() {
   }
 }
 
-/* ── User profile summarize ─────────────────────────────────────────────── */
+/* -- User profile summarize ----------------------------------------------- */
 
 document.getElementById('upo-sum-toggle').addEventListener('click', () => {
   const panel  = document.getElementById('upo-sum-panel');
   const hidden = panel.classList.toggle('hidden');
-  document.getElementById('upo-sum-toggle').textContent = hidden ? '✦ Summarize' : '✦ Hide Summary';
+  document.getElementById('upo-sum-toggle').textContent = hidden ? 'âœ¦ Summarize' : 'âœ¦ Hide Summary';
   if (!hidden) {
     const before = document.getElementById('upo-ctx-before').value || 5;
     const after  = document.getElementById('upo-ctx-after').value  || 5;
@@ -4149,17 +3354,17 @@ document.getElementById('upo-sum-toggle').addEventListener('click', () => {
 document.getElementById('upo-sum-log-toggle').addEventListener('click', () => {
   const logEl = document.getElementById('upo-sum-log');
   const btn   = document.getElementById('upo-sum-log-toggle');
-  const hide  = btn.textContent.startsWith('▲');
+  const hide  = btn.textContent.startsWith('â–²');
   logEl.classList.toggle('hidden', hide);
-  btn.textContent = hide ? '▼ Show' : '▲ Hide';
+  btn.textContent = hide ? 'â–¼ Show' : 'â–² Hide';
 });
 
 function _upoSumLog(step, label, msg) {
-  const icons = { input:'📋', context:'📡', llm:'✨', fallback:'⚠️' };
+  const icons = { input:'ðŸ“‹', context:'ðŸ“¡', llm:'âœ¨', fallback:'âš ï¸' };
   const div = document.createElement('div');
   div.className = 'text-xs text-gray-600 flex items-start gap-1.5 py-0.5';
-  div.innerHTML = `<span class="shrink-0">${icons[step] || '•'}</span>
-    <span><strong>${esc(label)}</strong> — ${esc(msg)}</span>`;
+  div.innerHTML = `<span class="shrink-0">${icons[step] || 'â€¢'}</span>
+    <span><strong>${esc(label)}</strong>€” ${esc(msg)}</span>`;
   document.getElementById('upo-sum-log').appendChild(div);
 }
 
@@ -4180,7 +3385,7 @@ async function doUpoSummarize() {
   }
 
   runBtn.disabled    = true;
-  runBtn.textContent = 'Working…';
+  runBtn.textContent = 'Working...';
   logEl.innerHTML    = '';
   outputEl.innerHTML = '';
   resultsEl.classList.remove('hidden');
@@ -4193,18 +3398,18 @@ async function doUpoSummarize() {
   let contextMap = {};
   try {
     const msgIds = msgs.map(m => m.id).filter(Boolean);
-    _upoSumLog('context', 'Context fetch', `Fetching ${before}+${after} context msgs for each…`);
+    _upoSumLog('context', 'Context fetch', `Fetching ${before}+${after} context msgs for each...`);
     contextMap = await apiFetch('/api/search/bulk-context', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ msg_ids: msgIds, before, after }),
     });
-    _upoSumLog('context', 'Context fetch', `Done — ${Object.keys(contextMap).length} messages enriched`);
+    _upoSumLog('context', 'Context fetch', `Done€” ${Object.keys(contextMap).length} messages enriched`);
   } catch (e) {
-    _upoSumLog('fallback', 'Context fetch failed', `${e.message} — proceeding without context`);
+    _upoSumLog('fallback', 'Context fetch failed', `${e.message}€” proceeding without context`);
   }
 
-  // Build formatted blocks: context before / ★ user message / context after
+  // Build formatted blocks: context before /˜… user message / context after
   const blocks = msgs.map(m => {
     const ctx      = contextMap[String(m.id)] || [];
     const targetIdx= ctx.findIndex(r => r.is_target);
@@ -4214,19 +3419,19 @@ async function doUpoSummarize() {
 
     let block = '';
     if (ctxPre.length)  block += ctxPre.map(fmt).join('\n') + '\n';
-    block += `★ [${m.username} | ${m.date}]: ${m.content}`;
+    block += `â˜… [${m.username} | ${m.date}]: ${m.content}`;
     if (ctxPost.length) block += '\n' + ctxPost.map(fmt).join('\n');
     return block;
   });
 
   const conv   = blocks.join('\n\n---\n\n');
   const n      = msgs.length;
-  const header = `USER PROFILE ANALYSIS — ${_upoUsername} (${n} messages with context)`;
+  const header = `USER PROFILE ANALYSIS€” ${_upoUsername} (${n} messages with context)`;
 
-  const defaultPrompt = `Each block below contains one message from **${_upoUsername}** (marked ★) with surrounding conversation context. Concisely identify persona, topics, attitudes, actions, narratives, and identified changes in attitude and stance if present. Use tight bullet points. No padding, no repetition across sections.`;
+  const defaultPrompt = `Each block below contains one message from **${_upoUsername}** (marked˜…) with surrounding conversation context. Concisely identify persona, topics, attitudes, actions, narratives, and identified changes in attitude and stance if present. Use tight bullet points. No padding, no repetition across sections.`;
 
   const fullPrompt = (prompt || defaultPrompt) + `\n\n${header}:\n${conv}`;
-  _upoSumLog('llm', 'LLM generation', `Summarising with ${model}…`);
+  _upoSumLog('llm', 'LLM generation', `Summarising with ${model}...`);
 
   let output = '';
   try {
@@ -4388,7 +3593,7 @@ async function upoToggleContext(id, btn) {
   }
   const before = parseInt(document.getElementById('upo-ctx-before').value, 10) || 5;
   const after  = parseInt(document.getElementById('upo-ctx-after').value,  10) || 5;
-  btn.textContent = 'Loading…';
+  btn.textContent = 'Loading...';
   btn.disabled    = true;
   try {
     const msgs = await apiFetch(`/api/context/${id}?before=${before}&after=${after}`);
@@ -4427,9 +3632,7 @@ document.addEventListener('keydown', e => {
   }
 });
 
-/* ══════════════════════════════════════════════════════════════════════════
-   MULTI-USER: avatar menu (dropdown with Config + Logout)
-══════════════════════════════════════════════════════════════════════════ */
+// -- MULTI-USER: avatar menu (dropdown with Config + Logout) ---------------
 if (APP_MODE === 'multi' && CURRENT_USER) {
   const menu        = document.getElementById('user-menu');
   const avatarBtn   = document.getElementById('user-avatar-btn');
@@ -4495,16 +3698,14 @@ if (APP_MODE === 'multi' && CURRENT_USER) {
   if (logoutBtn) {
     logoutBtn.addEventListener('click', async () => {
       logoutBtn.disabled    = true;
-      logoutBtn.textContent = 'Logging out…';
+      logoutBtn.textContent = 'Logging out...';
       try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
       window.location.href = '/login';
     });
   }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   INIT
-══════════════════════════════════════════════════════════════════════════ */
+// -- INIT ------------------------------------------------------------------
 (async () => {
   await refreshUploads();   // loads allUploads, renders scope chips, stats
   await loadBookmarkIds();  // populate bookmarkedIds set + badge
@@ -4535,7 +3736,7 @@ if (APP_MODE === 'multi' && CURRENT_USER) {
         `${d.total_uploads} uploads &bull; ` +
         `${d.embedded_messages.toLocaleString()} embedded &bull; ` +
         `<span style="color:#c4b5fd">${esc(d.current_model_label)}</span>` +
-        (keySet ? ' &bull; <span style="color:#86efac">API key ✓</span>' : '');
+        (keySet ? ' &bull; <span style="color:#86efac">API key ...</span>' : '');
       if (!keySet) showApiKeyPopup(true);
     } catch (_) {}
   } else {
@@ -4547,7 +3748,7 @@ if (APP_MODE === 'multi' && CURRENT_USER) {
         await _sendKeyToServer(storedKey);
         loadStats();
       } catch (_) {
-        // Stored key is invalid/rejected — clear it and prompt again
+        // Stored key is invalid/rejected€” clear it and prompt again
         localStorage.removeItem(STORAGE_KEY);
         showApiKeyPopup(false);
       }

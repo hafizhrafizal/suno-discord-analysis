@@ -1,11 +1,15 @@
 """
-routers/bookmarks.py — bookmark management and label assignment.
+routers/bookmarks.py — bookmark management and code assignment.
 
   POST   /api/bookmarks
   GET    /api/bookmarks
   GET    /api/bookmarks/ids
   DELETE /api/bookmarks/{bookmark_id}
   DELETE /api/bookmarks/by-msg/{msg_id}
+  POST   /api/bookmarks/{bookmark_id}/codes/{code_id}
+  DELETE /api/bookmarks/{bookmark_id}/codes/{code_id}
+
+  Back-compat aliases (old /labels/ paths):
   POST   /api/bookmarks/{bookmark_id}/labels/{label_id}
   DELETE /api/bookmarks/{bookmark_id}/labels/{label_id}
 """
@@ -46,7 +50,6 @@ async def add_bookmark(body: dict, request: Request):
         row = conn.execute("SELECT id FROM messages WHERE id=?", (msg_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Message not found")
-        # Check for existing bookmark scoped to this user (or global in single mode)
         if user_id is not None:
             existing = conn.execute(
                 "SELECT id FROM bookmarks WHERE msg_id=? AND user_id=?", (msg_id, user_id)
@@ -81,11 +84,11 @@ async def list_bookmarks(request: Request):
                ORDER BY b.created_at DESC""",
             (user_id,),
         ).fetchall()
-        label_rows = conn.execute(
-            """SELECT bl.bookmark_id, l.id, l.name, l.color
-               FROM bookmark_labels bl
-               JOIN labels l ON l.id = bl.label_id
-               WHERE bl.bookmark_id IN (SELECT id FROM bookmarks WHERE user_id = ?)""",
+        code_rows = conn.execute(
+            """SELECT bc.bookmark_id, c.id, c.name, c.color, c.description, c.category_id
+               FROM bookmark_codes bc
+               JOIN codes c ON c.id = bc.code_id
+               WHERE bc.bookmark_id IN (SELECT id FROM bookmarks WHERE user_id = ?)""",
             (user_id,),
         ).fetchall()
     else:
@@ -96,29 +99,31 @@ async def list_bookmarks(request: Request):
                JOIN messages m ON m.id = b.msg_id
                ORDER BY b.created_at DESC"""
         ).fetchall()
-        label_rows = conn.execute(
-            """SELECT bl.bookmark_id, l.id, l.name, l.color
-               FROM bookmark_labels bl
-               JOIN labels l ON l.id = bl.label_id"""
+        code_rows = conn.execute(
+            """SELECT bc.bookmark_id, c.id, c.name, c.color, c.description, c.category_id
+               FROM bookmark_codes bc
+               JOIN codes c ON c.id = bc.code_id"""
         ).fetchall()
     conn.close()
 
-    labels_by_bm: dict = {}
-    for lr in label_rows:
-        labels_by_bm.setdefault(lr["bookmark_id"], []).append(
-            {"id": lr["id"], "name": lr["name"], "color": lr["color"]}
-        )
+    codes_by_bm: dict = {}
+    for cr in code_rows:
+        codes_by_bm.setdefault(cr["bookmark_id"], []).append({
+            "id": cr["id"], "name": cr["name"], "color": cr["color"],
+            "description": cr["description"], "category_id": cr["category_id"],
+        })
+
     result = []
     for r in rows:
-        d          = dict(r)
-        d["labels"] = labels_by_bm.get(d["bookmark_id"], [])
+        d = dict(r)
+        d["codes"]  = codes_by_bm.get(d["bookmark_id"], [])
+        d["labels"] = d["codes"]   # back-compat alias
         result.append(d)
     return result
 
 
 @router.get("/api/bookmarks/ids")
 async def list_bookmark_ids(request: Request):
-    """Return only the bookmarked message IDs — cheap check for UI state."""
     user_id = _uid(request)
     conn = get_db()
     if user_id is not None:
@@ -163,13 +168,15 @@ async def delete_bookmark_by_msg(msg_id: int, request: Request):
     return {"status": "deleted", "affected": cur.rowcount}
 
 
-@router.post("/api/bookmarks/{bookmark_id}/labels/{label_id}")
-async def assign_label(bookmark_id: int, label_id: int):
+# ── Code assignment ───────────────────────────────────────────────────────────
+
+@router.post("/api/bookmarks/{bookmark_id}/codes/{code_id}")
+async def assign_code(bookmark_id: int, code_id: int):
     conn = get_db()
     try:
         conn.execute(
-            "INSERT OR IGNORE INTO bookmark_labels (bookmark_id, label_id) VALUES (?,?)",
-            (bookmark_id, label_id),
+            "INSERT OR IGNORE INTO bookmark_codes (bookmark_id, code_id) VALUES (?,?)",
+            (bookmark_id, code_id),
         )
         conn.commit()
         return {"status": "assigned"}
@@ -177,13 +184,24 @@ async def assign_label(bookmark_id: int, label_id: int):
         conn.close()
 
 
-@router.delete("/api/bookmarks/{bookmark_id}/labels/{label_id}")
-async def unassign_label(bookmark_id: int, label_id: int):
+@router.delete("/api/bookmarks/{bookmark_id}/codes/{code_id}")
+async def unassign_code(bookmark_id: int, code_id: int):
     conn = get_db()
     conn.execute(
-        "DELETE FROM bookmark_labels WHERE bookmark_id=? AND label_id=?",
-        (bookmark_id, label_id),
+        "DELETE FROM bookmark_codes WHERE bookmark_id=? AND code_id=?",
+        (bookmark_id, code_id),
     )
     conn.commit()
     conn.close()
     return {"status": "unassigned"}
+
+
+# ── Back-compat: old /labels/ paths ──────────────────────────────────────────
+
+@router.post("/api/bookmarks/{bookmark_id}/labels/{label_id}")
+async def assign_label_compat(bookmark_id: int, label_id: int):
+    return await assign_code(bookmark_id, label_id)
+
+@router.delete("/api/bookmarks/{bookmark_id}/labels/{label_id}")
+async def unassign_label_compat(bookmark_id: int, label_id: int):
+    return await unassign_code(bookmark_id, label_id)

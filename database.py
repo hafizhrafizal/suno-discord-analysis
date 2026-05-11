@@ -93,6 +93,33 @@ def init_db() -> None:
             PRIMARY KEY (bookmark_id, label_id)
         );
 
+        -- QDA: code categories (themes)
+        CREATE TABLE IF NOT EXISTS code_categories (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT    NOT NULL UNIQUE,
+            color      TEXT    NOT NULL DEFAULT '#94a3b8',
+            created_at TEXT    NOT NULL
+        );
+
+        -- QDA: open codes (replaces labels, with memos and category grouping)
+        CREATE TABLE IF NOT EXISTS codes (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT    NOT NULL UNIQUE,
+            color       TEXT    NOT NULL DEFAULT '#6366f1',
+            description TEXT    NOT NULL DEFAULT '',
+            category_id INTEGER REFERENCES code_categories(id) ON DELETE SET NULL,
+            created_at  TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_codes_category ON codes(category_id);
+
+        -- QDA: bookmark ↔ code join table
+        CREATE TABLE IF NOT EXISTS bookmark_codes (
+            bookmark_id INTEGER NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+            code_id     INTEGER NOT NULL REFERENCES codes(id)     ON DELETE CASCADE,
+            PRIMARY KEY (bookmark_id, code_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_bookmark_codes_code ON bookmark_codes(code_id);
+
         -- Tracks which uploads have been embedded per model.
         -- Replaces O(n_uploads × n_docs) vector-store scans with O(1) SQLite lookups.
         CREATE TABLE IF NOT EXISTS embedded_uploads (
@@ -187,6 +214,25 @@ def init_db() -> None:
         conn.commit()
     except Exception:
         pass
+
+    # One-time migration: copy existing labels → codes and bookmark_labels → bookmark_codes.
+    # Runs only when codes table is empty and labels table has data.
+    try:
+        codes_count  = conn.execute("SELECT COUNT(*) FROM codes").fetchone()[0]
+        labels_count = conn.execute("SELECT COUNT(*) FROM labels").fetchone()[0]
+        if codes_count == 0 and labels_count > 0:
+            conn.execute(
+                "INSERT INTO codes (id, name, color, description, created_at) "
+                "SELECT id, name, color, '', created_at FROM labels"
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO bookmark_codes (bookmark_id, code_id) "
+                "SELECT bookmark_id, label_id FROM bookmark_labels"
+            )
+            conn.commit()
+            logger.info("Migrated %d labels → codes", labels_count)
+    except Exception as exc:
+        logger.warning("labels→codes migration skipped: %s", exc)
 
     # Rebuild FTS only when the index appears empty (first run, or after manual wipe).
     fts_count = conn.execute("SELECT COUNT(*) FROM messages_fts").fetchone()[0]

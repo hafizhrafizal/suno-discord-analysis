@@ -67,9 +67,9 @@ from routers import (
     auth,
     bookmarks,
     chat,
+    codes,
     config_api,
     context,
-    labels,
     search,
     stats,
     suno_team,
@@ -358,5 +358,5 @@ app.include_router(search.router)
 app.include_router(chat.router)
 app.include_router(context.router)
 app.include_router(bookmarks.router)
-app.include_router(labels.router)
+app.include_router(codes.router)
 app.include_router(suno_team.router)
