@@ -33,7 +33,7 @@ router = APIRouter()
 async def list_code_categories():
     conn = get_db()
     rows = conn.execute(
-        "SELECT id, name, color, created_at FROM code_categories ORDER BY name COLLATE NOCASE"
+        "SELECT id, name, color, parent_id, created_at FROM code_categories ORDER BY name COLLATE NOCASE"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -41,18 +41,20 @@ async def list_code_categories():
 
 @router.post("/api/code-categories")
 async def create_code_category(body: dict):
-    name  = (body.get("name") or "").strip()
-    color = (body.get("color") or "#94a3b8").strip()
+    name      = (body.get("name") or "").strip()
+    color     = (body.get("color") or "#94a3b8").strip()
+    parent_id = body.get("parent_id")
     if not name:
         raise HTTPException(400, "name is required")
     conn = get_db()
     try:
         cur = conn.execute(
-            "INSERT INTO code_categories (name, color, created_at) VALUES (?,?,?)",
-            (name, color, datetime.utcnow().isoformat()),
+            "INSERT INTO code_categories (name, color, parent_id, created_at) VALUES (?,?,?,?)",
+            (name, color, parent_id, datetime.utcnow().isoformat()),
         )
         conn.commit()
-        return {"id": cur.lastrowid, "name": name, "color": color, "created_at": datetime.utcnow().isoformat()}
+        return {"id": cur.lastrowid, "name": name, "color": color, "parent_id": parent_id,
+                "created_at": datetime.utcnow().isoformat()}
     except Exception:
         raise HTTPException(409, "Category name already exists")
     finally:
@@ -71,6 +73,13 @@ async def update_code_category(category_id: int, body: dict):
         if color:
             sets.append("color = ?")
             params.append(color)
+        if "parent_id" in body:
+            pid = body["parent_id"]
+            # Prevent cycles: a category cannot be its own ancestor
+            if pid is not None and pid == category_id:
+                raise HTTPException(400, "A category cannot be its own parent")
+            sets.append("parent_id = ?")
+            params.append(pid)
         params.append(category_id)
         cur = conn.execute(f"UPDATE code_categories SET {', '.join(sets)} WHERE id = ?", params)
         conn.commit()
@@ -88,6 +97,15 @@ async def update_code_category(category_id: int, body: dict):
 @router.delete("/api/code-categories/{category_id}")
 async def delete_code_category(category_id: int):
     conn = get_db()
+    # Re-parent children to the deleted category's own parent
+    parent = conn.execute(
+        "SELECT parent_id FROM code_categories WHERE id = ?", (category_id,)
+    ).fetchone()
+    grandparent_id = parent["parent_id"] if parent else None
+    conn.execute(
+        "UPDATE code_categories SET parent_id = ? WHERE parent_id = ?",
+        (grandparent_id, category_id),
+    )
     conn.execute("UPDATE codes SET category_id = NULL WHERE category_id = ?", (category_id,))
     cur = conn.execute("DELETE FROM code_categories WHERE id = ?", (category_id,))
     conn.commit()
@@ -135,7 +153,7 @@ async def list_codes():
 @router.post("/api/codes")
 async def create_code(body: dict):
     name        = (body.get("name") or "").strip()
-    color       = (body.get("color") or "#6366f1").strip()
+    color       = (body.get("color") or "#0d3e7f").strip()
     description = (body.get("description") or "").strip()
     category_id = body.get("category_id")
     if not name:
@@ -237,6 +255,27 @@ async def merge_codes(body: dict):
     conn.commit()
     conn.close()
     return {"status": "merged", "migrated_bookmarks": migrated}
+
+
+@router.get("/api/codes/{code_id}/bookmarks")
+async def list_code_bookmarks(code_id: int):
+    """Return bookmarks (with excerpt text) that carry this code."""
+    conn = get_db()
+    if not conn.execute("SELECT id FROM codes WHERE id = ?", (code_id,)).fetchone():
+        conn.close()
+        raise HTTPException(404, "Code not found")
+    rows = conn.execute(
+        """SELECT b.id AS bookmark_id, b.note, b.created_at,
+                  m.content, m.username, m.date, m.author_id
+           FROM bookmark_codes bc
+           JOIN bookmarks b ON b.id = bc.bookmark_id
+           JOIN messages  m ON m.id = b.msg_id
+           WHERE bc.code_id = ?
+           ORDER BY b.created_at DESC""",
+        (code_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ── Back-compat aliases ───────────────────────────────────────────────────────

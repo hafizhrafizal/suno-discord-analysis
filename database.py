@@ -93,11 +93,12 @@ def init_db() -> None:
             PRIMARY KEY (bookmark_id, label_id)
         );
 
-        -- QDA: code categories (themes)
+        -- QDA: code categories (themes) — supports multi-level hierarchy via parent_id
         CREATE TABLE IF NOT EXISTS code_categories (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             name       TEXT    NOT NULL UNIQUE,
             color      TEXT    NOT NULL DEFAULT '#94a3b8',
+            parent_id  INTEGER REFERENCES code_categories(id) ON DELETE SET NULL,
             created_at TEXT    NOT NULL
         );
 
@@ -176,10 +177,11 @@ def init_db() -> None:
     # Column migrations for existing databases (try/except because ADD/DROP COLUMN
     # fails silently when the column already exists or has already been removed)
     for stmt in [
-        "ALTER TABLE users     ADD COLUMN is_admin  INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE bookmarks ADD COLUMN user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL",
-        "ALTER TABLE users     ADD COLUMN google_id TEXT",
-        "ALTER TABLE users     ADD COLUMN email     TEXT",
+        "ALTER TABLE users            ADD COLUMN is_admin  INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE bookmarks        ADD COLUMN user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "ALTER TABLE users            ADD COLUMN google_id TEXT",
+        "ALTER TABLE users            ADD COLUMN email     TEXT",
+        "ALTER TABLE code_categories  ADD COLUMN parent_id INTEGER REFERENCES code_categories(id) ON DELETE SET NULL",
     ]:
         try:
             conn.execute(stmt)

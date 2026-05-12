@@ -11,12 +11,6 @@ document.addEventListener('DOMContentLoaded', () => {
    HTTP→HTTPS redirects) produce a clear error instead of "Unexpected token '<'".
  */
 async function apiFetch(url, options = {}) {
-  if (options.body && typeof options.body === 'string') {
-    options = {
-      ...options,
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    };
-  }
   const r = await fetch(url, options);
   const ct = r.headers.get('content-type') || '';
   if (!r.ok || !ct.includes('application/json')) {
@@ -52,33 +46,6 @@ function dismissErrorPopup() {
 }
 function _errorPopupEscHandler(e) {
   if (e.key === 'Escape') dismissErrorPopup();
-}
-
-// -- GENERIC CONFIRM DIALOG ------------------------------------------------
-function cmConfirm(msg, okLabel = 'Confirm', okClass = 'bg-red-600 hover:bg-red-700') {
-  return new Promise(resolve => {
-    const modal    = document.getElementById('app-confirm-modal');
-    const okBtn    = document.getElementById('app-confirm-ok');
-    const cancelBtn = document.getElementById('app-confirm-cancel');
-    document.getElementById('app-confirm-msg').textContent = msg;
-    okBtn.textContent = okLabel;
-    okBtn.className   = `px-4 py-2 text-sm font-semibold rounded-lg text-white ${okClass}`;
-    modal.classList.remove('hidden');
-
-    function cleanup(result) {
-      modal.classList.add('hidden');
-      okBtn.removeEventListener('click', onOk);
-      cancelBtn.removeEventListener('click', onCancel);
-      document.removeEventListener('keydown', onKey);
-      resolve(result);
-    }
-    const onOk     = () => cleanup(true);
-    const onCancel = () => cleanup(false);
-    const onKey    = e => { if (e.key === 'Escape') cleanup(false); };
-    okBtn.addEventListener('click', onOk);
-    cancelBtn.addEventListener('click', onCancel);
-    document.addEventListener('keydown', onKey);
-  });
 }
 
 // -- APP MODE --------------------------------------------------------------
@@ -261,7 +228,7 @@ async function loadModelOptions() {
           const cnt     = models.find(m => m.id === radio.value)?.embedded_count || 0;
           const msg = document.getElementById('model-msg');
           msg.textContent = `Switched to ${d.label}.` +
-            (isLocal && cnt === 0 ? ' Weights will download on first use (~0.4–1.3 GB).' : '');
+            (isLocal && cnt === 0 ? ' Weights will download on first use (~0.4â€“1.3 GB).' : '');
           msg.classList.remove('hidden');
           loadStats();
           loadModelOptions();
@@ -944,7 +911,7 @@ function _renderAdminTable(users) {
     btn.addEventListener('click', async () => {
       const uid  = parseInt(btn.dataset.id, 10);
       const name = btn.dataset.name;
-      if (!await cmConfirm(`Delete user "${name}"? This cannot be undone.`, 'Delete')) return;
+      if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
       btn.disabled    = true;
       btn.textContent = 'Deleting...';
       try {
@@ -986,7 +953,7 @@ document.getElementById('labels-list')?.addEventListener('click', async e => {
   if (!btn) return;
   const id   = parseInt(btn.dataset.codeId);
   const name = btn.dataset.codeName;
-  if (!await cmConfirm(`Delete code "${name}"? It will be removed from all bookmarks.`, 'Delete')) return;
+  if (!confirm(`Delete code "${name}"? It will be removed from all bookmarks.`)) return;
   btn.disabled = true;
   const res = await fetch(`/api/codes/${id}`, { method: 'DELETE' });
   if (!res.ok) { btn.disabled = false; return; }
@@ -1086,7 +1053,7 @@ document.getElementById('suno-team-table').addEventListener('click', async e => 
   } catch (err) {
     btn.disabled = false;
     btn.textContent = 'Remove from team';
-    showErrorPopup(`Failed to remove: ${err.message}`);
+    alert(`Failed to remove: ${err.message}`);
   }
 });
 
@@ -1598,15 +1565,15 @@ function renderTrendChart(results, bucket) {
 
 // -- SUMMARIZE RESULTS -----------------------------------------------------
 const LOG_ICONS = {
-  filter:      '🔍',
-  retrieval:   '📡',
-  dedup:       '🧹',
-  cluster:     '🔮',
-  sample:      '🎯',
-  llm:         '✨',
-  fallback:    '⚠️',
-  meta:        '📅',
-  instruction: '📝',
+  filter:      'ðŸ”',
+  retrieval:   'ðŸ“¡',
+  dedup:       'ðŸ§¹',
+  cluster:     'ðŸ”®',
+  sample:      'ðŸŽ¯',
+  llm:         '¨',
+  fallback:    'âš ï¸',
+  meta:        'ðŸ“…',
+  instruction: 'ðŸ“',
 };
 function _updateSrCountLabel() {
   const el = document.getElementById('sr-count-label');
@@ -1617,7 +1584,7 @@ function renderSrLogEntry(entry) {
   const logEl = document.getElementById('sr-process-log');
   const div   = document.createElement('div');
   div.className = `log-entry log-step-${entry.step || 'fallback'}`;
-  const icon = LOG_ICONS[entry.step] || '•';
+  const icon = LOG_ICONS[entry.step] || 'â€¢';
   div.innerHTML =
     `<span class="log-icon">${icon}</span>` +
     `<span class="log-label">${esc(entry.label || '')}</span>` +
@@ -1744,7 +1711,7 @@ function _renderSrFuLogEntry(strip, entry) {
   const div = document.createElement('div');
   div.className = `fu-log-entry fu-log-step-${entry.step || 'fallback'}`;
   div.innerHTML =
-    `<span class="fu-log-icon">${LOG_ICONS[entry.step] || '•'}</span>` +
+    `<span class="fu-log-icon">${LOG_ICONS[entry.step] || 'â€¢'}</span>` +
     `<span class="fu-log-label">${esc(entry.label || '')}</span>` +
     `<span class="fu-log-msg">${esc(entry.msg || '')}</span>`;
   strip.appendChild(div);
@@ -1962,7 +1929,7 @@ const _EXACT_ACTIVE    = ['bg-indigo-700','text-white'];
 const _EXACT_INACTIVE  = ['bg-slate-100','text-slate-500'];
 const _ANY_ACTIVE      = ['bg-emerald-600','text-white'];
 const _ANY_INACTIVE    = ['bg-slate-100','text-slate-500'];
-const _SEM_ACTIVE      = ['bg-indigo-700','text-white'];
+const _SEM_ACTIVE      = ['bg-violet-600','text-white'];
 const _SEM_INACTIVE    = ['bg-slate-100','text-slate-500'];
 
 function setFilterMode(mode) {
@@ -2132,7 +2099,7 @@ async function _applySemanticFilter(term) {
     const { results: ranked, threshold, query_used, warning } = data;
     if (warning) {
       document.getElementById('results-container').innerHTML =
-        `<p class="text-center text-amber-600 py-10 text-sm">⚠ ${esc(warning)}</p>`;
+        `<p class="text-center text-amber-600 py-10 text-sm">âš  ${esc(warning)}</p>`;
       spinner.classList.add('hidden');
       return;
     }
@@ -2225,9 +2192,9 @@ function msgCard(msg) {
     ? highlightTerms(msg.username, activeFilterTokens)
     : esc(msg.username);
   const attachLine = hasContent(msg.attachments)
-    ? `<p class="text-xs text-gray-500 mt-1">📎 ${esc(msg.attachments)}</p>` : '';
+    ? `<p class="text-xs text-gray-500 mt-1">ðŸ“Ž ${esc(msg.attachments)}</p>` : '';
   const reactLine = hasContent(msg.reactions)
-    ? `<p class="text-xs text-gray-500 mt-1">💬 ${esc(msg.reactions)}</p>` : '';
+    ? `<p class="text-xs text-gray-500 mt-1">ðŸ'¬ ${esc(msg.reactions)}</p>` : '';
 
   // Find source filename
   const src = allUploads.find(u => u.id === msg.upload_id);
@@ -2495,7 +2462,7 @@ function _renderBmCodePanel(bookmarkId) {
         <input class="bm-new-code-input flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
                placeholder="New code name..." maxlength="40" data-bm-id="${bookmarkId}" />
         <input class="bm-new-code-color w-7 h-7 rounded cursor-pointer border border-gray-200 p-0.5"
-               type="color" value="#0d3e7f" data-bm-id="${bookmarkId}" title="Pick colour" />
+               type="color" value="#6366f1" data-bm-id="${bookmarkId}" title="Pick colour" />
         <button class="bm-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
                 data-bm-id="${bookmarkId}">Add</button>
       </div>
@@ -2584,8 +2551,8 @@ function bookmarkCard(bm) {
           ${srcLabel}
         </div>
         <p class="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words">${esc(bm.content)}</p>
-        ${hasContent(bm.attachments) ? `<p class="text-xs text-gray-500 mt-1">📎 ${esc(bm.attachments)}</p>` : ''}
-        ${hasContent(bm.reactions)   ? `<p class="text-xs text-gray-500 mt-1">💬 ${esc(bm.reactions)}</p>`   : ''}
+        ${hasContent(bm.attachments) ? `<p class="text-xs text-gray-500 mt-1">ðŸ“Ž ${esc(bm.attachments)}</p>` : ''}
+        ${hasContent(bm.reactions)   ? `<p class="text-xs text-gray-500 mt-1">ðŸ'¬ ${esc(bm.reactions)}</p>`   : ''}
         <!-- Codes -->
         <div class="flex items-center flex-wrap gap-1 mt-2 min-h-[1.5rem]" id="bm-codes-${bm.bookmark_id}">
           ${_bmCodeChipsHtml(bm)}
@@ -2689,7 +2656,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     const nameInput  = panel.querySelector('.bm-new-code-input');
     const colorInput = panel.querySelector('.bm-new-code-color');
     const name  = (nameInput?.value || '').trim();
-    const color = colorInput?.value || '#0d3e7f';
+    const color = colorInput?.value || '#6366f1';
     if (!name) { nameInput?.focus(); return; }
     createBtn.disabled = true;
     createBtn.textContent = '...';
@@ -2831,20 +2798,11 @@ document.getElementById('bm-filter-text').addEventListener('input', () => {
 
 // -- CODING MANAGER --------------------------------------------------------
 
-let _cmCodes          = [];
-let _cmCategories     = [];
-let _cmSelected       = new Set();
-let _cmMergeMode      = false;
-let _cmOpenCodeId     = null;
-let _cmOpenCatId      = null;
-let _cmCollapsed      = new Set();  // category ids that are collapsed
-let _cmDragCodeId     = null;       // id of code being dragged
-let _cmExpandedCodes  = new Set();  // code ids with excerpts expanded inline
-let _cmExcerptsCache  = {};         // code id → excerpt rows (or null while loading)
-let _cmDragCatId      = null;       // id of coding (category) being dragged
-let _cmDragExcerpt    = null;       // { bookmarkId, sourceCodeId } being dragged
-let _cmOpenExcBmId    = null;       // bookmark_id open in excerpt panel
-let _cmOpenExcSrcId   = null;       // source code id open in excerpt panel
+let _cmCodes      = [];
+let _cmCategories = [];
+let _cmSelected   = new Set();
+let _cmMergeMode  = false;
+let _cmOpenCodeId = null;
 
 async function loadCodingPage() {
   await _cmRefresh();
@@ -2862,776 +2820,112 @@ async function _cmRefresh() {
     return;
   }
   _cmPopulateCategorySelects();
-  _cmRenderTree();
+  _cmRenderCodeList();
   if (_cmOpenCodeId !== null) {
     const code = _cmCodes.find(c => c.id === _cmOpenCodeId);
-    if (code) _cmOpenCodeDetail(code);
+    if (code) _cmOpenDetail(code);
     else _cmCloseDetail();
-  } else if (_cmOpenCatId !== null) {
-    const cat = _cmCategories.find(c => c.id === _cmOpenCatId);
-    if (cat) _cmOpenCatDetail(cat);
-    else _cmCloseDetail();
-  } else if (_cmOpenExcBmId !== null) {
-    _cmOpenExcerptPanel(_cmOpenExcBmId, _cmOpenExcSrcId);
   }
 }
-
-// ── Category select population ────────────────────────────────────────────────
 
 function _cmPopulateCategorySelects() {
-  const sorted = [..._cmCategories].sort((a, b) =>
-    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-
-  const codeOpts = '<option value="">— Uncategorized —</option>' +
-    sorted.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
-  document.getElementById('cm-nc-category').innerHTML   = codeOpts;
-  document.getElementById('cm-edit-category').innerHTML = codeOpts;
-
-  // Parent-coding selects (used for create & edit of codings)
-  const parentOpts = '<option value="">— Root level (2nd-order) —</option>' +
-    sorted.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
-  document.getElementById('cm-cat-parent').innerHTML      = parentOpts;
-  document.getElementById('cm-cat-edit-parent').innerHTML = parentOpts;
+  const opts = '<option value="">— Uncategorized —</option>' +
+    _cmCategories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  document.getElementById('cm-nc-category').innerHTML = opts;
+  document.getElementById('cm-edit-category').innerHTML = opts;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-let _cmTreeMaxDepth = 0;
-
-function _cmComputeMaxDepth() {
-  let max = 0;
-  function walk(catId, d) {
-    max = Math.max(max, d);
-    _cmCategories.filter(c => c.parent_id === catId).forEach(c => walk(c.id, d + 1));
-  }
-  _cmCategories.filter(c => c.parent_id == null).forEach(c => walk(c.id, 0));
-  _cmTreeMaxDepth = max;
-}
-
-// Order label counts from the BOTTOM of the hierarchy:
-//   category just above open codings = 2nd-order
-//   category above that              = 3rd-order, etc.
-// So n = (maxDepth - depth) + 2
-function _cmOrderLabel(depth) {
-  const n   = (_cmTreeMaxDepth - depth) + 2;
-  const sfx = { 2: 'nd', 3: 'rd' }[n] || 'th';
-  return `${n}${sfx}-order`;
-}
-
-function _cmGetDescendantCatIds(catId) {
-  const result = new Set([catId]);
-  const stack  = [catId];
-  while (stack.length) {
-    const id = stack.pop();
-    _cmCategories
-      .filter(c => c.parent_id === id)
-      .forEach(c => { if (!result.has(c.id)) { result.add(c.id); stack.push(c.id); } });
-  }
-  return result;
-}
-
-// ── Tree building ─────────────────────────────────────────────────────────────
-
-function _cmBuildTree() {
-  const catMap = {};
-  _cmCategories.forEach(c => { catMap[c.id] = { ...c, children: [], codes: [] }; });
-
-  _cmCodes.forEach(code => {
-    if (code.category_id != null && catMap[code.category_id]) {
-      catMap[code.category_id].codes.push(code);
-    }
-  });
-
-  const roots = [];
-  _cmCategories.forEach(c => {
-    if (c.parent_id != null && catMap[c.parent_id]) {
-      catMap[c.parent_id].children.push(catMap[c.id]);
-    } else {
-      roots.push(catMap[c.id]);
-    }
-  });
-
-  const sortByName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-  const sortNode = node => {
-    node.children.sort(sortByName);
-    node.codes.sort(sortByName);
-    node.children.forEach(sortNode);
-  };
-  roots.sort(sortByName);
-  roots.forEach(sortNode);
-  return roots;
-}
-
-function _cmCountCodes(node) {
-  return node.codes.length + node.children.reduce((s, ch) => s + _cmCountCodes(ch), 0);
-}
-
-// ── Tree rendering ────────────────────────────────────────────────────────────
-
-function _cmRenderTree() {
-  _cmComputeMaxDepth();
+function _cmRenderCodeList() {
   const list = document.getElementById('cm-code-list');
-  const roots = _cmBuildTree();
-  const uncategorized = _cmCodes
-    .filter(c => c.category_id == null)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-
-  let html = '';
-  roots.forEach(node => { html += _cmRenderCatNode(node, 0); });
-
-  // Uncategorized / unassigned open codings drop zone
-  const ucCards = uncategorized.map(c => _cmRenderCodeCard(c, 0)).join('');
-  html += `
-    <div class="mt-2">
-      <div class="cm-drop-zone flex items-center gap-2 py-1 px-2 rounded-lg"
-           data-drop-cat-id="">
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Uncategorized Open Codings</span>
-      </div>
-      <div class="space-y-1 mt-1">${ucCards || ''}</div>
-    </div>`;
-
-  if (!_cmCodes.length && !_cmCategories.length) {
+  if (!_cmCodes.length) {
     list.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No codes yet. Click "+ New Code" to create your first code.</p>';
     return;
   }
-  list.innerHTML = html;
+  const grouped = {};
+  _cmCodes.forEach(c => {
+    const key = c.category_id ?? '__none__';
+    (grouped[key] = grouped[key] || []).push(c);
+  });
+  const sections = [];
+  const sortedCats = [..._cmCategories].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  sortedCats.forEach(cat => {
+    const codes = grouped[cat.id];
+    if (!codes) return;
+    sections.push(_cmCategorySection(cat, codes));
+  });
+  if (grouped['__none__']?.length) {
+    sections.push(_cmCategorySection(null, grouped['__none__']));
+  }
+  list.innerHTML = sections.join('');
 }
 
-function _cmRenderCatNode(node, depth) {
-  const isCollapsed  = _cmCollapsed.has(node.id);
-  const hasContent   = node.children.length > 0 || node.codes.length > 0;
-  const totalCodes   = _cmCountCodes(node);
-  const pl           = 8 + depth * 18;
-  const isOpenCat    = _cmOpenCatId === node.id;
-  const headerBg     = isOpenCat ? 'bg-slate-100' : 'hover:bg-gray-50';
-  const toggleIcon   = hasContent ? (isCollapsed ? '▶' : '▼') : '';
-
-  const header = `
-    <div class="cm-cat-header flex items-center gap-2 py-1.5 rounded-lg cursor-grab group transition-colors ${headerBg}"
-         style="padding-left:${pl}px;padding-right:8px"
-         data-cat-id="${node.id}"
-         draggable="true">
-      <span class="w-3 text-[9px] text-gray-400 shrink-0 cm-tree-toggle" data-cat-id="${node.id}">${toggleIcon}</span>
-      <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${node.color}"></span>
-      <span class="text-xs font-semibold text-gray-600 uppercase tracking-wide flex-1 truncate">${esc(node.name)}</span>
-      <span class="text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-400 shrink-0 font-mono">${_cmOrderLabel(depth)}</span>
-      <span class="text-[10px] text-gray-400 shrink-0">${totalCodes > 0 ? totalCodes + ' open codings' : ''}</span>
-      <button class="hidden group-hover:inline text-[10px] text-indigo-500 hover:text-indigo-700 ml-1 cm-edit-cat-btn shrink-0"
-              data-cat-id="${node.id}">edit</button>
-    </div>`;
-
-  if (isCollapsed) {
-    return `<div class="cm-cat-node" data-cat-id="${node.id}">${header}</div>`;
-  }
-
-  const childrenHtml = node.children.map(ch => _cmRenderCatNode(ch, depth + 1)).join('');
-  const codesHtml    = node.codes.map(c => _cmRenderCodeCard(c, depth + 1)).join('');
-
-  // Inner drop zone (always rendered so user can drop into an empty category)
-  const dropZone = `
-    <div class="cm-drop-zone min-h-[6px] rounded" style="margin-left:${pl + 18}px"
-         data-drop-cat-id="${node.id}"></div>`;
-
-  return `
-    <div class="cm-cat-node" data-cat-id="${node.id}">
-      ${header}
-      <div class="cm-cat-children space-y-1 mt-0.5">
-        ${childrenHtml}
-        <div class="space-y-1">${codesHtml}</div>
-        ${dropZone}
-      </div>
-    </div>`;
-}
-
-function _cmRenderCodeCard(code, depth) {
-  const tc         = labelTextColor(code.color);
-  const selected   = _cmSelected.has(code.id);
-  const isOpen     = _cmOpenCodeId === code.id;
-  const isExpanded = _cmExpandedCodes.has(code.id);
-  const selCls     = selected ? 'ring-2 ring-amber-400 bg-amber-50'
-                   : (isOpen ? 'border-indigo-400 bg-indigo-50' : 'bg-white hover:border-indigo-200');
-  const pl         = 8 + depth * 18;
-
-  // Inline excerpts section
-  let excerptsHtml = '';
-  if (isExpanded) {
-    const cached = _cmExcerptsCache[code.id];
-    if (cached === undefined) {
-      excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 text-xs text-gray-400 italic text-center py-1.5 border-l-2 border-indigo-200 pl-2 ml-3">Loading excerpts…</div>`;
-    } else if (cached.length === 0) {
-      excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 text-xs text-gray-400 italic text-center py-1.5">No excerpts yet.</div>`;
-    } else {
-      const items = cached.map(r => {
-        const snippet = (r.content || '').substring(0, 180);
-        const more    = (r.content || '').length > 180 ? '…' : '';
-        return `<div class="border-l-2 pl-2 py-1 cursor-pointer cm-excerpt-item group rounded-r-md transition-colors hover:bg-indigo-50/60"
-                     style="border-color:${code.color}"
-                     draggable="true"
-                     data-bookmark-id="${r.bookmark_id}"
-                     data-source-code-id="${code.id}"
-                     title="Click to edit · Drag to reassign">
-          <div class="flex items-start gap-1.5">
-            <div class="flex-1 min-w-0">
-              <p class="text-xs italic text-gray-700 leading-relaxed">"${esc(snippet)}${more}"</p>
-              <p class="text-[10px] text-gray-400 mt-0.5">${esc(r.username || '')}${r.date ? ' · ' + esc(r.date.substring(0, 10)) : ''}</p>
-              ${r.note ? `<p class="text-[10px] text-indigo-600">${esc(r.note)}</p>` : ''}
-            </div>
-            <span class="opacity-0 group-hover:opacity-40 transition-opacity text-gray-400 shrink-0 mt-0.5 text-[11px] leading-none select-none pointer-events-none">⠿</span>
-          </div>
-        </div>`;
-      }).join('');
-      excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 ml-3 space-y-1.5">${items}</div>`;
-    }
-  }
-
-  return `
-    <div class="cm-code-outer" style="margin-left:${pl}px" data-outer-code-id="${code.id}">
-      <div class="cm-code-card border rounded-xl p-2.5 flex items-start gap-2 cursor-pointer transition-all ${selCls}"
-           data-code-id="${code.id}"
-           draggable="${_cmMergeMode ? 'false' : 'true'}">
-        ${_cmMergeMode ? `<input type="checkbox" class="mt-0.5 accent-amber-500 shrink-0 cm-select-cb" ${selected ? 'checked' : ''} data-code-id="${code.id}" />` : ''}
-        <span class="w-3 h-3 rounded-full shrink-0 mt-0.5" style="background:${code.color}"></span>
+function _cmCategorySection(cat, codes) {
+  const catHeader = cat
+    ? `<div class="flex items-center gap-2 mb-2">
+         <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${cat.color}"></span>
+         <span class="text-xs font-semibold text-gray-600 uppercase tracking-wide">${esc(cat.name)}</span>
+       </div>`
+    : `<div class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Uncategorized</div>`;
+  const cards = codes.map(c => {
+    const tc       = labelTextColor(c.color);
+    const selected = _cmSelected.has(c.id);
+    const selCls   = selected ? 'ring-2 ring-amber-400 bg-amber-50' : 'bg-white hover:border-indigo-200';
+    return `
+      <div class="cm-code-card border rounded-xl p-3 flex items-start gap-3 cursor-pointer transition-all ${selCls}"
+           data-code-id="${c.id}">
+        ${_cmMergeMode ? `<input type="checkbox" class="mt-0.5 accent-amber-500 shrink-0 cm-select-cb" ${selected ? 'checked' : ''} data-code-id="${c.id}" />` : ''}
+        <span class="w-3 h-3 rounded-full shrink-0 mt-0.5" style="background:${c.color}"></span>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
-            <span class="text-sm font-semibold text-gray-800">${esc(code.name)}</span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style="background:${code.color};color:${tc}">${code.groundedness} quotes</span>
+            <span class="text-sm font-semibold text-gray-800">${esc(c.name)}</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style="background:${c.color};color:${tc}">${c.groundedness} quotes</span>
           </div>
-          ${code.description ? `<p class="text-xs text-gray-500 mt-0.5 truncate">${esc(code.description)}</p>` : ''}
+          ${c.description ? `<p class="text-xs text-gray-500 mt-0.5 truncate">${esc(c.description)}</p>` : ''}
         </div>
-        <span class="text-[10px] text-gray-400 shrink-0 mt-0.5 select-none">${isExpanded ? '▲' : '▼'}</span>
-      </div>
-      ${excerptsHtml}
-    </div>`;
+        <span class="text-[10px] text-gray-400 shrink-0 mt-0.5">density ${c.density}</span>
+      </div>`;
+  }).join('');
+  return `<div class="space-y-2 mb-4">${catHeader}${cards}</div>`;
 }
 
-// ── Detail panel: Code ────────────────────────────────────────────────────────
-
-function _cmOpenCodeDetail(code) {
-  _cmFlushDetailPanel();
+function _cmOpenDetail(code) {
   _cmOpenCodeId = code.id;
-  document.getElementById('cm-detail-title').textContent = 'Edit Open Coding';
-  document.getElementById('cm-code-edit-section').classList.remove('hidden');
-  document.getElementById('cm-edit-name').value          = code.name;
-  document.getElementById('cm-edit-color').value         = code.color;
-  document.getElementById('cm-edit-desc').value          = code.description || '';
-  document.getElementById('cm-edit-category').value      = code.category_id ?? '';
+  const panel = document.getElementById('cm-detail-panel');
+  panel.classList.remove('hidden');
+  document.getElementById('cm-edit-name').value  = code.name;
+  document.getElementById('cm-edit-color').value = code.color;
+  document.getElementById('cm-edit-desc').value  = code.description || '';
+  document.getElementById('cm-edit-category').value = code.category_id ?? '';
   document.getElementById('cm-edit-ground').textContent  = code.groundedness ?? '—';
   document.getElementById('cm-edit-density').textContent = code.density ?? '—';
-  document.getElementById('cm-detail-panel').classList.remove('hidden');
-}
-
-async function _cmFetchExcerptsFor(codeId) {
-  try {
-    const rows = await apiFetch(`/api/codes/${codeId}/bookmarks`);
-    _cmExcerptsCache[codeId] = rows;
-  } catch (_) {
-    _cmExcerptsCache[codeId] = [];
-  }
-  // Targeted DOM update — avoid full re-render to preserve scroll position
-  const container = document.getElementById(`cm-exc-${codeId}`);
-  if (!container || !_cmExpandedCodes.has(codeId)) return;
-  const cached = _cmExcerptsCache[codeId];
-  if (!cached.length) {
-    container.innerHTML = '<p class="text-xs text-gray-400 italic text-center py-1.5">No excerpts yet.</p>';
-    return;
-  }
-  // Find the code's color for the left-border accent
-  const code = _cmCodes.find(c => c.id === codeId);
-  const accent = code ? code.color : '#0d3e7f';
-  container.innerHTML = cached.map(r => {
-    const snippet = (r.content || '').substring(0, 180);
-    const more    = (r.content || '').length > 180 ? '…' : '';
-    return `<div class="border-l-2 pl-2 py-1 cursor-pointer cm-excerpt-item group rounded-r-md transition-colors hover:bg-indigo-50/60"
-                 style="border-color:${accent}"
-                 draggable="true"
-                 data-bookmark-id="${r.bookmark_id}"
-                 data-source-code-id="${codeId}"
-                 title="Click to edit · Drag to reassign">
-      <div class="flex items-start gap-1.5">
-        <div class="flex-1 min-w-0">
-          <p class="text-xs italic text-gray-700 leading-relaxed">"${esc(snippet)}${more}"</p>
-          <p class="text-[10px] text-gray-400 mt-0.5">${esc(r.username || '')}${r.date ? ' · ' + esc(r.date.substring(0, 10)) : ''}</p>
-          ${r.note ? `<p class="text-[10px] text-indigo-600">${esc(r.note)}</p>` : ''}
-        </div>
-        <span class="opacity-0 group-hover:opacity-40 transition-opacity text-gray-400 shrink-0 mt-0.5 text-[11px] leading-none select-none pointer-events-none">⠿</span>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-// ── Detail panel: Category ────────────────────────────────────────────────────
-
-function _cmOpenCatDetail(cat) {
-  _cmFlushDetailPanel();
-  _cmOpenCatId = cat.id;
-  document.getElementById('cm-detail-title').textContent = 'Edit Coding';
-  document.getElementById('cm-cat-edit-section').classList.remove('hidden');
-  document.getElementById('cm-cat-edit-name').value  = cat.name;
-  document.getElementById('cm-cat-edit-color').value = cat.color;
-  // Filter out self and descendants to avoid cycles
-  const parentEl = document.getElementById('cm-cat-edit-parent');
-  parentEl.innerHTML = '<option value="">— Root level (2nd-order) —</option>' +
-    _cmCategories
-      .filter(c => c.id !== cat.id)
-      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
-      .map(c => `<option value="${c.id}">${esc(c.name)}</option>`)
-      .join('');
-  parentEl.value = cat.parent_id ?? '';
-  document.getElementById('cm-detail-panel').classList.remove('hidden');
-}
-
-function _cmFlushDetailPanel() {
-  _cmOpenCodeId   = null;
-  _cmOpenCatId    = null;
-  _cmOpenExcBmId  = null;
-  _cmOpenExcSrcId = null;
-  document.getElementById('cm-code-edit-section').classList.add('hidden');
-  document.getElementById('cm-cat-edit-section').classList.add('hidden');
-  document.getElementById('cm-exc-edit-section').classList.add('hidden');
   document.getElementById('cm-edit-msg').classList.add('hidden');
-  document.getElementById('cm-cat-edit-msg').classList.add('hidden');
-  document.getElementById('cm-exc-panel-suggestions').classList.add('hidden');
 }
 
 function _cmCloseDetail() {
-  _cmFlushDetailPanel();
+  _cmOpenCodeId = null;
   document.getElementById('cm-detail-panel').classList.add('hidden');
 }
 
-// ── Excerpt coding panel (sidebar) ───────────────────────────────────────────
-
-async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId) {
-  let bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
-  if (!bm) {
-    try {
-      _cachedBookmarks = await apiFetch('/api/bookmarks');
-      bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
-    } catch (_) {}
-  }
-  if (!bm) return;
-
-  _cmFlushDetailPanel();
-  _cmOpenExcBmId  = bookmarkId;
-  _cmOpenExcSrcId = sourceCodeId;
-
-  const textEl  = document.getElementById('cm-exc-panel-text');
-  const srcCode = _cmCodes.find(c => c.id === sourceCodeId);
-
-  document.getElementById('cm-detail-title').textContent = 'Edit Open Codings';
-  document.getElementById('cm-exc-edit-section').classList.remove('hidden');
-
-  textEl.textContent           = `"${bm.content || ''}"`;
-  textEl.style.borderLeftColor = srcCode ? srcCode.color : '#0d3e7f';
-  document.getElementById('cm-exc-panel-source').textContent =
-    [bm.username, bm.date ? bm.date.substring(0, 10) : null].filter(Boolean).join(' · ');
-
-  _cmExcPanelRenderCodes(bm, bookmarkId);
-  document.getElementById('cm-detail-panel').classList.remove('hidden');
-
-  const searchEl = document.getElementById('cm-exc-panel-search');
-  searchEl.value = '';
-  searchEl.focus();
-}
-
-function _cmExcPanelRenderCodes(bm, bookmarkId) {
-  const container = document.getElementById('cm-exc-panel-codes');
-  const codes     = bm ? (bm.codes || []) : [];
-  if (!codes.length) {
-    container.innerHTML = '<span class="text-xs text-gray-400 italic">No open codings assigned yet</span>';
-    return;
-  }
-  container.innerHTML = codes.map(c => {
-    const tc = labelTextColor(c.color);
-    return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
-                  style="background:${c.color};color:${tc}">
-      ${esc(c.name)}
-      <button class="cm-exc-panel-remove-code ml-0.5 hover:opacity-70 font-bold leading-none"
-              data-code-id="${c.id}" data-bookmark-id="${bookmarkId}"
-              title="Remove this coding">×</button>
-    </span>`;
-  }).join('');
-}
-
-function _cmExcPanelShowSuggestions(q) {
-  const bm          = _cachedBookmarks.find(b => b.bookmark_id === _cmOpenExcBmId);
-  const assignedIds = new Set((bm ? bm.codes || [] : []).map(c => c.id));
-  const sugEl       = document.getElementById('cm-exc-panel-suggestions');
-
-  if (!q) { sugEl.classList.add('hidden'); sugEl.innerHTML = ''; return; }
-
-  const ql      = q.toLowerCase();
-  const matches = _cmCodes
-    .filter(c => !assignedIds.has(c.id) && c.name.toLowerCase().includes(ql))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-  const exactExists = _cmCodes.some(c => c.name.toLowerCase() === ql);
-
-  let html = matches.map(c =>
-    `<div class="cm-exc-sug-item flex items-center gap-2 px-3 py-2 hover:bg-indigo-50 cursor-pointer text-sm"
-          data-code-id="${c.id}">
-      <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${c.color}"></span>
-      <span>${esc(c.name)}</span>
-    </div>`
-  ).join('');
-
-  if (!exactExists) {
-    html += `<div class="cm-exc-sug-create flex items-center gap-2 px-3 py-2 hover:bg-green-50 cursor-pointer text-sm text-green-700 ${matches.length ? 'border-t border-gray-100' : ''}">
-      <span class="text-base font-bold leading-none">+</span>
-      <span>Create <strong>"${esc(q)}"</strong> as new open coding</span>
-    </div>`;
-  }
-
-  if (html) { sugEl.innerHTML = html; sugEl.classList.remove('hidden'); }
-  else       { sugEl.innerHTML = ''; sugEl.classList.add('hidden'); }
-}
-
-async function _cmExcPanelAssignCode(codeId) {
-  const bookmarkId = _cmOpenExcBmId;
-  const bm         = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
-  try {
-    await apiFetch(`/api/bookmarks/${bookmarkId}/codes/${codeId}`, { method: 'POST' });
-    const code = _cmCodes.find(c => c.id === codeId);
-    if (bm && code && !(bm.codes || []).some(c => c.id === codeId)) {
-      bm.codes = [...(bm.codes || []),
-        { id: code.id, name: code.name, color: code.color,
-          description: code.description, category_id: code.category_id }];
-    }
-    delete _cmExcerptsCache[codeId];
-    _cmExcPanelRenderCodes(bm, bookmarkId);
-    document.getElementById('cm-exc-panel-search').value = '';
-    document.getElementById('cm-exc-panel-suggestions').classList.add('hidden');
-  } catch (err) {
-    showErrorPopup('Failed to assign coding: ' + err.message);
-  }
-}
-
-// Panel search input → live suggestions + Enter to confirm
-document.getElementById('cm-exc-panel-search').addEventListener('input', e => {
-  _cmExcPanelShowSuggestions(e.target.value.trim());
-});
-document.getElementById('cm-exc-panel-search').addEventListener('focus', e => {
-  if (e.target.value.trim()) _cmExcPanelShowSuggestions(e.target.value.trim());
-});
-document.getElementById('cm-exc-panel-search').addEventListener('keydown', async e => {
-  if (e.key !== 'Enter') return;
-  e.preventDefault();
-  const q = e.target.value.trim();
-  if (!q) return;
-  const bm          = _cachedBookmarks.find(b => b.bookmark_id === _cmOpenExcBmId);
-  const assignedIds = new Set((bm ? bm.codes || [] : []).map(c => c.id));
-  const match       = _cmCodes.find(c =>
-    !assignedIds.has(c.id) && c.name.toLowerCase() === q.toLowerCase()
-  );
-  if (match) {
-    await _cmExcPanelAssignCode(match.id);
-  } else {
-    const exactExists = _cmCodes.some(c => c.name.toLowerCase() === q.toLowerCase());
-    if (!exactExists) {
-      try {
-        const newCode = await apiFetch('/api/codes', { method: 'POST', body: JSON.stringify({ name: q }) });
-        _cmCodes.push(newCode);
-        _allCodes.push(newCode);
-        await _cmExcPanelAssignCode(newCode.id);
-      } catch (err) {
-        showErrorPopup('Failed to create coding: ' + err.message);
-      }
-    }
-  }
-});
-
-// Suggestions: pick existing or create new
-document.getElementById('cm-exc-panel-suggestions').addEventListener('mousedown', async e => {
-  const item   = e.target.closest('.cm-exc-sug-item');
-  const create = e.target.closest('.cm-exc-sug-create');
-  if (item) {
-    e.preventDefault();
-    await _cmExcPanelAssignCode(parseInt(item.dataset.codeId));
-    return;
-  }
-  if (create) {
-    e.preventDefault();
-    const name = document.getElementById('cm-exc-panel-search').value.trim();
-    if (!name) return;
-    try {
-      const newCode = await apiFetch('/api/codes', { method: 'POST', body: JSON.stringify({ name }) });
-      _cmCodes.push(newCode);
-      _allCodes.push(newCode);
-      await _cmExcPanelAssignCode(newCode.id);
-    } catch (err) {
-      showErrorPopup('Failed to create coding: ' + err.message);
-    }
-  }
-});
-
-// Remove code chip
-document.getElementById('cm-exc-panel-codes').addEventListener('click', async e => {
-  const btn = e.target.closest('.cm-exc-panel-remove-code');
-  if (!btn) return;
-  const bookmarkId = parseInt(btn.dataset.bookmarkId);
-  const codeId     = parseInt(btn.dataset.codeId);
-  try {
-    await apiFetch(`/api/bookmarks/${bookmarkId}/codes/${codeId}`, { method: 'DELETE' });
-    const bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
-    if (bm) bm.codes = (bm.codes || []).filter(c => c.id !== codeId);
-    delete _cmExcerptsCache[codeId];
-    _cmExcPanelRenderCodes(bm, bookmarkId);
-  } catch (err) {
-    showErrorPopup('Failed to remove coding: ' + err.message);
-  }
-});
-
-// ── Tree click delegation ────────────────────────────────────────────────────
-
 document.getElementById('cm-code-list').addEventListener('click', e => {
-  // Checkbox in merge mode
   const cb = e.target.closest('.cm-select-cb');
   if (cb) {
     const id = parseInt(cb.dataset.codeId);
     if (_cmSelected.has(id)) _cmSelected.delete(id); else _cmSelected.add(id);
     _cmUpdateMergeBtn();
-    _cmRenderTree();
+    _cmRenderCodeList();
     return;
   }
-
-  // Collapse toggle
-  const toggle = e.target.closest('.cm-tree-toggle');
-  if (toggle) {
-    const id = parseInt(toggle.dataset.catId);
-    if (_cmCollapsed.has(id)) _cmCollapsed.delete(id); else _cmCollapsed.add(id);
-    _cmRenderTree();
-    return;
-  }
-
-  // Edit category inline button
-  const editBtn = e.target.closest('.cm-edit-cat-btn');
-  if (editBtn) {
-    e.stopPropagation();
-    const cat = _cmCategories.find(c => c.id === parseInt(editBtn.dataset.catId));
-    if (cat) _cmOpenCatDetail(cat);
-    return;
-  }
-
-  // Category header → toggle collapse or open detail
-  const catHeader = e.target.closest('.cm-cat-header');
-  if (catHeader && !e.target.closest('.cm-tree-toggle') && !e.target.closest('.cm-edit-cat-btn')) {
-    const id = parseInt(catHeader.dataset.catId);
-    const cat = _cmCategories.find(c => c.id === id);
-    if (cat) _cmOpenCatDetail(cat);
-    return;
-  }
-
-  // Excerpt item click → open coding panel
-  const excerptItem = e.target.closest('.cm-excerpt-item');
-  if (excerptItem) {
-    e.stopPropagation();
-    _cmOpenExcerptPanel(
-      parseInt(excerptItem.dataset.bookmarkId),
-      parseInt(excerptItem.dataset.sourceCodeId)
-    );
-    return;
-  }
-
-  // Code card
   const card = e.target.closest('.cm-code-card');
   if (!card) return;
   if (_cmMergeMode) {
     const id = parseInt(card.dataset.codeId);
     if (_cmSelected.has(id)) _cmSelected.delete(id); else _cmSelected.add(id);
     _cmUpdateMergeBtn();
-    _cmRenderTree();
+    _cmRenderCodeList();
     return;
   }
-  const codeId = parseInt(card.dataset.codeId);
-  const code   = _cmCodes.find(c => c.id === codeId);
-  if (!code) return;
-
-  // Toggle inline excerpts
-  const wasExpanded = _cmExpandedCodes.has(codeId);
-  if (wasExpanded) {
-    _cmExpandedCodes.delete(codeId);
-  } else {
-    _cmExpandedCodes.add(codeId);
-  }
-
-  _cmOpenCodeDetail(code);
-  _cmRenderTree();
-
-  // Fetch excerpts if expanding and not yet cached
-  if (!wasExpanded && _cmExcerptsCache[codeId] === undefined) {
-    _cmFetchExcerptsFor(codeId);
-  }
-});
-
-// ── Drag & drop ───────────────────────────────────────────────────────────────
-
-document.getElementById('cm-code-list').addEventListener('dragstart', e => {
-  // Excerpt drag — must be checked first (excerpts are inside code-outer wrappers)
-  const excerptItem = e.target.closest('.cm-excerpt-item');
-  if (excerptItem) {
-    _cmDragExcerpt = {
-      bookmarkId:   parseInt(excerptItem.dataset.bookmarkId),
-      sourceCodeId: parseInt(excerptItem.dataset.sourceCodeId),
-    };
-    _cmDragCodeId = null; _cmDragCatId = null;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', 'excerpt');
-    excerptItem.classList.add('opacity-50');
-    return;
-  }
-  // Open coding card drag
-  const card = e.target.closest('.cm-code-card');
-  if (card) {
-    _cmDragCodeId = parseInt(card.dataset.codeId);
-    _cmDragCatId  = null; _cmDragExcerpt = null;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', 'code:' + _cmDragCodeId);
-    card.classList.add('opacity-50');
-    return;
-  }
-  // Coding (category) header drag — not toggle/edit buttons
-  const catHeader = e.target.closest('.cm-cat-header');
-  if (catHeader && !e.target.closest('.cm-tree-toggle') && !e.target.closest('.cm-edit-cat-btn')) {
-    _cmDragCatId  = parseInt(catHeader.dataset.catId);
-    _cmDragCodeId = null; _cmDragExcerpt = null;
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', 'cat:' + _cmDragCatId);
-    catHeader.classList.add('opacity-50');
-  }
-});
-
-document.getElementById('cm-code-list').addEventListener('dragend', () => {
-  _cmDragCodeId  = null;
-  _cmDragCatId   = null;
-  _cmDragExcerpt = null;
-  document.querySelectorAll('.cm-excerpt-item').forEach(i => i.classList.remove('opacity-50'));
-  document.querySelectorAll('.cm-code-card').forEach(c => c.classList.remove('opacity-50'));
-  document.querySelectorAll('.cm-code-outer').forEach(o => o.classList.remove('ring-2', 'ring-green-400', 'rounded-xl'));
-  document.querySelectorAll('.cm-cat-header').forEach(h => h.classList.remove('opacity-50', 'bg-indigo-50'));
-  document.querySelectorAll('.cm-drop-zone').forEach(z => z.classList.remove('bg-indigo-100', 'ring-2', 'ring-indigo-400'));
-});
-
-document.getElementById('cm-code-list').addEventListener('dragover', e => {
-  // ── Excerpt drag: only open-coding wrappers are valid targets ─────────────
-  if (_cmDragExcerpt !== null) {
-    const outer = e.target.closest('.cm-code-outer');
-    if (outer && parseInt(outer.dataset.outerCodeId) !== _cmDragExcerpt.sourceCodeId) {
-      e.preventDefault();
-      outer.classList.add('ring-2', 'ring-green-400', 'rounded-xl');
-    }
-    return;
-  }
-  // ── Code/cat drag: zones and cat headers are valid ────────────────────────
-  if (_cmDragCodeId === null && _cmDragCatId === null) return;
-  const zone = e.target.closest('.cm-drop-zone');
-  if (zone) { e.preventDefault(); zone.classList.add('bg-indigo-100', 'ring-2', 'ring-indigo-400'); return; }
-  const catHeader = e.target.closest('.cm-cat-header');
-  if (catHeader) {
-    const targetCatId = parseInt(catHeader.dataset.catId);
-    if (_cmDragCatId !== null && _cmGetDescendantCatIds(_cmDragCatId).has(targetCatId)) return;
-    e.preventDefault();
-    catHeader.classList.add('bg-indigo-50');
-  }
-});
-
-document.getElementById('cm-code-list').addEventListener('dragleave', e => {
-  if (_cmDragExcerpt !== null) {
-    const outer = e.target.closest('.cm-code-outer');
-    if (outer) outer.classList.remove('ring-2', 'ring-green-400', 'rounded-xl');
-    return;
-  }
-  const zone = e.target.closest('.cm-drop-zone');
-  if (zone) zone.classList.remove('bg-indigo-100', 'ring-2', 'ring-indigo-400');
-  const catHeader = e.target.closest('.cm-cat-header');
-  if (catHeader) catHeader.classList.remove('bg-indigo-50');
-});
-
-document.getElementById('cm-code-list').addEventListener('drop', async e => {
-  e.preventDefault();
-  document.querySelectorAll('.cm-code-outer').forEach(o => o.classList.remove('ring-2', 'ring-green-400', 'rounded-xl'));
-  document.querySelectorAll('.cm-drop-zone').forEach(z => z.classList.remove('bg-indigo-100', 'ring-2', 'ring-indigo-400'));
-  document.querySelectorAll('.cm-cat-header').forEach(h => h.classList.remove('bg-indigo-50', 'opacity-50'));
-
-  // ── Drop: excerpt → re-assign to another open coding ─────────────────────
-  if (_cmDragExcerpt !== null) {
-    const exc = _cmDragExcerpt;
-    _cmDragExcerpt = null;
-    const outer = e.target.closest('.cm-code-outer');
-    if (!outer) return;
-    const targetCodeId = parseInt(outer.dataset.outerCodeId);
-    if (!targetCodeId || targetCodeId === exc.sourceCodeId) return;
-    try {
-      await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${targetCodeId}`, { method: 'POST' });
-      await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${exc.sourceCodeId}`, { method: 'DELETE' });
-      delete _cmExcerptsCache[exc.sourceCodeId];
-      delete _cmExcerptsCache[targetCodeId];
-      // Update cached bookmark in place
-      const bm = _cachedBookmarks.find(b => b.bookmark_id === exc.bookmarkId);
-      if (bm) {
-        bm.codes = (bm.codes || []).filter(c => c.id !== exc.sourceCodeId);
-        if (!bm.codes.some(c => c.id === targetCodeId)) {
-          const tc = _allCodes.find(c => c.id === targetCodeId);
-          if (tc) bm.codes.push({ id: tc.id, name: tc.name, color: tc.color });
-        }
-      }
-      if (_cmExpandedCodes.has(exc.sourceCodeId)) _cmFetchExcerptsFor(exc.sourceCodeId);
-      if (_cmExpandedCodes.has(targetCodeId)) _cmFetchExcerptsFor(targetCodeId);
-      await _cmRefresh();
-      document.dispatchEvent(new CustomEvent('codebook-updated'));
-    } catch (err) { showErrorPopup('Move failed: ' + err.message); }
-    return;
-  }
-
-  const zone      = e.target.closest('.cm-drop-zone');
-  const catHeader = e.target.closest('.cm-cat-header');
-  const target    = zone || catHeader;
-  if (!target) return;
-
-  const rawId       = target.dataset.dropCatId ?? target.dataset.catId;
-  const newParentId = rawId ? parseInt(rawId) : null;
-
-  // ── Drop: open coding → assign to a coding level ─────────────────────────
-  if (_cmDragCodeId !== null) {
-    const codeId = _cmDragCodeId;
-    _cmDragCodeId = null;
-    const code = _cmCodes.find(c => c.id === codeId);
-    if (!code || code.category_id === newParentId) return;
-    try {
-      await apiFetch(`/api/codes/${codeId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category_id: newParentId }),
-      });
-      _allCodes = _allCodes.map(c => c.id === codeId ? { ...c, category_id: newParentId } : c);
-      await _cmRefresh();
-      document.dispatchEvent(new CustomEvent('codebook-updated'));
-    } catch (err) { showErrorPopup('Move failed: ' + err.message); }
-    return;
-  }
-
-  // ── Drop: coding → re-parent to a higher-order coding ────────────────────
-  if (_cmDragCatId !== null) {
-    const catId = _cmDragCatId;
-    _cmDragCatId = null;
-    if (newParentId !== null && _cmGetDescendantCatIds(catId).has(newParentId)) return;
-    const cat = _cmCategories.find(c => c.id === catId);
-    if (!cat || cat.parent_id === newParentId) return;
-    try {
-      await apiFetch(`/api/code-categories/${catId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: cat.name, color: cat.color, parent_id: newParentId }),
-      });
-      await _cmRefresh();
-    } catch (err) { showErrorPopup('Move failed: ' + err.message); }
-  }
-});
-
-// ── Code save / delete ────────────────────────────────────────────────────────
-
-document.getElementById('cm-code-edit-section').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
-    e.preventDefault();
-    document.getElementById('cm-edit-save').click();
-  }
+  const code = _cmCodes.find(c => c.id === parseInt(card.dataset.codeId));
+  if (code) _cmOpenDetail(code);
 });
 
 document.getElementById('cm-edit-save').addEventListener('click', async () => {
@@ -3652,78 +2946,33 @@ document.getElementById('cm-edit-save').addEventListener('click', async () => {
     msgEl.textContent = 'Saved.';
     msgEl.classList.remove('hidden');
     setTimeout(() => msgEl.classList.add('hidden'), 2500);
-    delete _cmExcerptsCache[_cmOpenCodeId];  // force re-fetch on next expand
     _allCodes = _allCodes.map(c => c.id === _cmOpenCodeId ? { ...c, name, color, description, category_id } : c);
     _cachedBookmarks.forEach(bm => { (bm.codes || []).forEach(c => { if (c.id === _cmOpenCodeId) { c.name = name; c.color = color; } }); });
     renderBmCodeFilterChips();
     await _cmRefresh();
     document.dispatchEvent(new CustomEvent('codebook-updated'));
-  } catch (err) { showErrorPopup('Failed to save: ' + err.message); }
+  } catch (e) { showErrorPopup('Failed to save: ' + e.message); }
 });
 
 document.getElementById('cm-edit-delete').addEventListener('click', async () => {
   if (_cmOpenCodeId === null) return;
   const code = _cmCodes.find(c => c.id === _cmOpenCodeId);
   if (!code) return;
-  if (!await cmConfirm(`Delete open coding "${code.name}"? It will be removed from all bookmarks.`, 'Delete')) return;
+  if (!confirm(`Delete code "${code.name}"? It will be removed from all bookmarks.`)) return;
   const deletingId = _cmOpenCodeId;
   try {
     await apiFetch(`/api/codes/${deletingId}`, { method: 'DELETE' });
     _cmCloseDetail();
-    _cmExpandedCodes.delete(deletingId);
-    delete _cmExcerptsCache[deletingId];
     _allCodes = _allCodes.filter(c => c.id !== deletingId);
     _bmCodeFilter.delete(deletingId);
     _cachedBookmarks.forEach(bm => { bm.codes = (bm.codes || []).filter(c => c.id !== deletingId); });
     renderBmCodeFilterChips();
     await _cmRefresh();
     document.dispatchEvent(new CustomEvent('codebook-updated'));
-  } catch (err) { showErrorPopup('Failed to delete: ' + err.message); }
+  } catch (e) { showErrorPopup('Failed to delete: ' + e.message); }
 });
 
-// ── Category save / delete ────────────────────────────────────────────────────
-
-document.getElementById('cm-cat-edit-save').addEventListener('click', async () => {
-  if (_cmOpenCatId === null) return;
-  const name      = document.getElementById('cm-cat-edit-name').value.trim();
-  const color     = document.getElementById('cm-cat-edit-color').value;
-  const parentVal = document.getElementById('cm-cat-edit-parent').value;
-  const parent_id = parentVal ? parseInt(parentVal) : null;
-  if (!name) return;
-  try {
-    await apiFetch(`/api/code-categories/${_cmOpenCatId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, color, parent_id }),
-    });
-    const msgEl = document.getElementById('cm-cat-edit-msg');
-    msgEl.textContent = 'Saved.';
-    msgEl.classList.remove('hidden');
-    setTimeout(() => msgEl.classList.add('hidden'), 2500);
-    await _cmRefresh();
-  } catch (err) { showErrorPopup('Failed to save: ' + err.message); }
-});
-
-document.getElementById('cm-cat-edit-delete').addEventListener('click', async () => {
-  if (_cmOpenCatId === null) return;
-  const cat = _cmCategories.find(c => c.id === _cmOpenCatId);
-  if (!cat) return;
-  if (!await cmConfirm(`Delete coding "${cat.name}"? Child codings will be promoted one level and open codings will become uncategorized.`, 'Delete')) return;
-  try {
-    await apiFetch(`/api/code-categories/${_cmOpenCatId}`, { method: 'DELETE' });
-    _cmCloseDetail();
-    await _cmRefresh();
-  } catch (err) { showErrorPopup('Failed to delete: ' + err.message); }
-});
-
-// ── Detail close ──────────────────────────────────────────────────────────────
-
-document.getElementById('cm-detail-close').addEventListener('click', () => {
-  _cmCloseDetail();
-  _cmRenderTree();
-});
-
-// ── New Code panel ────────────────────────────────────────────────────────────
+document.getElementById('cm-detail-close').addEventListener('click', _cmCloseDetail);
 
 document.getElementById('cm-new-code-btn').addEventListener('click', () => {
   document.getElementById('cm-new-code-panel').classList.toggle('hidden');
@@ -3748,20 +2997,18 @@ document.getElementById('cm-nc-save').addEventListener('click', async () => {
       body: JSON.stringify({ name, color, category_id }),
     });
     document.getElementById('cm-nc-name').value  = '';
-    document.getElementById('cm-nc-color').value = '#0d3e7f';
+    document.getElementById('cm-nc-color').value = '#6366f1';
     document.getElementById('cm-nc-category').value = '';
     document.getElementById('cm-new-code-panel').classList.add('hidden');
     _allCodes = [..._allCodes, code].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     renderBmCodeFilterChips();
     await _cmRefresh();
     document.dispatchEvent(new CustomEvent('codebook-updated'));
-  } catch (err) {
-    msgEl.textContent = err.message || 'Failed to create code.';
+  } catch (e) {
+    msgEl.textContent = e.message || 'Failed to create code.';
     msgEl.classList.remove('hidden');
   }
 });
-
-// ── New Theme panel ────────────────────────────────────────────────────────────
 
 document.getElementById('cm-new-cat-btn').addEventListener('click', () => {
   document.getElementById('cm-new-cat-panel').classList.toggle('hidden');
@@ -3772,38 +3019,33 @@ document.getElementById('cm-cat-cancel').addEventListener('click', () => {
   document.getElementById('cm-new-cat-panel').classList.add('hidden');
 });
 document.getElementById('cm-cat-save').addEventListener('click', async () => {
-  const name      = document.getElementById('cm-cat-name').value.trim();
-  const color     = document.getElementById('cm-cat-color').value;
-  const parentVal = document.getElementById('cm-cat-parent').value;
-  const parent_id = parentVal ? parseInt(parentVal) : null;
-  const msgEl     = document.getElementById('cm-cat-msg');
+  const name  = document.getElementById('cm-cat-name').value.trim();
+  const color = document.getElementById('cm-cat-color').value;
+  const msgEl = document.getElementById('cm-cat-msg');
   msgEl.classList.add('hidden');
   if (!name) { document.getElementById('cm-cat-name').focus(); return; }
   try {
     await apiFetch('/api/code-categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, color, parent_id }),
+      body: JSON.stringify({ name, color }),
     });
     document.getElementById('cm-cat-name').value  = '';
     document.getElementById('cm-cat-color').value = '#94a3b8';
-    document.getElementById('cm-cat-parent').value = '';
     document.getElementById('cm-new-cat-panel').classList.add('hidden');
     await _cmRefresh();
-  } catch (err) {
-    msgEl.textContent = err.message || 'Failed to create coding.';
+  } catch (e) {
+    msgEl.textContent = e.message || 'Failed to create category.';
     msgEl.classList.remove('hidden');
   }
 });
-
-// ── Merge mode ────────────────────────────────────────────────────────────────
 
 document.getElementById('cm-select-mode-toggle').addEventListener('change', e => {
   _cmMergeMode = e.target.checked;
   _cmSelected.clear();
   document.getElementById('cm-merge-btn').classList.add('hidden');
   document.getElementById('cm-merge-cancel').classList.add('hidden');
-  _cmRenderTree();
+  _cmRenderCodeList();
 });
 
 function _cmUpdateMergeBtn() {
@@ -3826,7 +3068,7 @@ document.getElementById('cm-merge-cancel').addEventListener('click', () => {
   _cmMergeMode = false;
   document.getElementById('cm-merge-btn').classList.add('hidden');
   document.getElementById('cm-merge-cancel').classList.add('hidden');
-  _cmRenderTree();
+  _cmRenderCodeList();
 });
 
 document.getElementById('cm-merge-btn').addEventListener('click', async () => {
@@ -3835,7 +3077,7 @@ document.getElementById('cm-merge-btn').addEventListener('click', async () => {
   const src = _cmCodes.find(c => c.id === srcId);
   const tgt = _cmCodes.find(c => c.id === tgtId);
   if (!src || !tgt) return;
-  if (!await cmConfirm(`Merge "${src.name}" into "${tgt.name}"? "${src.name}" will be deleted and its bookmarks reassigned to "${tgt.name}".`, 'Merge', 'bg-amber-600 hover:bg-amber-700')) return;
+  if (!confirm(`Merge "${src.name}" into "${tgt.name}"? "${src.name}" will be deleted and its bookmarks reassigned to "${tgt.name}".`)) return;
   try {
     await apiFetch('/api/codes/merge', {
       method: 'POST',
@@ -3860,7 +3102,7 @@ document.getElementById('cm-merge-btn').addEventListener('click', async () => {
     if (_cmOpenCodeId === srcId) _cmCloseDetail();
     await _cmRefresh();
     document.dispatchEvent(new CustomEvent('codebook-updated'));
-  } catch (err) { showErrorPopup('Merge failed: ' + err.message); }
+  } catch (e) { showErrorPopup('Merge failed: ' + e.message); }
 });
 
 document.getElementById('cm-refresh-btn').addEventListener('click', _cmRefresh);
@@ -3869,368 +3111,6 @@ document.addEventListener('codebook-updated', () => {
   if (!document.getElementById('page-coding').classList.contains('hidden')) {
     _cmRefresh();
   }
-});
-
-// ── Coding page tabs ──────────────────────────────────────────────────────────
-
-let _cmActiveTab = 'manager'; // 'manager' | 'table'
-
-function _cmSwitchTab(tab) {
-  _cmActiveTab = tab;
-  const isManager = tab === 'manager';
-  document.getElementById('cm-section-manager').classList.toggle('hidden', !isManager);
-  document.getElementById('cm-section-table').classList.toggle('hidden', isManager);
-
-  const manBtn = document.getElementById('cm-tab-manager');
-  const tblBtn = document.getElementById('cm-tab-table');
-  manBtn.className = isManager
-    ? 'px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-700 text-white transition-colors'
-    : 'px-4 py-1.5 text-xs font-semibold rounded-lg text-gray-600 hover:bg-gray-100 transition-colors';
-  tblBtn.className = !isManager
-    ? 'px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-700 text-white transition-colors'
-    : 'px-4 py-1.5 text-xs font-semibold rounded-lg text-gray-600 hover:bg-gray-100 transition-colors';
-
-  if (!isManager) _cmLoadCodingTable();
-}
-
-document.getElementById('cm-tab-manager').addEventListener('click', () => _cmSwitchTab('manager'));
-document.getElementById('cm-tab-table').addEventListener('click', () => _cmSwitchTab('table'));
-document.getElementById('cm-table-reload-btn').addEventListener('click', _cmLoadCodingTable);
-
-// ── Coding Table: load ────────────────────────────────────────────────────────
-
-async function _cmLoadCodingTable() {
-  const container = document.getElementById('cm-coding-table-container');
-  container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">Loading…</p>';
-  // Ensure codes & categories are loaded
-  if (!_cmCodes.length && !_cmCategories.length) await _cmRefresh();
-  // Ensure bookmarks are loaded (needed for excerpts)
-  if (!_cachedBookmarks.length) {
-    try { _cachedBookmarks = await apiFetch('/api/bookmarks'); }
-    catch (err) {
-      container.innerHTML = `<p class="text-sm text-red-500 text-center py-8">Failed to load bookmarks: ${esc(err.message)}</p>`;
-      return;
-    }
-  }
-  _cmRenderCodingTable();
-}
-
-// ── Coding Table: render ──────────────────────────────────────────────────────
-
-function _cmGetCatPath(catId) {
-  const path = [];
-  let cur = _cmCategories.find(c => c.id === catId);
-  while (cur) {
-    path.unshift(cur);
-    cur = cur.parent_id ? _cmCategories.find(c => c.id === cur.parent_id) : null;
-  }
-  return path;
-}
-
-function _cmRenderCodingTable() {
-  _cmComputeMaxDepth();
-  const container = document.getElementById('cm-coding-table-container');
-
-  const excByCode = {};
-  (_cachedBookmarks || []).forEach(bm => {
-    (bm.codes || []).forEach(code => {
-      (excByCode[code.id] = excByCode[code.id] || []).push({
-        content:    bm.content    || '',
-        username:   bm.username   || '',
-        date:      (bm.date       || '').substring(0, 10),
-        note:       bm.note       || '',
-        bookmarkId: bm.bookmark_id,
-      });
-    });
-  });
-
-  if (_cmTreeMaxDepth <= 1) {
-    _cmRenderClassicTable(container, excByCode);
-  } else {
-    _cmRenderHierarchyTable(container, excByCode);
-  }
-}
-
-// Classic fixed-column table: used when ≤ 3 order levels exist
-// maxDepth=0 → [2nd-order | Open Coding | Quote | Source | Note]
-// maxDepth=1 → [3rd-order | 2nd-order | Open Coding | Quote | Source | Note]
-function _cmRenderClassicTable(container, excByCode) {
-  const roots = _cmBuildTree();
-  const uncategorized = _cmCodes
-    .filter(c => c.category_id == null)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-
-  // Build a flat list of rows: each row carries the category cells + one excerpt (or null)
-  const flatRows = [];
-
-  function addCodeRows(code, cat3, cat2) {
-    const excs = excByCode[code.id] || [];
-    if (excs.length === 0) {
-      flatRows.push({ cat3, cat2, code, exc: null });
-    } else {
-      excs.forEach(exc => flatRows.push({ cat3, cat2, code, exc }));
-    }
-  }
-
-  if (_cmTreeMaxDepth === 0) {
-    roots.forEach(cat2Node => {
-      cat2Node.codes.forEach(code => addCodeRows(code, null, cat2Node));
-    });
-    uncategorized.forEach(code => addCodeRows(code, null, null));
-  } else { // maxDepth === 1
-    roots.forEach(cat3Node => {
-      cat3Node.children.forEach(cat2Node => {
-        cat2Node.codes.forEach(code => addCodeRows(code, cat3Node, cat2Node));
-      });
-      cat3Node.codes.forEach(code => addCodeRows(code, cat3Node, null));
-    });
-    uncategorized.forEach(code => addCodeRows(code, null, null));
-  }
-
-  if (!flatRows.length) {
-    container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No codes yet.</p>';
-    return;
-  }
-
-  // For each position, compute rowspan (> 0 = first in group → render cell; 0 = skip)
-  function computeSpans(keyFn) {
-    const n = flatRows.length;
-    const result = new Array(n).fill(0);
-    let gs = 0;
-    for (let i = 1; i <= n; i++) {
-      if (i === n || keyFn(flatRows[i]) !== keyFn(flatRows[gs])) {
-        result[gs] = i - gs;
-        gs = i;
-      }
-    }
-    return result;
-  }
-
-  const cat3Spans = _cmTreeMaxDepth === 1
-    ? computeSpans(r => r.cat3 ? r.cat3.id : '__Z__')
-    : null;
-  // cat2 key includes cat3 so groups reset when cat3 changes
-  const cat2Spans = computeSpans(r =>
-    (r.cat3 ? r.cat3.id : '__X__') + '|' + (r.cat2 ? r.cat2.id : '__Y__')
-  );
-  const codeSpans = computeSpans(r => r.code.id);
-
-  let tbody = '';
-  flatRows.forEach((row, i) => {
-    const { cat3, cat2, code, exc } = row;
-    tbody += '<tr class="border-b border-gray-100 hover:bg-gray-50">';
-
-    // 3rd-order column (maxDepth=1 only)
-    if (_cmTreeMaxDepth === 1 && cat3Spans[i] > 0) {
-      if (cat3) {
-        tbody += `<td class="px-3 py-2 align-top border-r border-gray-100" rowspan="${cat3Spans[i]}"
-            style="border-left:3px solid ${cat3.color}">
-            <div class="flex items-center gap-1.5 flex-wrap">
-              <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${cat3.color}"></span>
-              <span class="text-xs font-semibold text-gray-800">${esc(cat3.name)}</span>
-            </div></td>`;
-      } else {
-        tbody += `<td class="px-3 py-2 align-top border-r border-gray-100 text-[10px] italic text-gray-400"
-            rowspan="${cat3Spans[i]}">—</td>`;
-      }
-    }
-
-    // 2nd-order column
-    if (cat2Spans[i] > 0) {
-      if (cat2) {
-        tbody += `<td class="px-3 py-2 align-top border-r border-gray-100" rowspan="${cat2Spans[i]}"
-            style="border-left:3px solid ${cat2.color}">
-            <div class="flex items-center gap-1.5 flex-wrap">
-              <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${cat2.color}"></span>
-              <span class="text-xs font-semibold text-gray-800">${esc(cat2.name)}</span>
-            </div></td>`;
-      } else {
-        tbody += `<td class="px-3 py-2 align-top border-r border-gray-100 text-[10px] italic text-gray-400"
-            rowspan="${cat2Spans[i]}">—</td>`;
-      }
-    }
-
-    // Open Coding column
-    if (codeSpans[i] > 0) {
-      const tc = labelTextColor(code.color);
-      tbody += `<td class="px-3 py-2 align-top border-r border-gray-100" rowspan="${codeSpans[i]}">
-          <div class="flex items-center gap-1.5 flex-wrap">
-            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${code.color}"></span>
-            <span class="text-xs font-semibold text-gray-800">${esc(code.name)}</span>
-            <span class="text-[10px] px-1 py-0.5 rounded-full" style="background:${code.color};color:${tc}">${code.groundedness}</span>
-          </div>
-          ${code.description ? `<p class="text-[10px] text-gray-500 mt-0.5 ml-4 italic">${esc(code.description)}</p>` : ''}
-          <div class="mt-1 ml-4 text-[10px] text-gray-400">G:${code.groundedness} D:${code.density}</div>
-        </td>`;
-    }
-
-    // Excerpt columns
-    if (exc) {
-      const snippet = exc.content.substring(0, 220);
-      const more    = exc.content.length > 220 ? '…' : '';
-      tbody += `<td class="px-3 py-2 text-xs italic text-gray-700 leading-relaxed max-w-xs">"${esc(snippet)}${more}"</td>
-        <td class="px-3 py-2 text-[10px] text-gray-500 whitespace-nowrap align-top">${esc(exc.username)}<br>${esc(exc.date)}</td>
-        <td class="px-3 py-2 text-[10px] text-gray-400 align-top">${esc(exc.note) || '—'}</td>`;
-    } else {
-      tbody += `<td colspan="3" class="px-3 py-2 text-[10px] italic text-gray-300">No excerpts yet.</td>`;
-    }
-    tbody += '</tr>';
-  });
-
-  const orderHdrs = _cmTreeMaxDepth === 1
-    ? `<th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 w-40">3rd-order Coding</th>
-       <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 w-40">2nd-order Coding</th>`
-    : `<th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 w-40">2nd-order Coding</th>`;
-
-  container.innerHTML = `
-    <table class="w-full text-sm border-collapse">
-      <thead>
-        <tr class="bg-gray-50 border-b-2 border-gray-200">
-          ${orderHdrs}
-          <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 w-44">Open Coding</th>
-          <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">Quote / Excerpt</th>
-          <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 w-28">Source</th>
-          <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 w-28">Note</th>
-        </tr>
-      </thead>
-      <tbody>${tbody}</tbody>
-    </table>`;
-}
-
-// Hierarchy table: used when 4+ order levels exist (maxDepth >= 2)
-// Category header rows span all columns; colspan fixed to 4.
-function _cmRenderHierarchyTable(container, excByCode) {
-  const roots        = _cmBuildTree();
-  const uncategorized = _cmCodes
-    .filter(c => c.category_id == null)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-
-  function catHeaderRow(node, depth) {
-    const indent = 8 + depth * 16;
-    return `<tr style="background:${node.color}18; border-left:3px solid ${node.color}">
-      <td colspan="4" class="px-3 py-2 text-xs font-bold text-gray-700 uppercase tracking-wide"
-          style="padding-left:${indent}px">
-        <span class="inline-flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-full" style="background:${node.color}"></span>
-          <span class="font-mono text-[9px] border px-1 rounded bg-white/70 text-gray-500">${_cmOrderLabel(depth)}</span>
-          ${esc(node.name)}
-        </span>
-      </td>
-    </tr>`;
-  }
-
-  function codeRows(code) {
-    const tc   = labelTextColor(code.color);
-    const excs = excByCode[code.id] || [];
-
-    const codeCellHtml = rowspan => `
-      <td class="px-3 py-2 align-top border-r border-gray-100" rowspan="${rowspan}">
-        <div class="flex items-center gap-1.5 flex-wrap">
-          <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${code.color}"></span>
-          <span class="text-xs font-semibold text-gray-800">${esc(code.name)}</span>
-          <span class="text-[10px] px-1 py-0.5 rounded-full" style="background:${code.color};color:${tc}">${code.groundedness}</span>
-        </div>
-        ${code.description ? `<p class="text-[10px] text-gray-500 mt-0.5 ml-4 italic">${esc(code.description)}</p>` : ''}
-        <div class="mt-1 ml-4 text-[10px] text-gray-400">G:${code.groundedness} D:${code.density}</div>
-      </td>`;
-
-    if (!excs.length) {
-      return `<tr class="border-b border-gray-100 hover:bg-gray-50">
-        ${codeCellHtml(1)}
-        <td colspan="3" class="px-3 py-2 text-[10px] italic text-gray-300">No excerpts yet.</td>
-      </tr>`;
-    }
-
-    return excs.map((exc, i) => {
-      const snippet = exc.content.substring(0, 220);
-      const more    = exc.content.length > 220 ? '…' : '';
-      return `<tr class="border-b border-gray-100 hover:bg-gray-50">
-        ${i === 0 ? codeCellHtml(excs.length) : ''}
-        <td class="px-3 py-2 text-xs italic text-gray-700 leading-relaxed max-w-xs">"${esc(snippet)}${more}"</td>
-        <td class="px-3 py-2 text-[10px] text-gray-500 whitespace-nowrap align-top">${esc(exc.username)}<br>${esc(exc.date)}</td>
-        <td class="px-3 py-2 text-[10px] text-gray-400 align-top">${esc(exc.note) || '—'}</td>
-      </tr>`;
-    }).join('');
-  }
-
-  let tbody = '';
-  function walkNode(node, depth) {
-    tbody += catHeaderRow(node, depth);
-    node.children.forEach(ch => walkNode(ch, depth + 1));
-    node.codes.forEach(code => { tbody += codeRows(code); });
-  }
-  roots.forEach(node => walkNode(node, 0));
-
-  if (uncategorized.length) {
-    tbody += `<tr class="bg-gray-50"><td colspan="4" class="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-      Uncategorized Open Codings</td></tr>`;
-    uncategorized.forEach(code => { tbody += codeRows(code); });
-  }
-
-  if (!tbody) {
-    container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No codes yet.</p>';
-    return;
-  }
-
-  container.innerHTML = `
-    <table class="w-full text-sm border-collapse">
-      <thead>
-        <tr class="bg-gray-50 border-b-2 border-gray-200">
-          <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 w-56">Open Coding</th>
-          <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600">Quote / Excerpt</th>
-          <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 w-28">Source</th>
-          <th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 w-28">Note</th>
-        </tr>
-      </thead>
-      <tbody>${tbody}</tbody>
-    </table>`;
-}
-
-// ── Coding Table: CSV export ──────────────────────────────────────────────────
-
-document.getElementById('cm-table-export-btn').addEventListener('click', () => {
-  const excByCode = {};
-  (_cachedBookmarks || []).forEach(bm => {
-    (bm.codes || []).forEach(code => {
-      (excByCode[code.id] = excByCode[code.id] || []).push({
-        content:  bm.content  || '',
-        username: bm.username || '',
-        date:    (bm.date     || '').substring(0, 10),
-        note:     bm.note     || '',
-      });
-    });
-  });
-
-  const esc2 = v => '"' + String(v).replace(/"/g, '""') + '"';
-  const rows = [['Coding Path', 'Open Coding', 'Memo', 'Quote', 'Source', 'Date', 'Note', 'Groundedness', 'Density']];
-
-  const roots = _cmBuildTree();
-  const uncategorized = _cmCodes.filter(c => c.category_id == null);
-
-  function csvCode(code) {
-    const path = _cmGetCatPath(code.category_id).map(c => c.name).join(' > ');
-    const excs = excByCode[code.id] || [null];
-    excs.forEach(exc => {
-      rows.push([
-        path, code.name, code.description || '',
-        exc ? exc.content : '', exc ? exc.username : '', exc ? exc.date : '', exc ? exc.note : '',
-        code.groundedness, code.density,
-      ]);
-    });
-  }
-  function csvNode(node) {
-    node.children.forEach(csvNode);
-    node.codes.forEach(csvCode);
-  }
-  roots.forEach(csvNode);
-  uncategorized.forEach(csvCode);
-
-  const csv  = rows.map(r => r.map(esc2).join(',')).join('\n');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = Object.assign(document.createElement('a'), { href: url, download: 'coding_table.csv' });
-  a.click();
-  URL.revokeObjectURL(url);
 });
 
 // -- USERS IN RANGE --------------------------------------------------------
@@ -4591,16 +3471,16 @@ document.getElementById('upo-sum-toggle').addEventListener('click', () => {
 document.getElementById('upo-sum-log-toggle').addEventListener('click', () => {
   const logEl = document.getElementById('upo-sum-log');
   const btn   = document.getElementById('upo-sum-log-toggle');
-  const hide  = btn.textContent.startsWith('▲');
+  const hide  = btn.textContent.startsWith('â–²');
   logEl.classList.toggle('hidden', hide);
-  btn.textContent = hide ? '▼ Show' : '▲ Hide';
+  btn.textContent = hide ? 'â–¼ Show' : 'â–² Hide';
 });
 
 function _upoSumLog(step, label, msg) {
-  const icons = { input:'📋', context:'📡', llm:'✨', fallback:'⚠️' };
+  const icons = { input:'ðŸ“‹', context:'ðŸ“¡', llm:'¨', fallback:'âš ï¸' };
   const div = document.createElement('div');
   div.className = 'text-xs text-gray-600 flex items-start gap-1.5 py-0.5';
-  div.innerHTML = `<span class="shrink-0">${icons[step] || '•'}</span>
+  div.innerHTML = `<span class="shrink-0">${icons[step] || 'â€¢'}</span>
     <span><strong>${esc(label)}</strong> ${esc(msg)}</span>`;
   document.getElementById('upo-sum-log').appendChild(div);
 }

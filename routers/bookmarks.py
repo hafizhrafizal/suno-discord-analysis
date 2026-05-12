@@ -136,6 +136,30 @@ async def list_bookmark_ids(request: Request):
     return [r["msg_id"] for r in rows]
 
 
+@router.patch("/api/bookmarks/{bookmark_id}")
+async def update_bookmark(bookmark_id: int, body: dict, request: Request):
+    note = body.get("note")
+    if note is None:
+        raise HTTPException(400, "note is required")
+    user_id = _uid(request)
+    conn = get_db()
+    if user_id is not None:
+        cur = conn.execute(
+            "UPDATE bookmarks SET note = ? WHERE id = ? AND user_id = ?",
+            (str(note), bookmark_id, user_id),
+        )
+    else:
+        cur = conn.execute(
+            "UPDATE bookmarks SET note = ? WHERE id = ?",
+            (str(note), bookmark_id),
+        )
+    conn.commit()
+    conn.close()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Bookmark not found")
+    return {"status": "updated"}
+
+
 @router.delete("/api/bookmarks/{bookmark_id}")
 async def delete_bookmark(bookmark_id: int, request: Request):
     user_id = _uid(request)
