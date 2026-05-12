@@ -85,14 +85,16 @@ logger = logging.getLogger(__name__)
 def _resolve_app_mode() -> str:
     """
     Determine the effective app mode.
-      1. APP_MODE env var ('single' or 'multi') — always wins.
+      1. APP_MODE env var ('single', 'multi', or 'demo') — always wins.
       2. 'app_mode' setting in SQLite DB.
       3. 'pending_onboarding' — no mode configured; serve /onboarding.
+
+    'demo' behaves like 'single' for auth/routing but the frontend hides Settings.
     """
-    if APP_MODE in ("single", "multi"):
+    if APP_MODE in ("single", "multi", "demo"):
         return APP_MODE
     saved = get_setting("app_mode", "")
-    if saved in ("single", "multi"):
+    if saved in ("single", "multi", "demo"):
         return saved
     return "pending_onboarding"
 

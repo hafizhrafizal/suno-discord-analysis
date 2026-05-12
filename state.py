@@ -19,7 +19,8 @@ from typing import Optional, Tuple
 
 # ── App mode ──────────────────────────────────────────────────────────────────
 # Set at startup from APP_MODE env or the "app_mode" DB setting.
-# Values: "single" | "multi" | "pending_onboarding"
+# Values: "single" | "multi" | "demo" | "pending_onboarding"
+# "demo" behaves like "single" (no login) but the frontend hides Settings.
 app_mode: str = ""
 
 # ── Global OpenAI clients (single mode / env-key startup) ────────────────────
