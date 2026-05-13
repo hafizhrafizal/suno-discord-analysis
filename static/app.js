@@ -2455,6 +2455,7 @@ async function loadAllCodes() {
 
 function renderBmCodeFilterChips() {
   const container = document.getElementById('bm-label-filter-chips');
+  if (!container) return;
   if (!_allCodes.length) {
     container.innerHTML = '<span class="text-xs text-gray-400">No codes yet. Create codes in Settings or the Coding Manager.</span>';
     return;
@@ -2522,20 +2523,21 @@ function _renderBmCodePanel(bookmarkId) {
 
 // -- filter bookmarks ---------------------------------------------------------
 function _filterBookmarks(bms) {
-  const userTerm = (document.getElementById('bm-filter-user').value || '').trim().toLowerCase();
-  const sunoMode = document.getElementById('bm-filter-suno').value;
-  const textRaw  = (document.getElementById('bm-filter-text').value || '').trim();
-
+  const userTerm  = (document.getElementById('bm-filter-user').value || '').trim().toLowerCase();
+  const sunoMode  = document.getElementById('bm-filter-suno').value;
+  const textRaw   = (document.getElementById('bm-filter-text').value || '').trim();
+  const monthFrom = (document.getElementById('bm-month-from').value || '').trim();
+  const monthTo   = (document.getElementById('bm-month-to').value || '').trim();
   const textTerms = textRaw ? textRaw.split(/\s+/).filter(Boolean).map(w => w.toLowerCase()) : [];
 
   return bms.filter(bm => {
     if (userTerm && !(bm.username || '').toLowerCase().includes(userTerm)) return false;
     if (sunoMode === 'only'    && !truthy(bm.is_suno_team)) return false;
     if (sunoMode === 'exclude' &&  truthy(bm.is_suno_team)) return false;
-    if (_bmCodeFilter.size > 0) {
-      const bmLabelIds = new Set((bm.codes || []).map(l => l.id));
-      const hasMatch = [..._bmCodeFilter].some(id => bmLabelIds.has(id));
-      if (!hasMatch) return false;
+    if (monthFrom || monthTo) {
+      const bmMonth = (bm.date || '').slice(0, 7);
+      if (monthFrom && bmMonth < monthFrom) return false;
+      if (monthTo   && bmMonth > monthTo)   return false;
     }
     if (textTerms.length > 0) {
       const hay = ((bm.username || '') + ' ' + (bm.content || '') + ' ' + (bm.note || '')).toLowerCase();
@@ -2809,14 +2811,16 @@ document.getElementById('bookmarks-container').addEventListener('keydown', e => 
   document.querySelector(`.bm-new-code-create[data-bm-id="${bmId}"]`)?.click();
 });
 
-// Code filter chip toggle
-document.getElementById('bm-label-filter-chips').addEventListener('click', e => {
-  const chip = e.target.closest('.bm-code-filter-chip');
-  if (!chip) return;
-  const id = parseInt(chip.dataset.codeId);
-  if (_bmCodeFilter.has(id)) _bmCodeFilter.delete(id);
-  else _bmCodeFilter.add(id);
-  renderBmCodeFilterChips();
+// Period (month) filter
+['bm-month-from', 'bm-month-to'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => {
+    _collapseAllBmContext();
+    _renderBookmarksSorted();
+  });
+});
+document.getElementById('bm-month-clear').addEventListener('click', () => {
+  document.getElementById('bm-month-from').value = '';
+  document.getElementById('bm-month-to').value   = '';
   _collapseAllBmContext();
   _renderBookmarksSorted();
 });
