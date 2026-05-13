@@ -2526,12 +2526,7 @@ function _filterBookmarks(bms) {
   const sunoMode = document.getElementById('bm-filter-suno').value;
   const textRaw  = (document.getElementById('bm-filter-text').value || '').trim();
 
-  // Build whole-word regexes for the text search term
-  const textWords   = textRaw ? textRaw.split(/\s+/).filter(Boolean) : [];
-  const textRegexes = textWords.map(w => new RegExp('\\b' + _escapeRegex(w) + '\\b', 'i'));
-  const textPhrase  = textWords.length > 1
-    ? new RegExp('\\b' + textWords.map(_escapeRegex).join('\\s+') + '\\b', 'i')
-    : null;
+  const textTerms = textRaw ? textRaw.split(/\s+/).filter(Boolean).map(w => w.toLowerCase()) : [];
 
   return bms.filter(bm => {
     if (userTerm && !(bm.username || '').toLowerCase().includes(userTerm)) return false;
@@ -2542,13 +2537,9 @@ function _filterBookmarks(bms) {
       const hasMatch = [..._bmCodeFilter].some(id => bmLabelIds.has(id));
       if (!hasMatch) return false;
     }
-    if (textRegexes.length > 0) {
-      const hay = (bm.username || '') + ' ' + (bm.content || '');
-      // Phrase match or all individual words must match
-      const ok = textPhrase
-        ? textPhrase.test(hay)
-        : textRegexes.every(rx => rx.test(hay));
-      if (!ok) return false;
+    if (textTerms.length > 0) {
+      const hay = ((bm.username || '') + ' ' + (bm.content || '') + ' ' + (bm.note || '')).toLowerCase();
+      if (!textTerms.every(t => hay.includes(t))) return false;
     }
     return true;
   });
