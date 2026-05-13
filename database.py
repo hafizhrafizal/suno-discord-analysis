@@ -217,6 +217,28 @@ def init_db() -> None:
     except Exception:
         pass
 
+    # Span-level open coding: highlight a portion of a bookmark's text and assign a code
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bookmark_code_highlights (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                bookmark_id      INTEGER NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+                code_id          INTEGER NOT NULL REFERENCES codes(id)     ON DELETE CASCADE,
+                highlighted_text TEXT    NOT NULL,
+                created_at       TEXT    NOT NULL,
+                UNIQUE(bookmark_id, code_id, highlighted_text)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bch_bookmark ON bookmark_code_highlights(bookmark_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bch_code ON bookmark_code_highlights(code_id)"
+        )
+        conn.commit()
+    except Exception:
+        pass
+
     # One-time migration: copy existing labels → codes and bookmark_labels → bookmark_codes.
     # Runs only when codes table is empty and labels table has data.
     try:

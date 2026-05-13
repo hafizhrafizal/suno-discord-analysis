@@ -84,11 +84,20 @@ async def list_bookmarks(request: Request):
                ORDER BY b.created_at DESC""",
             (user_id,),
         ).fetchall()
+        bm_ids_sub = "SELECT id FROM bookmarks WHERE user_id = ?"
         code_rows = conn.execute(
-            """SELECT bc.bookmark_id, c.id, c.name, c.color, c.description, c.category_id
+            f"""SELECT bc.bookmark_id, c.id, c.name, c.color, c.description, c.category_id
                FROM bookmark_codes bc
                JOIN codes c ON c.id = bc.code_id
-               WHERE bc.bookmark_id IN (SELECT id FROM bookmarks WHERE user_id = ?)""",
+               WHERE bc.bookmark_id IN ({bm_ids_sub})""",
+            (user_id,),
+        ).fetchall()
+        hl_rows = conn.execute(
+            f"""SELECT bch.id, bch.bookmark_id, bch.code_id, bch.highlighted_text,
+                       c.name AS code_name, c.color AS code_color
+               FROM bookmark_code_highlights bch
+               JOIN codes c ON c.id = bch.code_id
+               WHERE bch.bookmark_id IN ({bm_ids_sub})""",
             (user_id,),
         ).fetchall()
     else:
@@ -104,6 +113,12 @@ async def list_bookmarks(request: Request):
                FROM bookmark_codes bc
                JOIN codes c ON c.id = bc.code_id"""
         ).fetchall()
+        hl_rows = conn.execute(
+            """SELECT bch.id, bch.bookmark_id, bch.code_id, bch.highlighted_text,
+                      c.name AS code_name, c.color AS code_color
+               FROM bookmark_code_highlights bch
+               JOIN codes c ON c.id = bch.code_id"""
+        ).fetchall()
     conn.close()
 
     codes_by_bm: dict = {}
@@ -113,11 +128,20 @@ async def list_bookmarks(request: Request):
             "description": cr["description"], "category_id": cr["category_id"],
         })
 
+    hl_by_bm: dict = {}
+    for hr in hl_rows:
+        hl_by_bm.setdefault(hr["bookmark_id"], []).append({
+            "id": hr["id"], "code_id": hr["code_id"],
+            "code_name": hr["code_name"], "code_color": hr["code_color"],
+            "highlighted_text": hr["highlighted_text"],
+        })
+
     result = []
     for r in rows:
         d = dict(r)
-        d["codes"]  = codes_by_bm.get(d["bookmark_id"], [])
-        d["labels"] = d["codes"]   # back-compat alias
+        d["codes"]      = codes_by_bm.get(d["bookmark_id"], [])
+        d["labels"]     = d["codes"]   # back-compat alias
+        d["highlights"] = hl_by_bm.get(d["bookmark_id"], [])
         result.append(d)
     return result
 
@@ -229,3 +253,45 @@ async def assign_label_compat(bookmark_id: int, label_id: int):
 @router.delete("/api/bookmarks/{bookmark_id}/labels/{label_id}")
 async def unassign_label_compat(bookmark_id: int, label_id: int):
     return await unassign_code(bookmark_id, label_id)
+
+
+# ── Span-level highlight codings ─────────────────────────────────────────────
+
+@router.post("/api/bookmarks/{bookmark_id}/highlights")
+async def add_highlight(bookmark_id: int, body: dict):
+    code_id          = body.get("code_id")
+    highlighted_text = (body.get("highlighted_text") or "").strip()
+    if not isinstance(code_id, int) or not highlighted_text:
+        raise HTTPException(400, "code_id (int) and highlighted_text (str) are required")
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO bookmark_code_highlights
+               (bookmark_id, code_id, highlighted_text, created_at)
+               VALUES (?,?,?,?)""",
+            (bookmark_id, code_id, highlighted_text, datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+        # If INSERT OR IGNORE skipped (duplicate), fetch the existing row's id
+        if cur.lastrowid and cur.rowcount > 0:
+            return {"status": "created", "id": cur.lastrowid}
+        existing = conn.execute(
+            """SELECT id FROM bookmark_code_highlights
+               WHERE bookmark_id=? AND code_id=? AND highlighted_text=?""",
+            (bookmark_id, code_id, highlighted_text),
+        ).fetchone()
+        return {"status": "exists", "id": existing["id"] if existing else None}
+    finally:
+        conn.close()
+
+
+@router.delete("/api/bookmarks/{bookmark_id}/highlights/{highlight_id}")
+async def remove_highlight(bookmark_id: int, highlight_id: int):
+    conn = get_db()
+    conn.execute(
+        "DELETE FROM bookmark_code_highlights WHERE id=? AND bookmark_id=?",
+        (highlight_id, bookmark_id),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "deleted"}

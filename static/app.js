@@ -2484,7 +2484,9 @@ function _sortBookmarks(bms) {
   return sorted;
 }
 
-let _cachedBookmarks = [];
+let _cachedBookmarks  = [];
+let _bmSelectionState = null;  // {bmId, text} while a highlight code picker is open
+let _bmSelPopover     = null;  // floating DOM element for the selection popover
 
 async function loadBookmarksPage() {
   const container = document.getElementById('bookmarks-container');
@@ -2582,6 +2584,103 @@ function _renderBmCodePanel(bookmarkId) {
     </div>`;
 }
 
+// ── Annotate excerpt text with colored highlight spans ────────────────────────
+function _annotateExcerpt(content, highlights) {
+  if (!highlights?.length) return esc(content);
+  const lower = content.toLowerCase();
+  const spans = [];
+  for (const h of highlights) {
+    const needle = (h.highlighted_text || '').toLowerCase();
+    if (!needle) continue;
+    const idx = lower.indexOf(needle);
+    if (idx === -1) continue;
+    spans.push({
+      start: idx, end: idx + h.highlighted_text.length,
+      color: h.code_color || '#6366f1', name: h.code_name || '?',
+    });
+  }
+  if (!spans.length) return esc(content);
+  spans.sort((a, b) => a.start - b.start || b.end - a.end);
+  let result = '', pos = 0;
+  for (const span of spans) {
+    if (span.start < pos) continue;
+    result += esc(content.slice(pos, span.start));
+    result += `<mark class="bm-hl-inline rounded-sm cursor-default"
+                     style="background:${span.color}28;border-bottom:2px solid ${span.color}"
+                     title="${esc(span.name)}">${esc(content.slice(span.start, span.end))}</mark>`;
+    pos = span.end;
+  }
+  return result + esc(content.slice(pos));
+}
+
+// ── Coded-span chips shown below each bookmark card ───────────────────────────
+function _bmHlChipsHtml(bm) {
+  const hls = bm.highlights || [];
+  if (!hls.length) return '';
+  return `<div class="mt-2 pt-2 border-t border-dashed border-gray-100 space-y-1">
+    <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Coded spans</p>
+    ${hls.map(h => {
+      const tc  = labelTextColor(h.code_color || '#6366f1');
+      const txt = (h.highlighted_text || '').length > 80
+        ? (h.highlighted_text || '').slice(0, 80) + '…' : (h.highlighted_text || '');
+      return `<div class="flex items-start gap-1.5">
+        <span class="w-0.5 self-stretch rounded-full shrink-0 mt-0.5" style="background:${h.code_color || '#6366f1'}"></span>
+        <span class="text-xs italic text-gray-600 flex-1 break-words min-w-0">"${esc(txt)}"</span>
+        <span class="text-xs px-1.5 py-0.5 rounded-full font-medium shrink-0 ml-1"
+              style="background:${h.code_color || '#6366f1'};color:${tc}">${esc(h.code_name || '?')}</span>
+        <button class="bm-hl-remove text-gray-300 hover:text-red-500 text-base leading-none shrink-0 transition-colors"
+                data-bm-id="${bm.bookmark_id}" data-hl-id="${h.id}" title="Remove coding">×</button>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+// ── Highlight code picker panel (opened when text is selected) ────────────────
+function _renderBmHlPanel(bmId, selectedText) {
+  const panel = document.getElementById(`bm-hl-panel-${bmId}`);
+  const bm    = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+  if (!panel || !bm) return;
+  panel.dataset.hlText = selectedText;
+
+  const truncated = selectedText.length > 60 ? selectedText.slice(0, 60) + '…' : selectedText;
+  const assignedForText = new Set(
+    (bm.highlights || [])
+      .filter(h => h.highlighted_text.toLowerCase() === selectedText.toLowerCase())
+      .map(h => h.code_id)
+  );
+
+  const codeButtons = _allCodes.length
+    ? `<div class="flex flex-wrap gap-1.5 mb-2">
+        ${_allCodes.map(l => {
+          const active = assignedForText.has(l.id);
+          const bg     = active ? l.color : '#f8fafc';
+          const tc     = active ? labelTextColor(l.color) : '#64748b';
+          const bd     = active ? l.color : '#cbd5e1';
+          return `<button class="bm-hl-code-toggle text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all"
+                          data-bm-id="${bmId}" data-code-id="${l.id}"
+                          style="background:${bg};color:${tc};border-color:${bd}">${active ? '✓ ' : ''}${esc(l.name)}</button>`;
+        }).join('')}
+      </div>`
+    : '<p class="text-xs text-gray-400 mb-2 italic">No codes yet — create one below.</p>';
+
+  panel.innerHTML = `
+    <div class="p-2 border border-dashed border-indigo-200 rounded-xl bg-indigo-50/30">
+      <div class="flex items-start justify-between gap-2 mb-2">
+        <p class="text-xs font-medium text-indigo-700">Coding: <em class="text-indigo-500 not-italic">"${esc(truncated)}"</em></p>
+        <button class="bm-hl-panel-close text-gray-400 hover:text-gray-600 leading-none shrink-0 text-sm" data-bm-id="${bmId}">✕</button>
+      </div>
+      ${codeButtons}
+      <div class="flex items-center gap-1.5 pt-1 border-t border-indigo-100">
+        <input class="bm-hl-new-code-input flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+               placeholder="New code name…" maxlength="40" data-bm-id="${bmId}" />
+        <input class="bm-hl-new-code-color w-7 h-7 rounded cursor-pointer border border-gray-200 p-0.5"
+               type="color" value="#0d3e7f" data-bm-id="${bmId}" />
+        <button class="bm-hl-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
+                data-bm-id="${bmId}">Add</button>
+      </div>
+    </div>`;
+}
+
 // -- filter bookmarks ---------------------------------------------------------
 function _filterBookmarks(bms) {
   const userTerm  = (document.getElementById('bm-filter-user').value || '').trim().toLowerCase();
@@ -2655,7 +2754,8 @@ function bookmarkCard(bm) {
           </div>
           ${srcLabel}
         </div>
-        <p class="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words">${esc(bm.content)}</p>
+        <p class="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words bm-excerpt-text"
+           data-bm-id="${bm.bookmark_id}">${_annotateExcerpt(bm.content, bm.highlights)}</p>
         ${hasContent(bm.attachments) ? `<p class="text-xs text-gray-500 mt-1">📎 ${esc(bm.attachments)}</p>` : ''}
         ${hasContent(bm.reactions)   ? `<p class="text-xs text-gray-500 mt-1">💬 ${esc(bm.reactions)}</p>`   : ''}
         <!-- Codes -->
@@ -2664,6 +2764,10 @@ function bookmarkCard(bm) {
         </div>
         <!-- Inline code picker (hidden until opened) -->
         <div id="bm-code-panel-${bm.bookmark_id}" class="hidden mt-1 border border-dashed border-gray-200 rounded-xl bg-gray-50"></div>
+        <!-- Coded spans list -->
+        <div id="bm-hl-chips-${bm.bookmark_id}">${_bmHlChipsHtml(bm)}</div>
+        <!-- Highlight code picker (hidden until text is selected) -->
+        <div id="bm-hl-panel-${bm.bookmark_id}" class="hidden mt-1"></div>
       </div>
       <div class="border-t bg-gray-50 px-4 py-2 flex justify-end">
         <button class="bm-ctx-toggle text-xs text-indigo-600 hover:text-indigo-800 font-medium"
@@ -2802,6 +2906,122 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     return;
   }
 
+  // Close highlight code picker
+  const hlClose = e.target.closest('.bm-hl-panel-close');
+  if (hlClose) {
+    const bmId = parseInt(hlClose.dataset.bmId);
+    document.getElementById(`bm-hl-panel-${bmId}`)?.classList.add('hidden');
+    _bmSelectionState = null;
+    return;
+  }
+
+  // Toggle code assignment in highlight code picker
+  const hlToggle = e.target.closest('.bm-hl-code-toggle');
+  if (hlToggle) {
+    const bmId   = parseInt(hlToggle.dataset.bmId);
+    const codeId = parseInt(hlToggle.dataset.codeId);
+    const bm     = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+    const panel  = document.getElementById(`bm-hl-panel-${bmId}`);
+    if (!bm || !panel) return;
+    const selText  = panel.dataset.hlText || '';
+    const existing = (bm.highlights || []).find(
+      h => h.code_id === codeId && h.highlighted_text.toLowerCase() === selText.toLowerCase()
+    );
+    if (existing) {
+      await fetch(`/api/bookmarks/${bmId}/highlights/${existing.id}`, { method: 'DELETE' });
+      bm.highlights = (bm.highlights || []).filter(h => h.id !== existing.id);
+    } else {
+      const res  = await fetch(`/api/bookmarks/${bmId}/highlights`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code_id: codeId, highlighted_text: selText }),
+      });
+      const data = await res.json();
+      const code = _allCodes.find(c => c.id === codeId);
+      if (code && data.id) {
+        bm.highlights = [...(bm.highlights || []), {
+          id: data.id, code_id: codeId, code_name: code.name,
+          code_color: code.color, highlighted_text: selText,
+        }];
+      }
+    }
+    const hlChips   = document.getElementById(`bm-hl-chips-${bmId}`);
+    const excerptEl = document.querySelector(`.bm-excerpt-text[data-bm-id="${bmId}"]`);
+    if (hlChips)   hlChips.innerHTML   = _bmHlChipsHtml(bm);
+    if (excerptEl) excerptEl.innerHTML = _annotateExcerpt(bm.content, bm.highlights);
+    _renderBmHlPanel(bmId, selText);
+    return;
+  }
+
+  // Create new code and assign as highlight
+  const hlCreate = e.target.closest('.bm-hl-new-code-create');
+  if (hlCreate) {
+    const bmId  = parseInt(hlCreate.dataset.bmId);
+    const panel = document.getElementById(`bm-hl-panel-${bmId}`);
+    const bm    = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+    if (!panel || !bm) return;
+    const selText    = panel.dataset.hlText || '';
+    const nameInput  = panel.querySelector('.bm-hl-new-code-input');
+    const colorInput = panel.querySelector('.bm-hl-new-code-color');
+    const name  = (nameInput?.value || '').trim();
+    const color = colorInput?.value || '#0d3e7f';
+    if (!name) { nameInput?.focus(); return; }
+    hlCreate.disabled = true; hlCreate.textContent = '...';
+    try {
+      const labelRes = await fetch('/api/codes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, color }),
+      });
+      const newCode = await labelRes.json();
+      if (!labelRes.ok) {
+        const existing = _allCodes.find(l => l.name.toLowerCase() === name.toLowerCase());
+        if (!existing) { hlCreate.disabled = false; hlCreate.textContent = 'Add'; return; }
+        newCode.id = existing.id; newCode.name = existing.name; newCode.color = existing.color;
+      } else {
+        _allCodes = [..._allCodes, newCode].sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+        renderBmCodeFilterChips();
+      }
+      const hlRes  = await fetch(`/api/bookmarks/${bmId}/highlights`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code_id: newCode.id, highlighted_text: selText }),
+      });
+      const hlData = await hlRes.json();
+      if (hlData.id && !(bm.highlights || []).some(h => h.id === hlData.id)) {
+        bm.highlights = [...(bm.highlights || []), {
+          id: hlData.id, code_id: newCode.id, code_name: newCode.name,
+          code_color: newCode.color, highlighted_text: selText,
+        }];
+      }
+      const hlChips   = document.getElementById(`bm-hl-chips-${bmId}`);
+      const excerptEl = document.querySelector(`.bm-excerpt-text[data-bm-id="${bmId}"]`);
+      if (hlChips)   hlChips.innerHTML   = _bmHlChipsHtml(bm);
+      if (excerptEl) excerptEl.innerHTML = _annotateExcerpt(bm.content, bm.highlights);
+      _renderBmHlPanel(bmId, selText);
+      document.dispatchEvent(new CustomEvent('codebook-updated'));
+    } catch (_) {
+      hlCreate.disabled = false; hlCreate.textContent = 'Add';
+    }
+    return;
+  }
+
+  // Remove a coded span (highlight)
+  const hlRemove = e.target.closest('.bm-hl-remove');
+  if (hlRemove) {
+    const bmId = parseInt(hlRemove.dataset.bmId);
+    const hlId = parseInt(hlRemove.dataset.hlId);
+    const bm   = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+    await fetch(`/api/bookmarks/${bmId}/highlights/${hlId}`, { method: 'DELETE' });
+    if (bm) bm.highlights = (bm.highlights || []).filter(h => h.id !== hlId);
+    const hlChips   = document.getElementById(`bm-hl-chips-${bmId}`);
+    const excerptEl = document.querySelector(`.bm-excerpt-text[data-bm-id="${bmId}"]`);
+    if (hlChips   && bm) hlChips.innerHTML   = _bmHlChipsHtml(bm);
+    if (excerptEl && bm) excerptEl.innerHTML = _annotateExcerpt(bm.content, bm.highlights);
+    return;
+  }
+
   // Toggle context in bookmark card
   const ctxBtn = e.target.closest('.bm-ctx-toggle');
   if (!ctxBtn) return;
@@ -2866,10 +3086,16 @@ document.getElementById('bm-filter-suno').addEventListener('change', () => {
 document.getElementById('bookmarks-container').addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   const input = e.target.closest('.bm-new-code-input');
-  if (!input) return;
-  e.preventDefault();
-  const bmId = input.dataset.bmId;
-  document.querySelector(`.bm-new-code-create[data-bm-id="${bmId}"]`)?.click();
+  if (input) {
+    e.preventDefault();
+    document.querySelector(`.bm-new-code-create[data-bm-id="${input.dataset.bmId}"]`)?.click();
+    return;
+  }
+  const hlInput = e.target.closest('.bm-hl-new-code-input');
+  if (hlInput) {
+    e.preventDefault();
+    document.querySelector(`.bm-hl-new-code-create[data-bm-id="${hlInput.dataset.bmId}"]`)?.click();
+  }
 });
 
 // Period (month) filter
@@ -2901,6 +3127,81 @@ document.getElementById('bm-filter-text').addEventListener('input', () => {
     _collapseAllBmContext();
     _renderBookmarksSorted();
   }, 250);
+});
+
+// ── Text selection → open coding popover ─────────────────────────────────────
+
+function _ensureBmSelPopover() {
+  if (_bmSelPopover) return _bmSelPopover;
+  _bmSelPopover = document.createElement('div');
+  _bmSelPopover.id        = 'bm-sel-popover';
+  _bmSelPopover.className = 'fixed z-50 bg-white border border-indigo-200 rounded-xl shadow-lg py-1 select-none hidden';
+  _bmSelPopover.innerHTML = `
+    <button id="bm-sel-code-btn"
+            class="flex items-center gap-1.5 w-full px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 transition-colors whitespace-nowrap">
+      <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a2 2 0 012-2z"/>
+      </svg>
+      Add open coding
+    </button>`;
+  document.body.appendChild(_bmSelPopover);
+  document.getElementById('bm-sel-code-btn').addEventListener('click', () => {
+    if (!_bmSelectionState) return;
+    _bmSelPopover.classList.add('hidden');
+    const { bmId, text } = _bmSelectionState;
+    const hlPanel = document.getElementById(`bm-hl-panel-${bmId}`);
+    if (hlPanel) {
+      _renderBmHlPanel(bmId, text);
+      hlPanel.classList.remove('hidden');
+      hlPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  });
+  return _bmSelPopover;
+}
+
+// Show the popover anchored near (clientX, clientY)
+function _showBmSelPopover(clientX, clientY, bmId, text) {
+  _bmSelectionState = { bmId, text };
+  const pop = _ensureBmSelPopover();
+  pop.style.left = Math.min(clientX + 4, window.innerWidth  - 180) + 'px';
+  pop.style.top  = Math.min(clientY + 4, window.innerHeight -  44) + 'px';
+  pop.classList.remove('hidden');
+}
+
+// Mouse-up inside a bookmark excerpt → show selection popover
+document.getElementById('bookmarks-container').addEventListener('mouseup', e => {
+  setTimeout(() => {
+    const sel     = window.getSelection();
+    const selText = sel?.toString()?.trim() || '';
+    if (!selText) { _bmSelPopover?.classList.add('hidden'); return; }
+    const anchorEl = sel.anchorNode?.parentElement?.closest('.bm-excerpt-text');
+    const focusEl  = sel.focusNode?.parentElement?.closest('.bm-excerpt-text');
+    const el = anchorEl || focusEl;
+    if (!el) { _bmSelPopover?.classList.add('hidden'); return; }
+    _showBmSelPopover(e.clientX, e.clientY, parseInt(el.dataset.bmId), selText);
+  }, 10);
+});
+
+// Right-click inside a bookmark excerpt (text selected) → replace native menu
+document.getElementById('bookmarks-container').addEventListener('contextmenu', e => {
+  const excerptEl = e.target.closest('.bm-excerpt-text');
+  if (!excerptEl) return;
+  const sel     = window.getSelection();
+  const selText = sel?.toString()?.trim() || '';
+  if (!selText) return;
+  const anchorEl = sel.anchorNode?.parentElement?.closest('.bm-excerpt-text');
+  const focusEl  = sel.focusNode?.parentElement?.closest('.bm-excerpt-text');
+  if (anchorEl !== excerptEl && focusEl !== excerptEl) return;
+  e.preventDefault();
+  _showBmSelPopover(e.clientX, e.clientY, parseInt(excerptEl.dataset.bmId), selText);
+});
+
+// Click outside popover → hide it (but keep _bmSelectionState so the hl panel still works)
+document.addEventListener('mousedown', e => {
+  if (_bmSelPopover && !_bmSelPopover.contains(e.target)) {
+    _bmSelPopover.classList.add('hidden');
+  }
 });
 
 // -- CODING MANAGER --------------------------------------------------------
