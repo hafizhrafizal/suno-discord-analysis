@@ -4454,8 +4454,10 @@ document.getElementById('users-date-to').addEventListener('keydown', e => { if (
 
 // -- USER PROFILE OVERLAY --------------------------------------------------
 
-let _upoUsername    = '';
-let _profileMessages = [];
+let _upoUsername       = '';
+let _profileMessages   = [];
+let _upoSummaryText    = '';
+let _upoFollowUpHistory = [];
 
 function _statPill(label, value) {
   return `<div class="inline-flex flex-col items-start bg-indigo-50 rounded-xl px-4 py-2.5 mr-2 mb-2">
@@ -4520,23 +4522,29 @@ function closeUserProfile() {
   document.getElementById('upo-sum-log').innerHTML = '';
   document.getElementById('upo-sum-prompt').value = '';
   document.getElementById('upo-sum-export-pdf').classList.add('hidden');
+  document.getElementById('upo-fu-section').classList.add('hidden');
+  document.getElementById('upo-fu-history').innerHTML = '';
+  _upoSummaryText    = '';
+  _upoFollowUpHistory = [];
 }
 
 async function _fetchProfileMessages() {
   const msgEl    = document.getElementById('upo-messages');
-  const dateFrom = document.getElementById('upo-date-from').value;
-  const dateTo   = document.getElementById('upo-date-to').value;
-  const keyword  = document.getElementById('upo-keyword').value.trim();
-  const filterEl = document.getElementById('upo-filter-count');
+  const dateFrom  = document.getElementById('upo-date-from').value;
+  const dateTo    = document.getElementById('upo-date-to').value;
+  const keyword   = document.getElementById('upo-keyword').value.trim();
+  const minWords  = parseInt(document.getElementById('upo-min-words').value, 10) || 0;
+  const filterEl  = document.getElementById('upo-filter-count');
 
   msgEl.innerHTML = '<p class="text-sm text-gray-400 py-6 text-center">Loading...</p>';
   filterEl.textContent = '';
 
   try {
     const params = new URLSearchParams({ username: _upoUsername });
-    if (dateFrom) params.set('date_from', dateFrom);
-    if (dateTo)   params.set('date_to', dateTo);
-    if (keyword)  params.set('keyword', keyword);
+    if (dateFrom)    params.set('date_from', dateFrom);
+    if (dateTo)      params.set('date_to', dateTo);
+    if (keyword)     params.set('keyword', keyword);
+    if (minWords > 0) params.set('min_words', minWords);
     const scope = getScopeParam();
     if (scope) params.set('upload_ids', scope);
 
@@ -4544,7 +4552,7 @@ async function _fetchProfileMessages() {
 
     document.getElementById('upo-msg-count').textContent =
       `${msgs.length.toLocaleString()} message${msgs.length !== 1 ? 's' : ''}`;
-    filterEl.textContent = keyword || dateFrom || dateTo
+    filterEl.textContent = keyword || dateFrom || dateTo || minWords > 0
       ? `${msgs.length.toLocaleString()} result${msgs.length !== 1 ? 's' : ''}`
       : '';
 
@@ -4736,8 +4744,126 @@ async function doUpoSummarize() {
     runBtn.disabled    = false;
     runBtn.textContent = 'Run Summary';
     if (output) {
+      _upoSummaryText     = output;
+      _upoFollowUpHistory = [];
+      document.getElementById('upo-fu-history').innerHTML = '';
+      document.getElementById('upo-fu-section').classList.remove('hidden');
       document.getElementById('upo-sum-export-pdf').classList.remove('hidden');
     }
+  }
+}
+
+/* -- User profile follow-up Q&A ------------------------------------------- */
+
+function _appendUpoUserBubble(text) {
+  const c = document.getElementById('upo-fu-history');
+  const w = document.createElement('div'); w.className = 'flex justify-end';
+  const b = document.createElement('div'); b.className = 'chat-bubble-user';
+  b.textContent = text;
+  w.appendChild(b); c.appendChild(w);
+  c.scrollTop = c.scrollHeight;
+}
+
+function _appendUpoAssistantBubble() {
+  const c = document.getElementById('upo-fu-history');
+  const w = document.createElement('div'); w.className = 'flex justify-start';
+  const b = document.createElement('div'); b.className = 'chat-bubble-assistant markdown-body';
+  w.appendChild(b); c.appendChild(w);
+  c.scrollTop = c.scrollHeight;
+  return b;
+}
+
+function _appendUpoLogStrip() {
+  const c     = document.getElementById('upo-fu-history');
+  const strip = document.createElement('div'); strip.className = 'fu-log-strip';
+  c.appendChild(strip); c.scrollTop = c.scrollHeight;
+  return strip;
+}
+
+function _renderUpoFuLogEntry(strip, entry) {
+  const div = document.createElement('div');
+  div.className = `fu-log-entry fu-log-step-${entry.step || 'fallback'}`;
+  div.innerHTML =
+    `<span class="fu-log-icon">${LOG_ICONS[entry.step] || '•'}</span>` +
+    `<span class="fu-log-label">${esc(entry.label || '')}</span>` +
+    `<span class="fu-log-msg">${esc(entry.msg || '')}</span>`;
+  strip.appendChild(div);
+  document.getElementById('upo-fu-history').scrollTop = 9999;
+}
+
+async function sendUpoFollowUp() {
+  const input    = document.getElementById('upo-fu-input');
+  const sendBtn  = document.getElementById('upo-fu-send');
+  const question = input.value.trim();
+  if (!question || !_upoSummaryText) return;
+
+  const model = document.getElementById('upo-sum-model').value;
+  input.value         = '';
+  input.disabled      = true;
+  sendBtn.disabled    = true;
+  sendBtn.textContent = '...';
+
+  _upoFollowUpHistory.push({ role: 'user', content: question });
+  _appendUpoUserBubble(question);
+  const strip  = _appendUpoLogStrip();
+  const bubble = _appendUpoAssistantBubble();
+  let answerText = '';
+
+  try {
+    const history = [
+      { role: 'assistant', content: _upoSummaryText },
+      ..._upoFollowUpHistory.slice(0, -1),
+    ];
+    const res = await fetch('/api/summarize-results/followup', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ question, history, model }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+      throw new Error(err.detail || 'Request failed');
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') break;
+        try {
+          const delta = JSON.parse(raw);
+          if (delta.type === 'log') {
+            _renderUpoFuLogEntry(strip, delta);
+          } else if (delta.content) {
+            answerText += delta.content;
+            bubble.innerHTML = marked.parse(answerText);
+            document.getElementById('upo-fu-history').scrollTop = 9999;
+          } else if (delta.error) {
+            throw new Error(delta.error);
+          }
+        } catch (parseErr) {
+          if (!(parseErr instanceof SyntaxError)) throw parseErr;
+        }
+      }
+    }
+    _upoFollowUpHistory.push({ role: 'assistant', content: answerText });
+
+  } catch (e) {
+    bubble.remove();
+    _upoFollowUpHistory.pop();
+    showErrorPopup(e.message);
+  } finally {
+    input.disabled      = false;
+    sendBtn.disabled    = false;
+    sendBtn.textContent = 'Ask';
+    input.focus();
   }
 }
 
@@ -4837,6 +4963,14 @@ ${instructionHTML}
 
 document.getElementById('upo-sum-run').addEventListener('click', doUpoSummarize);
 document.getElementById('upo-sum-export-pdf').addEventListener('click', exportUpoSumPDF);
+document.getElementById('upo-fu-send').addEventListener('click', sendUpoFollowUp);
+document.getElementById('upo-fu-clear').addEventListener('click', () => {
+  _upoFollowUpHistory = [];
+  document.getElementById('upo-fu-history').innerHTML = '';
+});
+document.getElementById('upo-fu-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendUpoFollowUp();
+});
 
 async function upoToggleContext(id, btn) {
   const ctxEl = document.getElementById(`upo-ctx-${id}`);

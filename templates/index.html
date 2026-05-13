@@ -1889,6 +1889,9 @@
       <input id="upo-date-to" type="date" class="search-input" />
       <label for="upo-keyword" class="filter-label">Contains</label>
       <input id="upo-keyword" type="text" placeholder="keyword…" class="search-input flex-1 min-w-[8rem]" />
+      <label for="upo-min-words" class="filter-label">Min words</label>
+      <input id="upo-min-words" type="number" value="0" min="0" placeholder="0"
+             class="search-input w-20 text-center" aria-label="Minimum word count" />
       <button id="upo-filter-btn" class="search-btn">Filter</button>
       <span id="upo-filter-count" class="text-xs text-gray-500 ml-1"></span>
     </div>
@@ -1959,6 +1962,31 @@
             Export PDF
           </button>
         </div>
+
+        <!-- Follow-up Q&A -->
+        <section id="upo-fu-section" class="hidden bg-white rounded-xl border border-indigo-100 p-4">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h4 class="text-sm font-semibold text-gray-700">Follow-up Questions</h4>
+            <button id="upo-fu-clear"
+                    class="text-xs font-semibold text-red-700 hover:text-red-900
+                           border border-red-300 hover:border-red-500 px-3 py-1
+                           rounded-lg transition-colors
+                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-700">
+              Clear Q&amp;A
+            </button>
+          </div>
+          <div id="upo-fu-history"
+               class="space-y-3 mb-3 max-h-[20rem] overflow-y-auto pr-1"
+               aria-live="polite"></div>
+          <div class="flex gap-2 items-end">
+            <label for="upo-fu-input" class="sr-only">Follow-up question</label>
+            <textarea id="upo-fu-input" rows="2"
+              placeholder="Ask a follow-up question about this profile analysis…"
+              class="search-input flex-1 resize-none min-w-0"></textarea>
+            <button id="upo-fu-send" class="search-btn self-end shrink-0">Ask</button>
+          </div>
+          <p class="text-xs text-gray-500 mt-1.5">Ctrl+Enter or click Ask</p>
+        </section>
       </div>
     </div>
 
