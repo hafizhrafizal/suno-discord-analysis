@@ -20,6 +20,19 @@ from fastapi.responses import StreamingResponse
 
 import state
 from config import VALID_CHAT_MODELS
+from prompts import (
+    CHAT_SYSTEM_WITH_CONTEXT,
+    CHAT_SYSTEM_NO_CONTEXT,
+    SUMMARIZE_SYSTEM,
+    SUMMARIZE_DEFAULT_USER,
+    SUMMARIZE_FOLLOWUP_SYSTEM_BASE,
+    SUMMARIZE_RESULTS_SYSTEM,
+    SUMMARIZE_RESULTS_DEFAULT_USER,
+    SUMMARIZE_RESULTS_FOLLOWUP_SYSTEM_BASE,
+    USER_PROFILE_SYSTEM,
+    USER_PROFILE_DEFAULT_USER,
+    USER_PROFILE_FOLLOWUP_SYSTEM_BASE,
+)
 from database import get_db
 from embeddings import active_collection, embed_texts_async
 from sql_helpers import (
@@ -352,32 +365,9 @@ async def chat_endpoint(request: Request):
             f"[{r['username']} | {r['date']}] {r['content']}"
             for r in context_rows
         )
-        system = (
-            "You are a knowledgeable assistant for the Suno AI Discord community.\n\n"
-            "INSTRUCTIONS:\n"
-            "- Use the retrieved conversation excerpts below as your PRIMARY source of truth.\n"
-            "- Cite specific usernames (e.g. **@username**) when referencing their messages.\n"
-            "- If the context does not cover the question, say so clearly before answering from general knowledge.\n\n"
-            "MANDATORY FORMATTING — your entire response MUST be valid Markdown:\n"
-            "- Start with a `##` heading that summarises the answer topic.\n"
-            "- Use `###` subheadings to separate distinct sub-topics.\n"
-            "- Use **bold** for key terms, usernames, and important points.\n"
-            "- Use `-` bullet lists for multiple items or steps; use `1.` numbered lists for sequences.\n"
-            "- Use `> blockquote` to highlight a direct or paraphrased user quote.\n"
-            "- Use `inline code` for technical terms, settings, or commands.\n"
-            "- End with a `---` rule followed by a brief *Sources* section listing cited usernames and dates.\n"
-            "- Do NOT output plain prose paragraphs without any formatting.\n\n"
-            "RETRIEVED CONTEXT:\n" + ctx_text
-        )
+        system = CHAT_SYSTEM_WITH_CONTEXT + ctx_text
     else:
-        system = (
-            "You are a helpful assistant for the Suno AI Discord community.\n"
-            "No embedded messages are available — answer from general knowledge.\n\n"
-            "MANDATORY FORMATTING — your entire response MUST be valid Markdown:\n"
-            "- Start with a `##` heading.\n"
-            "- Use **bold**, `-` bullet lists, `###` subheadings, and `inline code` where appropriate.\n"
-            "- Do NOT output plain prose without any Markdown structure.\n"
-        )
+        system = CHAT_SYSTEM_NO_CONTEXT
 
     is_o_model = chat_model.startswith("o")
     sys_role   = "developer" if is_o_model else "system"
@@ -657,33 +647,7 @@ async def summarize_endpoint(request: Request):
         + "):"
     )
 
-    default_prompt = """\
-Produce a comprehensive summary of the Discord conversation below.
-
-MANDATORY STRUCTURE (strictly follow this Markdown layout):
-
-## Overview
-One short paragraph giving the high-level context.
-
-## Key Topics
-For each major topic:
-### [Topic Name]
-- Bullet points covering the main discussion points.
-- Use **bold** for important terms or conclusions.
-
-## Notable Opinions & Insights
-> Direct or paraphrased quotes from participants, formatted as blockquotes, with **@username** attributed.
-
-## Decisions / Conclusions
-- Any outcomes, agreed next steps, or unresolved questions.
-
-## Participants
-- List unique usernames who contributed meaningfully.
-
----
-Do NOT output plain paragraphs. Every section must use the Markdown elements above."""
-
-    user_prompt = prompt_txt or default_prompt
+    user_prompt = prompt_txt or SUMMARIZE_DEFAULT_USER
     full        = f"{user_prompt}\n\n{conv_header}\n{conv}"
 
     is_o_model = sum_model.startswith("o")
@@ -775,12 +739,7 @@ Do NOT output plain paragraphs. Every section must use the Markdown elements abo
                 messages=[
                     {
                         "role": sys_role,
-                        "content": (
-                            "You are an expert analyst summarising Discord conversations from the Suno AI community. "
-                            "You MUST respond exclusively in well-structured Markdown. "
-                            "Never output plain prose. Always use ## headings, ### subheadings, "
-                            "**bold**, - bullet lists, > blockquotes, and `code` where appropriate."
-                        ),
+                        "content": SUMMARIZE_SYSTEM,
                     },
                     {"role": "user", "content": full},
                 ],
@@ -1037,16 +996,7 @@ async def summarize_followup_endpoint(request: Request):
     is_o_model = sum_model.startswith("o")
     sys_role   = "developer" if is_o_model else "system"
 
-    system_parts: list = [
-        "You are an expert analyst for the Suno AI Discord community. "
-        "The user generated a Hybrid Summary and is asking follow-up questions. "
-        "Answer using ALL THREE sources of context below:\n"
-        "  1. RETRIEVED EVIDENCE — fresh quotes retrieved specifically for this question.\n"
-        "  2. INITIAL SUMMARY — the full summary already presented to the user.\n"
-        "  3. PRIOR Q&A — any follow-up questions and answers already exchanged.\n"
-        "Be precise. Cite usernames and dates where relevant. "
-        "Respond in well-structured Markdown.",
-    ]
+    system_parts: list = [SUMMARIZE_FOLLOWUP_SYSTEM_BASE]
     if prompt_txt:
         system_parts.append(f"\nORIGINAL CUSTOM INSTRUCTIONS:\n{prompt_txt}")
     if initial_summary:
@@ -1338,30 +1288,11 @@ async def user_profile_endpoint(request: Request):
     )
     n_evidence = len(evidence)
 
-    default_prompt = (
-        f"Analyse the messages below written by Discord user **{profile_username}** in the Suno AI community server.\n\n"
-        "MANDATORY STRUCTURE (strictly follow this Markdown layout):\n\n"
-        f"## User Profile: {profile_username}\n\n"
-        "### Entry & Exit\n"
-        f"- **First message:** {entry_date}\n"
-        f"- **Last message:** {exit_date}\n"
-        f"- **Total messages analysed:** {n_filtered}\n\n"
-        "### Persona\n"
-        "Describe this user's overall character, communication style, and role in the community "
-        "(e.g. power user, casual listener, critic, advocate, developer).\n\n"
-        "### Evolution of Attitude & Concerns\n"
-        "Describe how this user's attitude toward Suno (Bark / Chirp / the platform) changed over time. "
-        "Use a chronological narrative with approximate time references. Note any inflection points "
-        "(e.g. excitement → frustration → departure, or initial scepticism → advocacy).\n\n"
-        "### Key Topics & Concerns\n"
-        "- Bullet list of recurring themes this user raised.\n\n"
-        "### Notable Quotes\n"
-        "> Include 2-5 representative verbatim or near-verbatim quotes that best capture their voice, "
-        "with approximate dates where possible.\n\n"
-        "### Summary Assessment\n"
-        "One short paragraph summarising who this user is and their relationship with Suno AI.\n\n"
-        "---\n"
-        "Use **bold** for important conclusions. Do NOT write plain prose paragraphs outside the sections above."
+    default_prompt = USER_PROFILE_DEFAULT_USER.format(
+        profile_username=profile_username,
+        entry_date=entry_date,
+        exit_date=exit_date,
+        n_filtered=n_filtered,
     )
 
     user_prompt = prompt_txt or default_prompt
@@ -1454,12 +1385,7 @@ async def user_profile_endpoint(request: Request):
                 messages=[
                     {
                         "role": sys_role,
-                        "content": (
-                            "You are an expert analyst profiling Discord users in the Suno AI community. "
-                            "You MUST respond exclusively in well-structured Markdown. "
-                            "Never output plain prose. Always use ## headings, ### subheadings, "
-                            "**bold**, - bullet lists, > blockquotes, and `code` where appropriate."
-                        ),
+                        "content": USER_PROFILE_SYSTEM,
                     },
                     {"role": "user", "content": full},
                 ],
@@ -1651,15 +1577,7 @@ async def user_profile_followup_endpoint(request: Request):
     is_o_model = sum_model.startswith("o")
     sys_role   = "developer" if is_o_model else "system"
 
-    system_content = (
-        "You are an expert analyst answering follow-up questions about a specific Discord user's profile. "
-        "Ground your answers in the evidence messages provided AND the initial profile analysis. "
-        "Respond in well-structured Markdown.\n\n"
-        "You have access to three sources of context:\n"
-        "1. INITIAL PROFILE: the full profile analysis generated in this session\n"
-        "2. EVIDENCE MESSAGES: fresh semantic matches for this specific question\n"
-        "3. Q&A HISTORY: prior follow-up questions and answers in this session\n"
-    )
+    system_content = USER_PROFILE_FOLLOWUP_SYSTEM_BASE
     if initial_profile:
         system_content += f"\n\nINITIAL PROFILE:\n{initial_profile}"
     if prompt_txt:
@@ -1897,33 +1815,7 @@ async def summarize_results_endpoint(request: Request):
         for r in evidence
     )
 
-    default_prompt = """\
-Produce a comprehensive summary of the Discord conversation below.
-
-MANDATORY STRUCTURE (strictly follow this Markdown layout):
-
-## Overview
-One short paragraph giving the high-level context.
-
-## Key Topics
-For each major topic:
-### [Topic Name]
-- Bullet points covering the main discussion points.
-- Use **bold** for important terms or conclusions.
-
-## Notable Opinions & Insights
-> Direct or paraphrased quotes from participants, formatted as blockquotes, with **@username** attributed.
-
-## Decisions / Conclusions
-- Any outcomes, agreed next steps, or unresolved questions.
-
-## Participants
-- List unique usernames who contributed meaningfully.
-
----
-Do NOT output plain paragraphs. Every section must use the Markdown elements above."""
-
-    user_prompt = prompt_txt or default_prompt
+    user_prompt = prompt_txt or SUMMARIZE_RESULTS_DEFAULT_USER
     full = f"{user_prompt}\n\nCONVERSATION ({n} messages):\n{conv}"
 
     is_o_model = sum_model.startswith("o")
@@ -1938,13 +1830,7 @@ Do NOT output plain paragraphs. Every section must use the Markdown elements abo
                 messages=[
                     {
                         "role": sys_role,
-                        "content": (
-                            "You are an expert analyst summarising Discord conversations "
-                            "from the Suno AI community. "
-                            "You MUST respond exclusively in well-structured Markdown. "
-                            "Never output plain prose. Always use ## headings, ### subheadings, "
-                            "**bold**, - bullet lists, > blockquotes, and `code` where appropriate."
-                        ),
+                        "content": SUMMARIZE_RESULTS_SYSTEM,
                     },
                     {"role": "user", "content": full},
                 ],
@@ -2002,10 +1888,8 @@ async def summarize_results_followup_endpoint(request: Request):
         initial_summary = (history[0].get("content") or "").strip()
         qa_history = history[1:]
 
-    system_content = (
-        "You are an expert analyst answering follow-up questions about a Discord conversation summary. "
-        "Answer based on the initial summary provided. Respond in well-structured Markdown.\n\n"
-        + (f"INITIAL SUMMARY:\n{initial_summary}" if initial_summary else "")
+    system_content = SUMMARIZE_RESULTS_FOLLOWUP_SYSTEM_BASE + (
+        f"INITIAL SUMMARY:\n{initial_summary}" if initial_summary else ""
     )
 
     msgs: list = [{"role": sys_role, "content": system_content}]

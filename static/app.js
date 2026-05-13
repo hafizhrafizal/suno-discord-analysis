@@ -4562,8 +4562,10 @@ async function _fetchProfileMessages() {
     const frag = document.createDocumentFragment();
     for (const msg of msgs) {
       const card = document.createElement('div');
+      card.id        = `upo-card-${msg.id}`;
       card.className = 'bg-white rounded-xl border border-gray-200 shadow-sm p-3';
-      const safeContent = keyword ? highlight(msg.content || '', keyword) : esc(msg.content || '');
+      const safeContent  = keyword ? highlight(msg.content || '', keyword) : esc(msg.content || '');
+      const isBookmarked = bookmarkedIds.has(msg.id);
       card.innerHTML = `
         <div class="flex items-center justify-between mb-1.5 gap-2">
           <span class="text-xs text-gray-400">${esc(msg.date || '')}</span>
@@ -4577,7 +4579,15 @@ async function _fetchProfileMessages() {
           </div>
         </div>
         <p class="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed">${safeContent}</p>
-        <div class="border-t border-gray-100 mt-2 pt-1.5 flex justify-end">
+        <div class="border-t border-gray-100 mt-2 pt-1.5 flex items-center justify-between">
+          <button class="upo-bm-btn flex items-center gap-1 text-xs font-medium rounded
+                         focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500"
+                  data-id="${msg.id}"
+                  title="${isBookmarked ? 'Remove bookmark' : 'Save bookmark'}">
+            ${isBookmarked
+              ? `<svg class="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg><span class="text-amber-600">Bookmarked</span>`
+              : `<svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg><span class="text-gray-500">Bookmark</span>`}
+          </button>
           <button class="upo-ctx-btn text-xs text-indigo-600 hover:text-indigo-800 font-medium
                          focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600 rounded"
                   data-id="${msg.id}" data-open="false">Show context ↕</button>
@@ -5000,9 +5010,40 @@ async function upoToggleContext(id, btn) {
 }
 
 document.getElementById('upo-messages').addEventListener('click', e => {
-  const btn = e.target.closest('.upo-ctx-btn');
+  const ctx = e.target.closest('.upo-ctx-btn');
+  if (ctx) { upoToggleContext(parseInt(ctx.dataset.id, 10), ctx); return; }
+});
+
+document.getElementById('upo-messages').addEventListener('click', async e => {
+  const btn = e.target.closest('.upo-bm-btn');
   if (!btn) return;
-  upoToggleContext(parseInt(btn.dataset.id, 10), btn);
+  const msgId = parseInt(btn.dataset.id, 10);
+  btn.disabled = true;
+
+  try {
+    if (bookmarkedIds.has(msgId)) {
+      await fetch(`/api/bookmarks/by-msg/${msgId}`, { method: 'DELETE' });
+      bookmarkedIds.delete(msgId);
+    } else {
+      await fetch('/api/bookmarks', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ msg_id: msgId }),
+      });
+      bookmarkedIds.add(msgId);
+    }
+    updateBmBadge();
+
+    const isNow = bookmarkedIds.has(msgId);
+    btn.title     = isNow ? 'Remove bookmark' : 'Save bookmark';
+    btn.innerHTML = isNow
+      ? `<svg class="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg><span class="text-amber-600">Bookmarked</span>`
+      : `<svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg><span class="text-gray-500">Bookmark</span>`;
+  } catch (err) {
+    showErrorPopup(err.message || 'Bookmark failed');
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 document.getElementById('upo-back').addEventListener('click', closeUserProfile);
