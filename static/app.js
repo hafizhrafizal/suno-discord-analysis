@@ -1972,7 +1972,7 @@ document.getElementById('sr-export-pdf-followup').addEventListener('click', expo
 
 // -- RESULTS FILTER --------------------------------------------------------
 
-let filterMode        = 'exact';  // 'exact' | 'any' | 'semantic'
+let filterMode        = 'exact';  // 'exact' | 'any' | 'fuzzy' | 'semantic'
 let _semanticDebounce = null;
 
 /* -- Set active mode + update UI -- */
@@ -1980,40 +1980,54 @@ const _EXACT_ACTIVE    = ['bg-indigo-700','text-white'];
 const _EXACT_INACTIVE  = ['bg-slate-100','text-slate-500'];
 const _ANY_ACTIVE      = ['bg-emerald-600','text-white'];
 const _ANY_INACTIVE    = ['bg-slate-100','text-slate-500'];
+const _FUZZY_ACTIVE    = ['bg-amber-500','text-white'];
+const _FUZZY_INACTIVE  = ['bg-slate-100','text-slate-500'];
 const _SEM_ACTIVE      = ['bg-indigo-700','text-white'];
 const _SEM_INACTIVE    = ['bg-slate-100','text-slate-500'];
 
 function setFilterMode(mode) {
   filterMode = mode;
-  const exactBtn = document.getElementById('filter-mode-exact');
-  const anyBtn   = document.getElementById('filter-mode-any');
-  const semBtn   = document.getElementById('filter-mode-semantic');
+  const exactBtn  = document.getElementById('filter-mode-exact');
+  const anyBtn    = document.getElementById('filter-mode-any');
+  const fuzzyBtn  = document.getElementById('filter-mode-fuzzy');
+  const semBtn    = document.getElementById('filter-mode-semantic');
 
-  exactBtn.classList.remove(..._EXACT_ACTIVE,   ..._EXACT_INACTIVE);
-  anyBtn.classList.remove(  ..._ANY_ACTIVE,     ..._ANY_INACTIVE);
-  semBtn.classList.remove(  ..._SEM_ACTIVE,     ..._SEM_INACTIVE);
+  exactBtn.classList.remove( ..._EXACT_ACTIVE,   ..._EXACT_INACTIVE);
+  anyBtn.classList.remove(   ..._ANY_ACTIVE,     ..._ANY_INACTIVE);
+  fuzzyBtn.classList.remove( ..._FUZZY_ACTIVE,   ..._FUZZY_INACTIVE);
+  semBtn.classList.remove(   ..._SEM_ACTIVE,     ..._SEM_INACTIVE);
 
   if (mode === 'exact') {
-    exactBtn.classList.add(..._EXACT_ACTIVE);
-    anyBtn.classList.add(  ..._ANY_INACTIVE);
-    semBtn.classList.add(  ..._SEM_INACTIVE);
+    exactBtn.classList.add( ..._EXACT_ACTIVE);
+    anyBtn.classList.add(   ..._ANY_INACTIVE);
+    fuzzyBtn.classList.add( ..._FUZZY_INACTIVE);
+    semBtn.classList.add(   ..._SEM_INACTIVE);
   } else if (mode === 'any') {
-    exactBtn.classList.add(..._EXACT_INACTIVE);
-    anyBtn.classList.add(  ..._ANY_ACTIVE);
-    semBtn.classList.add(  ..._SEM_INACTIVE);
+    exactBtn.classList.add( ..._EXACT_INACTIVE);
+    anyBtn.classList.add(   ..._ANY_ACTIVE);
+    fuzzyBtn.classList.add( ..._FUZZY_INACTIVE);
+    semBtn.classList.add(   ..._SEM_INACTIVE);
+  } else if (mode === 'fuzzy') {
+    exactBtn.classList.add( ..._EXACT_INACTIVE);
+    anyBtn.classList.add(   ..._ANY_INACTIVE);
+    fuzzyBtn.classList.add( ..._FUZZY_ACTIVE);
+    semBtn.classList.add(   ..._SEM_INACTIVE);
   } else {
-    exactBtn.classList.add(..._EXACT_INACTIVE);
-    anyBtn.classList.add(  ..._ANY_INACTIVE);
-    semBtn.classList.add(  ..._SEM_ACTIVE);
+    exactBtn.classList.add( ..._EXACT_INACTIVE);
+    anyBtn.classList.add(   ..._ANY_INACTIVE);
+    fuzzyBtn.classList.add( ..._FUZZY_INACTIVE);
+    semBtn.classList.add(   ..._SEM_ACTIVE);
   }
 
-  exactBtn.setAttribute('aria-pressed', String(mode === 'exact'));
-  anyBtn.setAttribute(  'aria-pressed', String(mode === 'any'));
-  semBtn.setAttribute(  'aria-pressed', String(mode === 'semantic'));
+  exactBtn.setAttribute( 'aria-pressed', String(mode === 'exact'));
+  anyBtn.setAttribute(   'aria-pressed', String(mode === 'any'));
+  fuzzyBtn.setAttribute( 'aria-pressed', String(mode === 'fuzzy'));
+  semBtn.setAttribute(   'aria-pressed', String(mode === 'semantic'));
 
   const placeholders = {
     exact:    'Exact: whole-word match, multi-word phrase scores highest...',
     any:      'Any Word: returns messages containing at least one query word...',
+    fuzzy:    'Fuzzy: characters must appear in order anywhere in the text (fzf-style)...',
     semantic: 'Semantic: re-rank results by embedding similarity...',
   };
   document.getElementById('results-filter').placeholder = placeholders[mode];
@@ -2023,6 +2037,8 @@ document.getElementById('filter-mode-exact')
   .addEventListener('click', () => { setFilterMode('exact');    applyResultsFilter(); });
 document.getElementById('filter-mode-any')
   .addEventListener('click', () => { setFilterMode('any');      applyResultsFilter(); });
+document.getElementById('filter-mode-fuzzy')
+  .addEventListener('click', () => { setFilterMode('fuzzy');    applyResultsFilter(); });
 document.getElementById('filter-mode-semantic')
   .addEventListener('click', () => { setFilterMode('semantic'); applyResultsFilter(); });
 
@@ -2184,6 +2200,49 @@ async function _applySemanticFilter(term) {
   }
 }
 
+/* -- Fuzzy filter (instant, client-side, fzf-style) -- */
+// Returns a score > 0 if every character of `pattern` appears in order in `str`.
+// Consecutive run bonus: each run of consecutive character matches adds extra weight.
+function _fuzzyScore(pattern, str) {
+  if (!pattern) return 1;
+  let si = 0, pi = 0, score = 0, run = 0;
+  while (si < str.length && pi < pattern.length) {
+    if (str[si] === pattern[pi]) {
+      run++;
+      score += run * 2;   // consecutive chars score more
+      pi++;
+    } else {
+      run = 0;
+    }
+    si++;
+  }
+  return pi === pattern.length ? score : 0;
+}
+
+function _applyFuzzyFilter(term) {
+  if (!term) { _resetToAllResults(); return; }
+
+  // Each space-separated word must fuzzy-match independently (AND logic)
+  const words = term.split(/\s+/).filter(Boolean);
+  activeFilterTokens = words;  // used for highlight (best-effort)
+
+  const scored = currentResults
+    .map(m => {
+      const text = ((m.username || '') + ' ' + (m.content || '')).toLowerCase();
+      let total = 0;
+      for (const w of words) {
+        const s = _fuzzyScore(w, text);
+        if (!s) return { m, s: 0 };
+        total += s;
+      }
+      return { m, s: total };
+    })
+    .filter(x => x.s > 0)
+    .sort((a, b) => b.s - a.s);   // highest fuzzy score first
+
+  _renderFilteredCards(scored.map(x => x.m), currentResults.length);
+}
+
 /* -- Unified dispatcher -- */
 function applyResultsFilter() {
   const term     = document.getElementById('results-filter').value.trim().toLowerCase();
@@ -2196,6 +2255,8 @@ function applyResultsFilter() {
     _applyExactFilter(term);
   } else if (filterMode === 'any') {
     _applyAnyWordFilter(term);
+  } else if (filterMode === 'fuzzy') {
+    _applyFuzzyFilter(term);
   } else {
     if (!term) { _applySemanticFilter(''); return; }
     _semanticDebounce = setTimeout(() => _applySemanticFilter(term), 500);
