@@ -124,9 +124,13 @@ async def list_codes():
         "SELECT id, name, color, description, category_id, created_at FROM codes ORDER BY name COLLATE NOCASE"
     ).fetchall()
 
-    # Groundedness: bookmarks per code
+    # Groundedness: total usages per code (whole-bookmark + span-level highlights)
     g_rows = conn.execute(
-        "SELECT code_id, COUNT(*) AS cnt FROM bookmark_codes GROUP BY code_id"
+        """SELECT code_id, COUNT(*) AS cnt FROM (
+               SELECT code_id FROM bookmark_codes
+               UNION ALL
+               SELECT code_id FROM bookmark_code_highlights
+           ) GROUP BY code_id"""
     ).fetchall()
     groundedness = {r["code_id"]: r["cnt"] for r in g_rows}
 
