@@ -3220,6 +3220,8 @@ let _cmDragCatId      = null;       // id of coding (category) being dragged
 let _cmDragExcerpt    = null;       // { bookmarkId, sourceCodeId } being dragged
 let _cmOpenExcBmId    = null;       // bookmark_id open in excerpt panel
 let _cmOpenExcSrcId   = null;       // source code id open in excerpt panel
+let _cmOpenExcHlId    = null;       // highlight_id when a span-coding row is open (null for whole-bookmark)
+let _cmOpenExcHlText  = null;       // highlighted_text for the span-coding row
 
 async function loadCodingPage() {
   await _cmRefresh();
@@ -3247,7 +3249,7 @@ async function _cmRefresh() {
     if (cat) _cmOpenCatDetail(cat);
     else _cmCloseDetail();
   } else if (_cmOpenExcBmId !== null) {
-    _cmOpenExcerptPanel(_cmOpenExcBmId, _cmOpenExcSrcId);
+    _cmOpenExcerptPanel(_cmOpenExcBmId, _cmOpenExcSrcId, _cmOpenExcHlId, _cmOpenExcHlText);
   }
 }
 
@@ -3418,6 +3420,50 @@ function _cmRenderCatNode(node, depth) {
     </div>`;
 }
 
+// Renders a single row in a code's inline excerpt list.
+// r.type === 'excerpt'  → whole-bookmark coding (draggable, full snippet)
+// r.type === 'highlight' → span-level coding (read-only, shows highlighted text)
+function _cmRenderExcerptRow(r, codeId, accent) {
+  const meta = `${esc(r.username || '')}${r.date ? ' · ' + esc(r.date.substring(0, 10)) : ''}`;
+  if (r.type === 'highlight') {
+    const hlSnippet = (r.highlighted_text || '').substring(0, 120);
+    const more      = (r.highlighted_text || '').length > 120 ? '…' : '';
+    return `<div class="border-l-2 pl-2 py-1 cursor-pointer cm-excerpt-item group rounded-r-md transition-colors hover:bg-amber-50/60"
+                 style="border-color:${accent}"
+                 data-bookmark-id="${r.bookmark_id}"
+                 data-source-code-id="${codeId}"
+                 data-highlight-id="${r.highlight_id}"
+                 title="Click to view span coding">
+      <div class="flex items-start gap-1.5">
+        <div class="flex-1 min-w-0">
+          <p class="text-xs italic text-gray-800 leading-relaxed font-medium">"${esc(hlSnippet)}${more}"</p>
+          <p class="text-[10px] mt-0.5 flex items-center gap-1">
+            <span class="px-1 py-0.5 rounded text-[9px] font-semibold" style="background:${accent}20;color:${accent}">span</span>
+            <span class="text-gray-400">${meta}</span>
+          </p>
+        </div>
+      </div>
+    </div>`;
+  }
+  const snippet = (r.content || '').substring(0, 180);
+  const more    = (r.content || '').length > 180 ? '…' : '';
+  return `<div class="border-l-2 pl-2 py-1 cursor-pointer cm-excerpt-item group rounded-r-md transition-colors hover:bg-indigo-50/60"
+               style="border-color:${accent}"
+               draggable="true"
+               data-bookmark-id="${r.bookmark_id}"
+               data-source-code-id="${codeId}"
+               title="Click to edit · Drag to reassign">
+    <div class="flex items-start gap-1.5">
+      <div class="flex-1 min-w-0">
+        <p class="text-xs italic text-gray-700 leading-relaxed">"${esc(snippet)}${more}"</p>
+        <p class="text-[10px] text-gray-400 mt-0.5">${meta}</p>
+        ${r.note ? `<p class="text-[10px] text-indigo-600">${esc(r.note)}</p>` : ''}
+      </div>
+      <span class="opacity-0 group-hover:opacity-40 transition-opacity text-gray-400 shrink-0 mt-0.5 text-[11px] leading-none select-none pointer-events-none">⠿</span>
+    </div>
+  </div>`;
+}
+
 function _cmRenderCodeCard(code, depth) {
   const tc         = labelTextColor(code.color);
   const selected   = _cmSelected.has(code.id);
@@ -3436,25 +3482,7 @@ function _cmRenderCodeCard(code, depth) {
     } else if (cached.length === 0) {
       excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 text-xs text-gray-400 italic text-center py-1.5">No excerpts yet.</div>`;
     } else {
-      const items = cached.map(r => {
-        const snippet = (r.content || '').substring(0, 180);
-        const more    = (r.content || '').length > 180 ? '…' : '';
-        return `<div class="border-l-2 pl-2 py-1 cursor-pointer cm-excerpt-item group rounded-r-md transition-colors hover:bg-indigo-50/60"
-                     style="border-color:${code.color}"
-                     draggable="true"
-                     data-bookmark-id="${r.bookmark_id}"
-                     data-source-code-id="${code.id}"
-                     title="Click to edit · Drag to reassign">
-          <div class="flex items-start gap-1.5">
-            <div class="flex-1 min-w-0">
-              <p class="text-xs italic text-gray-700 leading-relaxed">"${esc(snippet)}${more}"</p>
-              <p class="text-[10px] text-gray-400 mt-0.5">${esc(r.username || '')}${r.date ? ' · ' + esc(r.date.substring(0, 10)) : ''}</p>
-              ${r.note ? `<p class="text-[10px] text-indigo-600">${esc(r.note)}</p>` : ''}
-            </div>
-            <span class="opacity-0 group-hover:opacity-40 transition-opacity text-gray-400 shrink-0 mt-0.5 text-[11px] leading-none select-none pointer-events-none">⠿</span>
-          </div>
-        </div>`;
-      }).join('');
+      const items = cached.map(r => _cmRenderExcerptRow(r, code.id, code.color)).join('');
       excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 ml-3 space-y-1.5">${items}</div>`;
     }
   }
@@ -3511,27 +3539,9 @@ async function _cmFetchExcerptsFor(codeId) {
     return;
   }
   // Find the code's color for the left-border accent
-  const code = _cmCodes.find(c => c.id === codeId);
+  const code   = _cmCodes.find(c => c.id === codeId);
   const accent = code ? code.color : '#0d3e7f';
-  container.innerHTML = cached.map(r => {
-    const snippet = (r.content || '').substring(0, 180);
-    const more    = (r.content || '').length > 180 ? '…' : '';
-    return `<div class="border-l-2 pl-2 py-1 cursor-pointer cm-excerpt-item group rounded-r-md transition-colors hover:bg-indigo-50/60"
-                 style="border-color:${accent}"
-                 draggable="true"
-                 data-bookmark-id="${r.bookmark_id}"
-                 data-source-code-id="${codeId}"
-                 title="Click to edit · Drag to reassign">
-      <div class="flex items-start gap-1.5">
-        <div class="flex-1 min-w-0">
-          <p class="text-xs italic text-gray-700 leading-relaxed">"${esc(snippet)}${more}"</p>
-          <p class="text-[10px] text-gray-400 mt-0.5">${esc(r.username || '')}${r.date ? ' · ' + esc(r.date.substring(0, 10)) : ''}</p>
-          ${r.note ? `<p class="text-[10px] text-indigo-600">${esc(r.note)}</p>` : ''}
-        </div>
-        <span class="opacity-0 group-hover:opacity-40 transition-opacity text-gray-400 shrink-0 mt-0.5 text-[11px] leading-none select-none pointer-events-none">⠿</span>
-      </div>
-    </div>`;
-  }).join('');
+  container.innerHTML = cached.map(r => _cmRenderExcerptRow(r, codeId, accent)).join('');
 }
 
 // ── Detail panel: Category ────────────────────────────────────────────────────
@@ -3556,10 +3566,12 @@ function _cmOpenCatDetail(cat) {
 }
 
 function _cmFlushDetailPanel() {
-  _cmOpenCodeId   = null;
-  _cmOpenCatId    = null;
-  _cmOpenExcBmId  = null;
-  _cmOpenExcSrcId = null;
+  _cmOpenCodeId    = null;
+  _cmOpenCatId     = null;
+  _cmOpenExcBmId   = null;
+  _cmOpenExcSrcId  = null;
+  _cmOpenExcHlId   = null;
+  _cmOpenExcHlText = null;
   document.getElementById('cm-code-edit-section').classList.add('hidden');
   document.getElementById('cm-cat-edit-section').classList.add('hidden');
   document.getElementById('cm-exc-edit-section').classList.add('hidden');
@@ -3575,7 +3587,7 @@ function _cmCloseDetail() {
 
 // ── Excerpt coding panel (sidebar) ───────────────────────────────────────────
 
-async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId) {
+async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText = null) {
   let bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
   if (!bm) {
     try {
@@ -3586,26 +3598,59 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId) {
   if (!bm) return;
 
   _cmFlushDetailPanel();
-  _cmOpenExcBmId  = bookmarkId;
-  _cmOpenExcSrcId = sourceCodeId;
+  _cmOpenExcBmId   = bookmarkId;
+  _cmOpenExcSrcId  = sourceCodeId;
+  _cmOpenExcHlId   = hlId;
+  _cmOpenExcHlText = hlText;
 
-  const textEl  = document.getElementById('cm-exc-panel-text');
-  const srcCode = _cmCodes.find(c => c.id === sourceCodeId);
+  const textEl   = document.getElementById('cm-exc-panel-text');
+  const srcCode  = _cmCodes.find(c => c.id === sourceCodeId);
+  const addEl    = document.getElementById('cm-exc-panel-add-section');
+  const codesLbl = document.querySelector('#cm-exc-edit-section .text-xs.font-medium');
 
-  document.getElementById('cm-detail-title').textContent = 'Edit Open Codings';
   document.getElementById('cm-exc-edit-section').classList.remove('hidden');
-
-  textEl.textContent           = `"${bm.content || ''}"`;
-  textEl.style.borderLeftColor = srcCode ? srcCode.color : '#0d3e7f';
+  document.getElementById('cm-detail-panel').classList.remove('hidden');
   document.getElementById('cm-exc-panel-source').textContent =
     [bm.username, bm.date ? bm.date.substring(0, 10) : null].filter(Boolean).join(' · ');
+  textEl.style.borderLeftColor = srcCode ? srcCode.color : '#0d3e7f';
 
-  _cmExcPanelRenderCodes(bm, bookmarkId);
-  document.getElementById('cm-detail-panel').classList.remove('hidden');
+  if (hlId !== null) {
+    // ── Span-level coding view ──────────────────────────────────────────────
+    document.getElementById('cm-detail-title').textContent = 'Span Coding';
+    // Show the highlighted text in the text box, then full context below
+    textEl.innerHTML = `<strong class="not-italic font-semibold text-gray-800 block mb-1">"${esc(hlText || '')}"</strong>`
+      + `<span class="text-gray-400 text-[10px] block mt-1">Full excerpt: ${esc((bm.content || '').substring(0, 200))}${(bm.content || '').length > 200 ? '…' : ''}</span>`;
+    // Show just the single code for this span
+    if (codesLbl) codesLbl.textContent = 'Span coding';
+    _cmExcPanelRenderSpanCode(srcCode, bookmarkId, hlId);
+    // Hide "Add Open Coding" section — span codings are managed from the Bookmarks page
+    if (addEl) addEl.classList.add('hidden');
+  } else {
+    // ── Whole-bookmark coding view (existing behaviour) ─────────────────────
+    document.getElementById('cm-detail-title').textContent = 'Edit Open Codings';
+    textEl.textContent = `"${bm.content || ''}"`;
+    if (codesLbl) codesLbl.textContent = 'Open Codings';
+    _cmExcPanelRenderCodes(bm, bookmarkId);
+    if (addEl) addEl.classList.remove('hidden');
+    const searchEl = document.getElementById('cm-exc-panel-search');
+    searchEl.value = '';
+    searchEl.focus();
+  }
+}
 
-  const searchEl = document.getElementById('cm-exc-panel-search');
-  searchEl.value = '';
-  searchEl.focus();
+function _cmExcPanelRenderSpanCode(code, bookmarkId, hlId) {
+  const container = document.getElementById('cm-exc-panel-codes');
+  if (!code) {
+    container.innerHTML = '<span class="text-xs text-gray-400 italic">Code not found</span>';
+    return;
+  }
+  const tc = labelTextColor(code.color);
+  container.innerHTML = `
+    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
+          style="background:${code.color};color:${tc}">
+      ${esc(code.name)}
+    </span>
+    <p class="text-[10px] text-gray-400 mt-1 w-full">Manage span codings from the <strong>Bookmarks</strong> page.</p>`;
 }
 
 function _cmExcPanelRenderCodes(bm, bookmarkId) {
@@ -3798,10 +3843,18 @@ document.getElementById('cm-code-list').addEventListener('click', e => {
   const excerptItem = e.target.closest('.cm-excerpt-item');
   if (excerptItem) {
     e.stopPropagation();
-    _cmOpenExcerptPanel(
-      parseInt(excerptItem.dataset.bookmarkId),
-      parseInt(excerptItem.dataset.sourceCodeId)
-    );
+    const bmId    = parseInt(excerptItem.dataset.bookmarkId);
+    const srcCode = parseInt(excerptItem.dataset.sourceCodeId);
+    const hlIdStr = excerptItem.dataset.highlightId;
+    if (hlIdStr) {
+      // Span-level coding — look up the highlighted text from cache
+      const hlId   = parseInt(hlIdStr);
+      const cached = _cmExcerptsCache[srcCode];
+      const row    = cached?.find(r => r.highlight_id === hlId);
+      _cmOpenExcerptPanel(bmId, srcCode, hlId, row?.highlighted_text || '');
+    } else {
+      _cmOpenExcerptPanel(bmId, srcCode);
+    }
     return;
   }
 
@@ -3840,8 +3893,9 @@ document.getElementById('cm-code-list').addEventListener('click', e => {
 
 document.getElementById('cm-code-list').addEventListener('dragstart', e => {
   // Excerpt drag — must be checked first (excerpts are inside code-outer wrappers)
+  // Skip span-level highlight items (they are not draggable)
   const excerptItem = e.target.closest('.cm-excerpt-item');
-  if (excerptItem) {
+  if (excerptItem && !excerptItem.dataset.highlightId) {
     _cmDragExcerpt = {
       bookmarkId:   parseInt(excerptItem.dataset.bookmarkId),
       sourceCodeId: parseInt(excerptItem.dataset.sourceCodeId),

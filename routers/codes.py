@@ -259,23 +259,37 @@ async def merge_codes(body: dict):
 
 @router.get("/api/codes/{code_id}/bookmarks")
 async def list_code_bookmarks(code_id: int):
-    """Return bookmarks (with excerpt text) that carry this code."""
+    """Return all usages of a code: whole-bookmark codings and span-level highlights."""
     conn = get_db()
     if not conn.execute("SELECT id FROM codes WHERE id = ?", (code_id,)).fetchone():
         conn.close()
         raise HTTPException(404, "Code not found")
+    # Whole-bookmark codings
     rows = conn.execute(
-        """SELECT b.id AS bookmark_id, b.note, b.created_at,
+        """SELECT 'excerpt' AS type, NULL AS highlight_id, NULL AS highlighted_text,
+                  b.id AS bookmark_id, b.note, b.created_at,
                   m.content, m.username, m.date, m.author_id
            FROM bookmark_codes bc
            JOIN bookmarks b ON b.id = bc.bookmark_id
            JOIN messages  m ON m.id = b.msg_id
-           WHERE bc.code_id = ?
-           ORDER BY b.created_at DESC""",
+           WHERE bc.code_id = ?""",
+        (code_id,),
+    ).fetchall()
+    # Span-level highlight codings
+    hl_rows = conn.execute(
+        """SELECT 'highlight' AS type, bch.id AS highlight_id, bch.highlighted_text,
+                  b.id AS bookmark_id, b.note, b.created_at,
+                  m.content, m.username, m.date, m.author_id
+           FROM bookmark_code_highlights bch
+           JOIN bookmarks b ON b.id = bch.bookmark_id
+           JOIN messages  m ON m.id = b.msg_id
+           WHERE bch.code_id = ?""",
         (code_id,),
     ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    combined = [dict(r) for r in rows] + [dict(r) for r in hl_rows]
+    combined.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return combined
 
 
 # ── Back-compat aliases ───────────────────────────────────────────────────────
