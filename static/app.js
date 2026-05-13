@@ -1122,10 +1122,15 @@ document.querySelectorAll('.search-tab').forEach(btn => {
     document.querySelectorAll('.search-panel').forEach(p => p.classList.add('hidden'));
     document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
 
-    // Flush results and summary when switching search mode
+    // Flush results, summary, and stats visualization when switching search mode
     document.getElementById('results-section').classList.add('hidden');
     document.getElementById('results-container').innerHTML = '';
     document.getElementById('sr-section').classList.add('hidden');
+    document.getElementById('trend-section').classList.add('hidden');
+    const _banner = document.getElementById('chart-filter-banner');
+    if (_banner) _banner.remove();
+    if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
+    _trendRanges = [];
     currentResults = [];
   });
 });
