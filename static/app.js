@@ -1121,6 +1121,12 @@ document.querySelectorAll('.search-tab').forEach(btn => {
     btn.classList.add('tab-active');
     document.querySelectorAll('.search-panel').forEach(p => p.classList.add('hidden'));
     document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+
+    // Flush results and summary when switching search mode
+    document.getElementById('results-section').classList.add('hidden');
+    document.getElementById('results-container').innerHTML = '';
+    document.getElementById('sr-section').classList.add('hidden');
+    currentResults = [];
   });
 });
 
