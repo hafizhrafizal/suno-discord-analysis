@@ -262,27 +262,20 @@ def _cluster_candidates(rows: list, embs: np.ndarray) -> tuple:
 def _sample_cluster(
     cluster_rows: list,
     cluster_embs: np.ndarray,
-    n_closest: int = 2,
-    n_furthest: int = 2,
 ) -> list:
     """
-    Sample from a single cluster by centroid distance.
-
-    - n_closest: messages nearest the centroid (most representative).
-    - n_furthest: messages furthest from the centroid (least representative / edge cases).
+    Sample 2 messages per cluster: the closest to centroid (core representative)
+    and the farthest from centroid (boundary/range of the cluster).
     """
     n = len(cluster_rows)
-    if n <= n_closest + n_furthest:
+    if n <= 2:
         return list(cluster_rows)
 
     centroid = cluster_embs.mean(axis=0)
     dist = np.linalg.norm(cluster_embs - centroid, axis=1)
     order = np.argsort(dist)  # ascending = closest first
 
-    closest_idx  = list(order[:n_closest])
-    furthest_idx = list(order[-n_furthest:])
-
-    selected = sorted(set(closest_idx) | set(furthest_idx))
+    selected = sorted({int(order[0]), int(order[-1])})
     return [cluster_rows[i] for i in selected]
 
 
