@@ -202,14 +202,14 @@ def _cluster_candidates(rows: list, embs: np.ndarray) -> tuple:
 def _sample_cluster(
     cluster_rows: list,
     cluster_embs: np.ndarray,
-    n_closest: int = 5,
-    n_furthest: int = 5,
+    n_closest: int = 2,
+    n_furthest: int = 2,
 ) -> list:
     """
     Sample from a single cluster by centroid distance.
 
-    - n_closest: messages nearest the centroid (core / most representative).
-    - n_furthest: messages furthest from the centroid (peripheral / edge cases).
+    - n_closest: messages nearest the centroid (most representative).
+    - n_furthest: messages furthest from the centroid (least representative / edge cases).
     """
     n = len(cluster_rows)
     if n <= n_closest + n_furthest:
@@ -220,7 +220,7 @@ def _sample_cluster(
     order = np.argsort(dist)  # ascending = closest first
 
     closest_idx  = list(order[:n_closest])
-    furthest_idx = list(order[-(n_furthest):])
+    furthest_idx = list(order[-n_furthest:])
 
     selected = sorted(set(closest_idx) | set(furthest_idx))
     return [cluster_rows[i] for i in selected]
@@ -258,7 +258,7 @@ def _build_evidence_set(
     labels, algo_name, n_clusters = _cluster_candidates(rows, embs)
     unique_labels = sorted(set(labels))
 
-    # Step 3c: per-cluster sampling
+    # Step 3c: per-cluster sampling — 2 most representative + 2 least representative
     evidence: list = []
     for lbl in unique_labels:
         cluster_idx = [i for i, lb in enumerate(labels) if lb == lbl]
@@ -266,9 +266,10 @@ def _build_evidence_set(
         c_embs = embs[np.array(cluster_idx, dtype=int)]
         evidence.extend(_sample_cluster(c_rows, c_embs))
 
-    # Step 3d: chronological sort + cap
+    # Step 3d: chronological sort
+    # No hard cap here — budget_per_cluster already limits each cluster's contribution,
+    # so every cluster is represented in the final evidence set.
     evidence.sort(key=lambda r: (r.get("date") or ""))
-    evidence = evidence[:max_evidence]
 
     stats = {
         "n_input": n_input,
