@@ -140,8 +140,20 @@ async def search_semantic(
     if col is None:
         raise HTTPException(400, "Vector store is not initialised — check server logs.")
 
+    import httpx as _httpx
+
     _sem_loop = _asyncio.get_running_loop()
-    total = await _sem_loop.run_in_executor(state.vector_executor, col.count)
+    try:
+        total = await _sem_loop.run_in_executor(state.vector_executor, col.count)
+    except (_httpx.ReadTimeout, _httpx.ConnectTimeout, _httpx.TimeoutException, Exception) as exc:
+        if "timeout" in str(exc).lower() or isinstance(exc, (_httpx.ReadTimeout, _httpx.ConnectTimeout)):
+            raise HTTPException(
+                504,
+                "Vector store timed out while counting documents. "
+                "The Qdrant server may be overloaded — please retry in a moment.",
+            )
+        raise
+
     if total == 0:
         raise HTTPException(
             400,
@@ -154,8 +166,18 @@ async def search_semantic(
     fetch_n     = min(n_results * 4 if has_filters else n_results, total)
     query_emb   = (await embed_texts_async([query]))[0]
 
-    _query_fn   = lambda: col.query(query_embeddings=[query_emb], n_results=fetch_n)
-    results     = await _sem_loop.run_in_executor(state.vector_executor, _query_fn)
+    _query_fn = lambda: col.query(query_embeddings=[query_emb], n_results=fetch_n)
+    try:
+        results = await _sem_loop.run_in_executor(state.vector_executor, _query_fn)
+    except (_httpx.ReadTimeout, _httpx.ConnectTimeout, _httpx.TimeoutException, Exception) as exc:
+        if "timeout" in str(exc).lower() or isinstance(exc, (_httpx.ReadTimeout, _httpx.ConnectTimeout)):
+            raise HTTPException(
+                504,
+                f"Vector search timed out after querying {fetch_n} results. "
+                "Try a narrower date range or upload filter to reduce the search scope, "
+                "or retry in a moment if the server is under load.",
+            )
+        raise
     ids         = results["ids"][0]
     distances   = results["distances"][0]
 

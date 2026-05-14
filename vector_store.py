@@ -151,7 +151,7 @@ class QdrantCollectionWrapper:
         if self._api_key:
             headers["api-key"] = self._api_key
         url = f"{self._url}/collections/{self._name}/points/search"
-        with httpx.Client(timeout=60.0, verify=False) as client:
+        with httpx.Client(timeout=120.0, verify=False) as client:
             resp = client.post(url, json={
                 "vector": vector,
                 "limit": n_results,
@@ -318,7 +318,7 @@ def _init_qdrant() -> dict:
         return {}
 
     try:
-        client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY or None, timeout=60)
+        client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY or None, timeout=120)
         logger.info("Vector backend: Qdrant (%s)", QDRANT_URL)
     except Exception as exc:
         logger.error("Failed to connect to Qdrant: %s", exc)
