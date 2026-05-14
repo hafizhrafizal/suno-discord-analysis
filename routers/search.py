@@ -123,6 +123,14 @@ async def search_by_range(
     return [dict(r) for r in rows]
 
 
+# Direct embedding fetch threshold: if the SQL-filtered set is this size or
+# smaller, fetch embeddings by ID and score directly (exact, no missed matches).
+# Above this, fall back to a broad ANN query + filter intersection.
+# 5000 is the crossover where HTTP/batch overhead of direct fetch starts to
+# outweigh the ANN index speedup. Below it, Strategy A is both faster and exact.
+_SEMANTIC_DIRECT_THRESHOLD = 5000
+
+
 @router.get("/api/search/semantic")
 async def search_semantic(
     query:      str,
@@ -135,6 +143,8 @@ async def search_semantic(
     min_words:  int           = 0,
 ):
     import asyncio as _asyncio
+    import numpy as _np
+
     uid_list = _parse_upload_ids(upload_ids)
     col      = active_collection()
     if col is None:
@@ -162,57 +172,105 @@ async def search_semantic(
             "Upload or re-embed data with this model selected first.",
         )
 
-    has_filters = bool(username or date_from or date_to or (suno_team != "all") or uid_list or min_words)
-    fetch_n     = min(n_results * 4 if has_filters else n_results, total)
-    query_emb   = (await embed_texts_async([query]))[0]
+    # ── Step 1: Apply all metadata filters in SQL to get the candidate pool ───
+    uid_sql, uid_params   = _sql_upload_ids_clause(uid_list)
+    date_sql, date_params = sql_date_clauses(date_from, date_to)
+    words_sql, words_params = sql_min_words_clause(min_words)
 
-    _query_fn = lambda: col.query(query_embeddings=[query_emb], n_results=fetch_n)
-    try:
-        results = await _sem_loop.run_in_executor(state.vector_executor, _query_fn)
-    except (_httpx.ReadTimeout, _httpx.ConnectTimeout, _httpx.TimeoutException, Exception) as exc:
-        if "timeout" in str(exc).lower() or isinstance(exc, (_httpx.ReadTimeout, _httpx.ConnectTimeout)):
-            raise HTTPException(
-                504,
-                f"Vector search timed out after querying {fetch_n} results. "
-                "Try a narrower date range or upload filter to reduce the search scope, "
-                "or retry in a moment if the server is under load.",
-            )
-        raise
-    ids         = results["ids"][0]
-    distances   = results["distances"][0]
+    sql_params: list = []
+    sql = "SELECT id, msg_uuid, username, date, content, upload_id, is_suno_team, row_index FROM messages WHERE 1=1"
+    if username:
+        sql += " AND LOWER(username) LIKE LOWER(?)"
+        sql_params.append(f"%{username}%")
+    sql += uid_sql + _suno_sql(suno_team) + date_sql + words_sql
+    sql_params.extend(uid_params + date_params + words_params)
+    sql += " ORDER BY date, row_index"
 
-    conn         = get_db()
-    uuid_to_dist = dict(zip(ids, distances))
-    if ids:
-        placeholders = ",".join("?" * len(ids))
-        rows         = conn.execute(
-            f"SELECT * FROM messages WHERE msg_uuid IN ({placeholders})", ids
-        ).fetchall()
-        uuid_to_row = {r["msg_uuid"]: dict(r) for r in rows}
-    else:
-        uuid_to_row = {}
+    conn = get_db()
+    db_rows = conn.execute(sql, sql_params).fetchall()
     conn.close()
 
+    if not db_rows:
+        return []
+
+    # Build UUID → full-row map for the filtered set
+    filtered_map: dict = {r["msg_uuid"]: dict(r) for r in db_rows}
+    filtered_uuids = list(filtered_map.keys())
+    n_filtered = len(filtered_uuids)
+
+    # ── Step 2: Embed the query ───────────────────────────────────────────────
+    query_emb = (await embed_texts_async([query]))[0]
+    q_vec = _np.array(query_emb, dtype=_np.float32)
+    # Normalise once for fast cosine similarity via dot product
+    q_norm = _np.linalg.norm(q_vec)
+    if q_norm > 0:
+        q_vec = q_vec / q_norm
+
+    # ── Step 3: Score the filtered set ───────────────────────────────────────
+    # Strategy A — small filtered set: fetch embeddings directly by ID and
+    #   compute exact cosine similarity. Every filtered message is scored;
+    #   no results are missed regardless of how selective the filters are.
+    # Strategy B — large filtered set: broad vector query then intersect with
+    #   the filtered UUIDs. Uses the ANN index for speed.
+
+    scored: list = []  # [(similarity, msg_uuid), ...]
+
+    if n_filtered <= _SEMANTIC_DIRECT_THRESHOLD:
+        # Strategy A: direct lookup
+        def _fetch_direct() -> dict:
+            try:
+                result   = col.get(ids=filtered_uuids, include=["embeddings"])
+                emb_ids  = result.get("ids") or []
+                emb_vecs = result.get("embeddings") or []
+                return {eid: evec for eid, evec in zip(emb_ids, emb_vecs) if evec is not None}
+            except Exception as exc:
+                logger.warning("semantic search: direct emb fetch failed (%s)", exc)
+                return {}
+
+        emb_map: dict = await _sem_loop.run_in_executor(state.vector_executor, _fetch_direct)
+
+        for uid, emb in emb_map.items():
+            if uid not in filtered_map:
+                continue
+            v = _np.array(emb, dtype=_np.float32)
+            norm = _np.linalg.norm(v)
+            if norm > 0:
+                v = v / norm
+            sim = float(_np.dot(q_vec, v))
+            scored.append((sim, uid))
+
+    else:
+        # Strategy B: broad ANN query then intersect
+        fetch_n = min(total, max(n_filtered * 2, 2000))
+
+        def _query_broad():
+            return col.query(query_embeddings=[query_emb], n_results=fetch_n)
+
+        try:
+            results = await _sem_loop.run_in_executor(state.vector_executor, _query_broad)
+        except (_httpx.ReadTimeout, _httpx.ConnectTimeout, _httpx.TimeoutException, Exception) as exc:
+            if "timeout" in str(exc).lower() or isinstance(exc, (_httpx.ReadTimeout, _httpx.ConnectTimeout)):
+                raise HTTPException(
+                    504,
+                    f"Vector search timed out (queried {fetch_n} results). "
+                    "Try a narrower date range or upload filter, then retry.",
+                )
+            raise
+
+        ids_raw   = results["ids"][0]
+        dists_raw = results["distances"][0]
+        for uid, dist in zip(ids_raw, dists_raw):
+            if uid in filtered_map:
+                sim = round(1.0 - float(dist), 4)
+                scored.append((sim, uid))
+
+    # ── Step 4: Sort by similarity and return top n_results ──────────────────
+    scored.sort(key=lambda x: -x[0])
+
     messages: list[dict] = []
-    for msg_uuid in ids:
-        msg = uuid_to_row.get(msg_uuid)
-        if msg is None:
-            continue
-        msg["similarity_score"] = round(1.0 - uuid_to_dist[msg_uuid], 4)
-
-        if uid_list and msg["upload_id"] not in uid_list:
-            continue
-        if username and username.lower() not in msg["username"].lower():
-            continue
-        if not date_in_range(msg["date"], date_from, date_to):
-            continue
-        if suno_team == "only" and not is_suno_team_member(msg["is_suno_team"]):
-            continue
-        if suno_team == "exclude" and is_suno_team_member(msg["is_suno_team"]):
-            continue
-        if min_words > 1 and len((msg["content"] or "").split()) < min_words:
-            continue
-
+    for sim, uid in scored:
+        msg = dict(filtered_map[uid])
+        msg["similarity_score"] = round(sim, 4)
         messages.append(msg)
         if len(messages) >= n_results:
             break
