@@ -138,8 +138,6 @@ function enc(s) { return encodeURIComponent(s); }
 
 // -- PAGE NAVIGATION -------------------------------------------------------
 function navigateTo(page) {
-  // Demo mode: settings page is hidden — silently redirect to search
-  if (APP_MODE === 'demo' && page === 'settings') page = 'search';
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('nav-active', b.dataset.page === page));
   document.getElementById('page-search').classList.toggle('hidden', page !== 'search');
   document.getElementById('page-settings').classList.toggle('hidden', page !== 'settings');
@@ -156,10 +154,7 @@ document.querySelectorAll('.nav-tab').forEach(btn => {
   btn.addEventListener('click', () => navigateTo(btn.dataset.page));
 });
 
-// Demo mode: hide Settings nav tab immediately
-if (APP_MODE === 'demo') {
-  document.getElementById('nav-settings')?.classList.add('hidden');
-}
+// Demo mode: Settings nav tab stays visible but only shows the API key section
 
 // -- STATS -----------------------------------------------------------------
 async function loadStats() {
@@ -834,12 +829,25 @@ document.getElementById('settings-logout-btn').addEventListener('click', async (
 });
 
 async function loadSettingsPage() {
-  applyAdminUI();
-  loadModelOptions();
-  renderUploadsTable();
-  renderLabelManager();
-  if (currentUserIsAdmin) renderSunoTeamTable();
-  document.getElementById('goto-coding-btn')?.addEventListener('click', () => navigateTo('coding'));
+  // Demo mode: show only the OpenAI API key section, hide everything else
+  const demoOnlySections = [
+    'section-account', 'section-embed-model', 'section-upload',
+    'section-uploads', 'section-suno-team',
+  ];
+  demoOnlySections.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', APP_MODE === 'demo');
+  });
+
+  if (APP_MODE !== 'demo') {
+    applyAdminUI();
+    loadModelOptions();
+    renderUploadsTable();
+    renderLabelManager();
+    if (currentUserIsAdmin) renderSunoTeamTable();
+    document.getElementById('goto-coding-btn')?.addEventListener('click', () => navigateTo('coding'));
+  }
+
   try {
     const d = await apiFetch('/api/stats');
     updateSettingsKeyStatus(d.api_key_set);
