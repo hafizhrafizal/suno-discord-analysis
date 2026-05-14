@@ -53,6 +53,53 @@ router = APIRouter()
 # Minimum candidates to guarantee after threshold filtering (avoids degenerate clustering).
 _MIN_CANDIDATES = 15
 
+# Skip O(n²) embedding-based dedup above this size — clustering handles redundancy instead.
+_DEDUP_MAX = 500
+
+
+def _human_error(exc: Exception) -> str:
+    """Convert common API / infra exceptions into plain-English messages."""
+    msg  = str(exc)
+    name = type(exc).__name__
+    low  = msg.lower()
+    if "timeout" in low or name in ("ReadTimeout", "ConnectTimeout", "TimeoutException"):
+        return (
+            "The request timed out. The AI model or vector store took too long to respond. "
+            "Try a narrower date range or smaller dataset, then retry."
+        )
+    if "authentication" in low or "invalid_api_key" in low or "401" in msg:
+        return "Authentication failed — check that your OpenAI API key is correct in Settings."
+    if "rate_limit" in low or "rate limit" in low or "429" in msg:
+        return "OpenAI rate limit reached. Wait a moment, then try again."
+    if "context_length_exceeded" in low or "maximum context" in low or "too many tokens" in low:
+        return (
+            "The conversation is too large for the selected model. "
+            "Use a narrower date range, enable Cluster mode, or choose a model with a larger context window."
+        )
+    if "insufficient_quota" in low or "billing" in low or "quota" in low:
+        return "OpenAI quota exceeded — check your billing status at platform.openai.com."
+    if "model_not_found" in low or "does not exist" in low:
+        return f"Model not found: {msg}. Select a different model in Settings."
+    if "connection" in low or "connect" in low:
+        return f"Connection error: could not reach the AI service. Check your network and retry."
+    return f"{name}: {msg}"
+
+
+def _sse_error(exc: Exception):
+    """Return a StreamingResponse that emits a single error SSE event then [DONE]."""
+    import json as _json
+    import asyncio as _aio
+
+    async def _err():
+        yield f"data: {_json.dumps({'error': _human_error(exc)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        _err(),
+        media_type="text/event-stream",
+        headers={"X-Accel-Buffering": "no"},
+    )
+
 
 def _cosine_sim_matrix(embs: np.ndarray) -> np.ndarray:
     """Return the pairwise cosine-similarity matrix for a 2-D embedding array."""
@@ -73,6 +120,9 @@ def _deduplicate_candidates(
     the word-count filter.
     Keeps the first occurrence in ranking order.
 
+    For batches > _DEDUP_MAX the O(n²) sim matrix is skipped — clustering
+    handles redundancy for large inputs anyway.
+
     Returns (deduped_rows, deduped_embs, n_removed).
     """
     dropped: set = set()
@@ -81,6 +131,16 @@ def _deduplicate_candidates(
     for i, row in enumerate(rows):
         if len((row.get("content") or "").strip()) < 10:
             dropped.add(i)
+
+    # Skip expensive pairwise dedup for large batches
+    if len(rows) > _DEDUP_MAX:
+        keep = [i for i in range(len(rows)) if i not in dropped]
+        if not keep:
+            return [], embs[:0], len(rows)
+        n_removed = len(rows) - len(keep)
+        kept_rows = [rows[i] for i in keep]
+        kept_embs = embs[np.array(keep, dtype=int)]
+        return kept_rows, kept_embs, n_removed
 
     sim = _cosine_sim_matrix(embs)
     keep: list = []
@@ -392,8 +452,8 @@ async def chat_endpoint(request: Request):
                 if delta:
                     yield f"data: {json.dumps({'content': delta})}\n\n"
         except Exception as exc:
-            logger.error("chat generate() error: %s", exc)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            logger.error("chat generate() error: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'error': _human_error(exc)})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -407,6 +467,16 @@ async def chat_endpoint(request: Request):
 
 @router.post("/api/summarize")
 async def summarize_endpoint(request: Request):
+    try:
+        return await _summarize_endpoint_inner(request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("summarize: fatal pre-stream error: %s", exc, exc_info=True)
+        return _sse_error(exc)
+
+
+async def _summarize_endpoint_inner(request: Request):
     body       = await request.json()
     username   = (body.get("username") or "").strip()
     date_from  = (body.get("date_from") or "").strip()
@@ -753,8 +823,8 @@ async def summarize_endpoint(request: Request):
                 if delta:
                     yield f"data: {json.dumps({'content': delta})}\n\n"
         except Exception as exc:
-            logger.error("summarize generate() error: %s", exc)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            logger.error("summarize generate() error: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'error': _human_error(exc)})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -769,6 +839,16 @@ async def summarize_endpoint(request: Request):
 
 @router.post("/api/summarize/followup")
 async def summarize_followup_endpoint(request: Request):
+    try:
+        return await _summarize_followup_endpoint_inner(request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("summarize/followup: fatal pre-stream error: %s", exc, exc_info=True)
+        return _sse_error(exc)
+
+
+async def _summarize_followup_endpoint_inner(request: Request):
     """
     Follow-up Q&A within a Hybrid Summary session.
 
@@ -1050,8 +1130,8 @@ async def summarize_followup_endpoint(request: Request):
                 if delta:
                     yield f"data: {json.dumps({'content': delta})}\n\n"
         except Exception as exc:
-            logger.error("summarize/followup generate() error: %s", exc)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            logger.error("summarize/followup generate() error: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'error': _human_error(exc)})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -1065,6 +1145,16 @@ async def summarize_followup_endpoint(request: Request):
 
 @router.post("/api/user-profile")
 async def user_profile_endpoint(request: Request):
+    try:
+        return await _user_profile_endpoint_inner(request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("user-profile: fatal pre-stream error: %s", exc, exc_info=True)
+        return _sse_error(exc)
+
+
+async def _user_profile_endpoint_inner(request: Request):
     """
     Analyse a specific user's messages to identify persona, attitude evolution,
     entry/exit dates, and other customisable attributes.
@@ -1399,8 +1489,8 @@ async def user_profile_endpoint(request: Request):
                 if delta:
                     yield f"data: {json.dumps({'content': delta})}\n\n"
         except Exception as exc:
-            logger.error("user-profile generate() error: %s", exc)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            logger.error("user-profile generate() error: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'error': _human_error(exc)})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -1414,6 +1504,16 @@ async def user_profile_endpoint(request: Request):
 
 @router.post("/api/user-profile/followup")
 async def user_profile_followup_endpoint(request: Request):
+    try:
+        return await _user_profile_followup_endpoint_inner(request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("user-profile/followup: fatal pre-stream error: %s", exc, exc_info=True)
+        return _sse_error(exc)
+
+
+async def _user_profile_followup_endpoint_inner(request: Request):
     """
     Follow-up Q&A within a User Profile session.
 
@@ -1631,8 +1731,8 @@ async def user_profile_followup_endpoint(request: Request):
                 if delta:
                     yield f"data: {json.dumps({'content': delta})}\n\n"
         except Exception as exc:
-            logger.error("user-profile/followup generate() error: %s", exc)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            logger.error("user-profile/followup generate() error: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'error': _human_error(exc)})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -1646,6 +1746,16 @@ async def user_profile_followup_endpoint(request: Request):
 
 @router.post("/api/summarize-results")
 async def summarize_results_endpoint(request: Request):
+    try:
+        return await _summarize_results_endpoint_inner(request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("summarize-results: fatal pre-stream error: %s", exc, exc_info=True)
+        return _sse_error(exc)
+
+
+async def _summarize_results_endpoint_inner(request: Request):
     """
     Summarise messages passed directly from the browser's currentResults array.
     No DB query — the client sends the messages it already has.
@@ -1844,8 +1954,8 @@ async def summarize_results_endpoint(request: Request):
                 if delta:
                     yield f"data: {json.dumps({'content': delta})}\n\n"
         except Exception as exc:
-            logger.error("summarize-results generate() error: %s", exc)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            logger.error("summarize-results generate() error: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'error': _human_error(exc)})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -1859,6 +1969,16 @@ async def summarize_results_endpoint(request: Request):
 
 @router.post("/api/summarize-results/followup")
 async def summarize_results_followup_endpoint(request: Request):
+    try:
+        return await _summarize_results_followup_endpoint_inner(request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("summarize-results/followup: fatal pre-stream error: %s", exc, exc_info=True)
+        return _sse_error(exc)
+
+
+async def _summarize_results_followup_endpoint_inner(request: Request):
     """
     Stateless follow-up Q&A for the Summarize Results feature.
     All context is in history — no DB or vector retrieval needed.
@@ -1920,8 +2040,8 @@ async def summarize_results_followup_endpoint(request: Request):
                 if delta:
                     yield f"data: {json.dumps({'content': delta})}\n\n"
         except Exception as exc:
-            logger.error("summarize-results/followup generate() error: %s", exc)
-            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            logger.error("summarize-results/followup generate() error: %s", exc, exc_info=True)
+            yield f"data: {json.dumps({'error': _human_error(exc)})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
