@@ -3244,16 +3244,16 @@ let _cmOpenExcBmId    = null;       // bookmark_id open in excerpt panel
 let _cmOpenExcSrcId   = null;       // source code id open in excerpt panel
 let _cmOpenExcHlId    = null;       // highlight_id when a span-coding row is open (null for whole-bookmark)
 let _cmOpenExcHlText  = null;       // highlighted_text for the span-coding row
-let _cmFilterDateFrom = '';         // YYYY-MM
-let _cmFilterDateTo   = '';         // YYYY-MM
+let _cmFilterDateFrom = '';         // YYYY-MM-DD
+let _cmFilterDateTo   = '';         // YYYY-MM-DD
 let _cmFilterSuno     = 'all';      // 'all' | 'only' | 'exclude'
 
 function _cmFilterExcerpts(rows) {
   return rows.filter(r => {
     if (_cmFilterDateFrom || _cmFilterDateTo) {
-      const m = (r.date || '').substring(0, 7);
-      if (_cmFilterDateFrom && m < _cmFilterDateFrom) return false;
-      if (_cmFilterDateTo   && m > _cmFilterDateTo)   return false;
+      const d = (r.date || '').substring(0, 10);
+      if (_cmFilterDateFrom && d < _cmFilterDateFrom) return false;
+      if (_cmFilterDateTo   && d > _cmFilterDateTo)   return false;
     }
     if (_cmFilterSuno === 'only'    && !truthy(r.is_suno_team)) return false;
     if (_cmFilterSuno === 'exclude' &&  truthy(r.is_suno_team)) return false;
@@ -4443,9 +4443,9 @@ function _cmRenderCodingTable() {
     if (_cmFilterSuno === 'only'    && !truthy(bm.is_suno_team)) return;
     if (_cmFilterSuno === 'exclude' &&  truthy(bm.is_suno_team)) return;
     if (_cmFilterDateFrom || _cmFilterDateTo) {
-      const m = (bm.date || '').substring(0, 7);
-      if (_cmFilterDateFrom && m < _cmFilterDateFrom) return;
-      if (_cmFilterDateTo   && m > _cmFilterDateTo)   return;
+      const d = (bm.date || '').substring(0, 10);
+      if (_cmFilterDateFrom && d < _cmFilterDateFrom) return;
+      if (_cmFilterDateTo   && d > _cmFilterDateTo)   return;
     }
     (bm.codes || []).forEach(code => {
       (excByCode[code.id] = excByCode[code.id] || []).push({
