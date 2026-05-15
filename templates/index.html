@@ -379,6 +379,21 @@
     </div>
   </div>
 
+  <!-- ── Context Viewer Modal (Coding Manager) ── -->
+  <div id="cm-ctx-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+       role="dialog" aria-modal="true">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col" style="max-height:88vh">
+      <div class="flex items-start justify-between p-4 border-b shrink-0">
+        <div>
+          <h2 class="text-sm font-semibold text-gray-800">Conversation Context</h2>
+          <p id="cm-ctx-modal-meta" class="text-xs text-gray-400 mt-0.5"></p>
+        </div>
+        <button id="cm-ctx-modal-close" class="text-gray-400 hover:text-gray-600 text-2xl leading-none ml-4">&times;</button>
+      </div>
+      <div id="cm-ctx-modal-body" class="overflow-y-auto p-4 space-y-2 flex-1"></div>
+    </div>
+  </div>
+
   <main id="main-content" class="max-w-5xl mx-auto px-3 sm:px-4 py-4 sm:py-5">
 
     <!-- -- SEARCH PAGE --------------------------------------------------- -->
@@ -1859,14 +1874,11 @@
             <div id="cm-exc-panel-text"
                  class="bg-gray-50 rounded-lg p-2.5 text-xs italic text-gray-600 max-h-28 overflow-y-auto leading-relaxed border-l-4"></div>
             <p id="cm-exc-panel-source" class="text-[11px] text-gray-400 -mt-1"></p>
-            <!-- Conversation context toggle -->
-            <div id="cm-exc-ctx-area" class="hidden">
-              <button id="cm-exc-ctx-btn" data-msg-id="" data-open="false"
-                      class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                Show context ↕
-              </button>
-              <div id="cm-exc-ctx-msgs" class="hidden mt-2 max-h-64 overflow-y-auto rounded-lg border border-gray-100"></div>
-            </div>
+            <!-- Conversation context popup trigger -->
+            <button id="cm-exc-ctx-btn" data-msg-id="" data-source=""
+                    class="hidden text-xs text-indigo-600 hover:text-indigo-800 font-medium underline underline-offset-2">
+              View conversation context ↗
+            </button>
             <!-- Current codes -->
             <div>
               <p class="text-xs text-gray-600 mb-1.5 font-medium">Open Codings</p>

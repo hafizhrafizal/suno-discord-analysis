@@ -3920,19 +3920,19 @@ function _cmRenderExcerptRow(r, codeId, accent) {
   }
   const snippet = (r.content || '').substring(0, 180);
   const more    = (r.content || '').length > 180 ? '…' : '';
-  return `<div class="border-l-2 pl-2 py-1 cursor-grab cm-excerpt-item select-none group rounded-r-md transition-colors hover:bg-indigo-50/60"
-               style="border-color:${accent}"
+  return `<div class="border-l-2 pl-2 py-1 cm-excerpt-item group rounded-r-md transition-colors hover:bg-indigo-50/60"
+               style="border-color:${accent};user-select:none;-webkit-user-select:none;-webkit-user-drag:element;cursor:grab"
                draggable="true"
                data-bookmark-id="${r.bookmark_id}"
                data-source-code-id="${codeId}"
                title="Click to view · Drag to move · Ctrl+drag to copy">
-    <div class="flex items-start gap-1.5">
+    <div class="flex items-start gap-1.5" style="pointer-events:none">
       <div class="flex-1 min-w-0">
         <p class="text-xs italic text-gray-700 leading-relaxed">"${esc(snippet)}${more}"</p>
         <p class="text-[10px] text-gray-400 mt-0.5">${meta}</p>
         ${r.note ? `<p class="text-[10px] text-indigo-600">${esc(r.note)}</p>` : ''}
       </div>
-      <span class="opacity-0 group-hover:opacity-40 transition-opacity text-gray-400 shrink-0 mt-0.5 text-[11px] leading-none select-none pointer-events-none">⠿</span>
+      <span class="opacity-0 group-hover:opacity-40 text-gray-400 shrink-0 mt-0.5 text-[11px] leading-none">⠿</span>
     </div>
   </div>`;
 }
@@ -4060,12 +4060,8 @@ function _cmFlushDetailPanel() {
   document.getElementById('cm-edit-msg').classList.add('hidden');
   document.getElementById('cm-cat-edit-msg').classList.add('hidden');
   document.getElementById('cm-exc-panel-suggestions').classList.add('hidden');
-  const _ctxArea = document.getElementById('cm-exc-ctx-area');
-  const _ctxMsgs = document.getElementById('cm-exc-ctx-msgs');
-  const _ctxBtn  = document.getElementById('cm-exc-ctx-btn');
-  if (_ctxArea) _ctxArea.classList.add('hidden');
-  if (_ctxMsgs) { _ctxMsgs.classList.add('hidden'); _ctxMsgs.innerHTML = ''; }
-  if (_ctxBtn)  { _ctxBtn.dataset.open = 'false'; _ctxBtn.textContent = 'Show context ↕'; _ctxBtn.disabled = false; }
+  const _ctxBtn = document.getElementById('cm-exc-ctx-btn');
+  if (_ctxBtn) { _ctxBtn.classList.add('hidden'); _ctxBtn.dataset.msgId = ''; }
 }
 
 function _cmCloseDetail() {
@@ -4102,13 +4098,13 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
     [bm.username, bm.date ? bm.date.substring(0, 10) : null].filter(Boolean).join(' · ');
   textEl.style.borderLeftColor = srcCode ? srcCode.color : '#0d3e7f';
 
-  // Wire up conversation context toggle
-  const _ctxArea = document.getElementById('cm-exc-ctx-area');
-  const _ctxBtn  = document.getElementById('cm-exc-ctx-btn');
-  const _ctxMsgs = document.getElementById('cm-exc-ctx-msgs');
-  if (_ctxArea) _ctxArea.classList.remove('hidden');
-  if (_ctxBtn)  { _ctxBtn.dataset.msgId = bm.id || ''; _ctxBtn.dataset.open = 'false'; _ctxBtn.textContent = 'Show context ↕'; _ctxBtn.disabled = false; }
-  if (_ctxMsgs) { _ctxMsgs.classList.add('hidden'); _ctxMsgs.innerHTML = ''; }
+  // Show conversation context button
+  const _ctxBtn = document.getElementById('cm-exc-ctx-btn');
+  if (_ctxBtn) {
+    _ctxBtn.dataset.msgId  = bm.id || '';
+    _ctxBtn.dataset.source = [bm.username, bm.date ? bm.date.substring(0, 10) : null].filter(Boolean).join(' · ');
+    _ctxBtn.classList.remove('hidden');
+  }
 
   if (hlId !== null) {
     // ── Span-level coding view ──────────────────────────────────────────────
@@ -4657,36 +4653,37 @@ document.getElementById('cm-detail-close').addEventListener('click', () => {
   _cmRenderTree();
 });
 
-// ── Excerpt panel: conversation context toggle ────────────────────────────────
+// ── Excerpt panel: conversation context popup ────────────────────────────────
 
 document.getElementById('cm-exc-ctx-btn').addEventListener('click', async function () {
-  const msgId   = parseInt(this.dataset.msgId);
-  const ctxMsgs = document.getElementById('cm-exc-ctx-msgs');
-  if (!msgId || !ctxMsgs) return;
+  const msgId  = parseInt(this.dataset.msgId);
+  const source = this.dataset.source || '';
+  if (!msgId) return;
 
-  if (this.dataset.open === 'true') {
-    ctxMsgs.classList.add('hidden');
-    this.dataset.open = 'false';
-    this.textContent  = 'Show context ↕';
-    return;
-  }
-
-  this.textContent = 'Loading...';
+  const modal    = document.getElementById('cm-ctx-modal');
+  const metaEl   = document.getElementById('cm-ctx-modal-meta');
+  const bodyEl   = document.getElementById('cm-ctx-modal-body');
+  const origText = this.textContent;
+  this.textContent = 'Loading…';
   this.disabled    = true;
   try {
-    const msgs = await apiFetch(`/api/context/${msgId}?before=3&after=3`);
-    ctxMsgs.innerHTML = `<div class="bg-slate-50 rounded-lg p-2.5 space-y-2">
-      <p class="text-[10px] text-gray-400 font-medium mb-1">${msgs.length} messages (3 before · 3 after)</p>
-      ${msgs.map(m => ctxMsg(m)).join('')}
-    </div>`;
-    ctxMsgs.classList.remove('hidden');
-    this.dataset.open = 'true';
-    this.textContent  = 'Hide context ↕';
-  } catch (_) {
-    this.textContent = 'Show context ↕';
+    const msgs = await apiFetch(`/api/context/${msgId}?before=10&after=10`);
+    metaEl.textContent = source ? `${source} · ${msgs.length} messages` : `${msgs.length} messages`;
+    bodyEl.innerHTML   = msgs.map(m => ctxMsg(m)).join('');
+    modal.classList.remove('hidden');
+  } catch (err) {
+    showErrorPopup('Failed to load context: ' + err.message);
   } finally {
-    this.disabled = false;
+    this.textContent = origText;
+    this.disabled    = false;
   }
+});
+
+document.getElementById('cm-ctx-modal-close').addEventListener('click', () => {
+  document.getElementById('cm-ctx-modal').classList.add('hidden');
+});
+document.getElementById('cm-ctx-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden');
 });
 
 // ── New Code panel ────────────────────────────────────────────────────────────
