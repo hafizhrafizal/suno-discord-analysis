@@ -3354,9 +3354,12 @@ document.getElementById('bookmarks-container').addEventListener('keydown', e => 
   }
   if (e.key !== 'Enter') return;
 
+  if (sugItem) {
+    e.preventDefault();
+    sugItem.click();
+    return;
+  }
   if (input) {
-    const firstSug = input.closest('.relative')?.querySelector('.bm-code-suggest-item');
-    if (firstSug) { e.preventDefault(); firstSug.click(); return; }
     e.preventDefault();
     const cls = input.classList.contains('bm-new-code-input') ? 'bm-new-code-create' : 'bm-hl-new-code-create';
     document.querySelector(`.${cls}[data-bm-id="${input.dataset.bmId}"]`)?.click();
