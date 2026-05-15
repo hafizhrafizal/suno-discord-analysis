@@ -2704,9 +2704,9 @@ function _filterBookmarks(bms) {
     if (sunoMode === 'only'    && !truthy(bm.is_suno_team)) return false;
     if (sunoMode === 'exclude' &&  truthy(bm.is_suno_team)) return false;
     if (monthFrom || monthTo) {
-      const bmMonth = (bm.date || '').slice(0, 7);
-      if (monthFrom && bmMonth < monthFrom) return false;
-      if (monthTo   && bmMonth > monthTo)   return false;
+      const bmDate = (bm.date || '').slice(0, 10);
+      if (monthFrom && bmDate < monthFrom) return false;
+      if (monthTo   && bmDate > monthTo)   return false;
     }
     if (textTerms.length > 0) {
       const hay = ((bm.username || '') + ' ' + (bm.content || '') + ' ' + (bm.note || '')).toLowerCase();
@@ -3474,6 +3474,7 @@ function _cmRenderCatNode(node, depth, visibleIds) {
     <div class="cm-cat-header flex items-center gap-2 py-1.5 rounded-lg cursor-grab group transition-colors ${headerBg}"
          style="padding-left:${pl}px;padding-right:8px"
          data-cat-id="${node.id}"
+         data-depth="${depth}"
          draggable="true">
       <span class="w-3 text-[9px] text-gray-400 shrink-0 cm-tree-toggle" data-cat-id="${node.id}">${toggleIcon}</span>
       <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${node.color}"></span>
@@ -3580,6 +3581,7 @@ function _cmRenderCodeCard(code, depth) {
     <div class="cm-code-outer" style="margin-left:${pl}px" data-outer-code-id="${code.id}">
       <div class="cm-code-card border rounded-xl p-2.5 flex items-start gap-2 cursor-pointer transition-all ${selCls}"
            data-code-id="${code.id}"
+           data-depth="${depth}"
            draggable="${_cmMergeMode ? 'false' : 'true'}">
         ${_cmMergeMode ? `<input type="checkbox" class="mt-0.5 accent-amber-500 shrink-0 cm-select-cb" ${selected ? 'checked' : ''} data-code-id="${code.id}" />` : ''}
         <span class="w-3 h-3 rounded-full shrink-0 mt-0.5" style="background:${code.color}"></span>
@@ -4445,6 +4447,119 @@ document.getElementById('cm-filter-clear').addEventListener('click', () => {
   document.getElementById('cm-filter-clear').classList.add('hidden');
   _cmRenderTree();
   _cmRenderCodingTable();
+});
+
+// ── Coding Manager: right-click "Add higher-level coding" ────────────────────
+
+let _cmCtxTargetType  = null; // 'code' | 'cat'
+let _cmCtxTargetId    = null; // int
+let _cmCtxNewParentId = null; // parent_id for the new category (null = root)
+
+function _cmOrderLabelFull(n) {
+  // n = 2 → "2nd-order", 3 → "3rd-order", etc.
+  const s = n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
+  return `${s}-order`;
+}
+
+function _cmHideCtxMenu() {
+  const menu = document.getElementById('cm-ctx-menu');
+  menu.classList.add('hidden');
+  document.getElementById('cm-ctx-add-form').classList.add('hidden');
+  document.getElementById('cm-ctx-add-err').classList.add('hidden');
+  document.getElementById('cm-ctx-add-name').value = '';
+  _cmCtxTargetType = null;
+  _cmCtxTargetId   = null;
+}
+
+document.getElementById('cm-code-list').addEventListener('contextmenu', e => {
+  e.preventDefault();
+
+  const card   = e.target.closest('.cm-code-card[data-code-id]');
+  const header = e.target.closest('.cm-cat-header[data-cat-id]');
+  if (!card && !header) return;
+
+  const menu = document.getElementById('cm-ctx-menu');
+  const lbl  = document.getElementById('cm-ctx-add-label');
+
+  if (card) {
+    _cmCtxTargetType  = 'code';
+    _cmCtxTargetId    = parseInt(card.dataset.codeId);
+    _cmCtxNewParentId = null; // new category becomes a root; code re-assigned to it
+    lbl.textContent   = 'Add 2nd-order coding above this code…';
+  } else {
+    _cmCtxTargetType = 'cat';
+    _cmCtxTargetId   = parseInt(header.dataset.catId);
+    const depth      = parseInt(header.dataset.depth) || 0;
+    const newOrder   = depth + 3; // depth 0 = 2nd-order → new parent = 3rd-order
+    // New category inherits the existing category's current parent (insert in between)
+    const existing   = _cmCategories.find(c => c.id === _cmCtxTargetId);
+    _cmCtxNewParentId = existing ? existing.parent_id : null;
+    lbl.textContent  = `Add ${_cmOrderLabelFull(newOrder)} coding above this category…`;
+  }
+
+  // Position and show
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  menu.classList.remove('hidden');
+  document.getElementById('cm-ctx-add-form').classList.add('hidden');
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  menu.style.left = Math.min(e.clientX, vw - mw - 8) + 'px';
+  menu.style.top  = Math.min(e.clientY, vh - mh - 8) + 'px';
+});
+
+document.getElementById('cm-ctx-add-higher').addEventListener('click', () => {
+  document.getElementById('cm-ctx-add-form').classList.remove('hidden');
+  document.getElementById('cm-ctx-add-name').focus();
+});
+
+document.getElementById('cm-ctx-add-cancel').addEventListener('click', _cmHideCtxMenu);
+
+document.getElementById('cm-ctx-add-confirm').addEventListener('click', async () => {
+  const name  = document.getElementById('cm-ctx-add-name').value.trim();
+  const color = document.getElementById('cm-ctx-add-color').value;
+  const errEl = document.getElementById('cm-ctx-add-err');
+  errEl.classList.add('hidden');
+  if (!name) { errEl.textContent = 'Name is required.'; errEl.classList.remove('hidden'); return; }
+  if (!_cmCtxTargetId) return;
+
+  try {
+    const newCat = await apiFetch('/api/code-categories', {
+      method: 'POST',
+      body: JSON.stringify({ name, color, parent_id: _cmCtxNewParentId }),
+    });
+
+    if (_cmCtxTargetType === 'code') {
+      await apiFetch(`/api/codes/${_cmCtxTargetId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ category_id: newCat.id }),
+      });
+    } else {
+      const existing = _cmCategories.find(c => c.id === _cmCtxTargetId);
+      await apiFetch(`/api/code-categories/${_cmCtxTargetId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name: existing.name, color: existing.color, parent_id: newCat.id }),
+      });
+    }
+
+    _cmHideCtxMenu();
+    await _cmRefresh();
+  } catch (err) {
+    errEl.textContent = err.message || 'Failed to create category.';
+    errEl.classList.remove('hidden');
+  }
+});
+
+// Enter key in name input triggers confirm
+document.getElementById('cm-ctx-add-name').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('cm-ctx-add-confirm').click();
+  if (e.key === 'Escape') _cmHideCtxMenu();
+});
+
+// Click outside the menu dismisses it
+document.addEventListener('click', e => {
+  const menu = document.getElementById('cm-ctx-menu');
+  if (!menu.classList.contains('hidden') && !menu.contains(e.target)) _cmHideCtxMenu();
 });
 
 // ── Coding Table: load ────────────────────────────────────────────────────────

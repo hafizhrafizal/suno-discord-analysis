@@ -1563,12 +1563,12 @@
           <span class="text-xs text-gray-700 font-semibold shrink-0">Period:</span>
           <label for="bm-month-from" class="flex items-center gap-1.5 text-sm text-gray-700">
             <span class="text-xs shrink-0">From</span>
-            <input id="bm-month-from" type="month"
+            <input id="bm-month-from" type="date"
                    class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900" />
           </label>
           <label for="bm-month-to" class="flex items-center gap-1.5 text-sm text-gray-700">
             <span class="text-xs shrink-0">To</span>
-            <input id="bm-month-to" type="month"
+            <input id="bm-month-to" type="date"
                    class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900" />
           </label>
           <button id="bm-month-clear"
@@ -2050,5 +2050,33 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="/static/app.js"></script>
+
+  <!-- Coding Manager right-click context menu -->
+  <div id="cm-ctx-menu" class="hidden fixed z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-52 text-sm select-none">
+    <div id="cm-ctx-add-higher" class="px-4 py-2 hover:bg-indigo-50 cursor-pointer text-gray-700 flex items-center gap-2">
+      <span class="text-indigo-500">＋</span>
+      <span id="cm-ctx-add-label">Add higher-level coding…</span>
+    </div>
+    <div id="cm-ctx-add-form" class="hidden px-3 pb-3 pt-2 border-t border-gray-100 mt-1 space-y-2">
+      <input id="cm-ctx-add-name" type="text" placeholder="New category name"
+             class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      <div class="flex items-center gap-2">
+        <label class="text-xs text-gray-500 shrink-0">Color</label>
+        <input id="cm-ctx-add-color" type="color" value="#94a3b8"
+               class="w-7 h-6 rounded cursor-pointer border border-gray-300 p-0" />
+      </div>
+      <div class="flex gap-2">
+        <button id="cm-ctx-add-confirm"
+                class="flex-1 px-2 py-1 text-xs bg-indigo-700 text-white rounded-lg hover:bg-indigo-800 transition-colors">
+          Create
+        </button>
+        <button id="cm-ctx-add-cancel"
+                class="px-2 py-1 text-xs border border-gray-300 text-gray-500 rounded-lg hover:bg-gray-50 transition-colors">
+          Cancel
+        </button>
+      </div>
+      <p id="cm-ctx-add-err" class="hidden text-xs text-red-500"></p>
+    </div>
+  </div>
 </body>
 </html>
