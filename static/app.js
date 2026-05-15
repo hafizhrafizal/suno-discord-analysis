@@ -2497,6 +2497,9 @@ let _cachedBookmarks  = [];
 let _bmSelectionState      = null;  // {bmId, text} while a highlight code picker is open
 let _bmSelPopover          = null;  // floating DOM element for the selection popover
 let _bmAccumulatedSegments = null;  // {bmId, segments: string[]} for Ctrl+multi-select
+let _bmPendingHlState      = null;  // {bmId, texts: string[]} active pending highlight in excerpt
+
+const _BM_SEG_SEP = ' ... '; // separator used to join/split multi-segment highlight texts
 
 async function loadBookmarksPage() {
   const container = document.getElementById('bookmarks-container');
@@ -2597,56 +2600,59 @@ function _renderBmCodePanel(bookmarkId) {
 // ── Annotate excerpt text with colored highlight spans ────────────────────────
 // Handles overlapping spans: splits content at every span boundary, then renders
 // each segment with all codes that cover it (stacked bottom-border colors).
-function _annotateExcerpt(content, highlights) {
-  if (!highlights?.length) return esc(content);
+// pendingTexts: text strings actively being coded — shown with dashed indigo underline.
+function _annotateExcerpt(content, highlights, pendingTexts = []) {
   const lower = content.toLowerCase();
 
-  // Map highlights to character ranges
   const rawSpans = [];
-  for (const h of highlights) {
+  for (const h of (highlights || [])) {
     const needle = (h.highlighted_text || '').toLowerCase();
     if (!needle) continue;
     const idx = lower.indexOf(needle);
     if (idx === -1) continue;
-    rawSpans.push({
-      start: idx,
-      end:   idx + needle.length,
-      color: h.code_color || '#6366f1',
-      name:  h.code_name  || '?',
-    });
+    rawSpans.push({ start: idx, end: idx + needle.length,
+                    color: h.code_color || '#6366f1', name: h.code_name || '?', pending: false });
+  }
+  for (const pt of pendingTexts) {
+    const needle = (pt || '').toLowerCase();
+    if (!needle) continue;
+    const idx = lower.indexOf(needle);
+    if (idx === -1) continue;
+    rawSpans.push({ start: idx, end: idx + needle.length,
+                    color: '#6366f1', name: 'Coding…', pending: true });
   }
   if (!rawSpans.length) return esc(content);
 
-  // Collect every position where a span starts or ends
   const pts = new Set([0, content.length]);
   rawSpans.forEach(s => { pts.add(s.start); pts.add(s.end); });
   const sorted = [...pts].sort((a, b) => a - b);
 
-  // Render each segment between consecutive change-points
   let out = '';
   for (let i = 0; i < sorted.length - 1; i++) {
     const segStart = sorted[i];
     const segEnd   = sorted[i + 1];
     if (segStart === segEnd) continue;
-    const text   = content.slice(segStart, segEnd);
-    // All spans that fully cover this segment
-    const active = rawSpans.filter(s => s.start <= segStart && s.end >= segEnd);
+    const text    = content.slice(segStart, segEnd);
+    const active  = rawSpans.filter(s => s.start <= segStart && s.end >= segEnd);
+    if (!active.length) { out += esc(text); continue; }
 
-    if (!active.length) {
-      out += esc(text);
-      continue;
-    }
+    const coded   = active.filter(s => !s.pending);
+    const pending = active.filter(s =>  s.pending);
 
-    // First span → background + primary bottom border
-    // Additional spans → stacked box-shadow borders below the primary
-    const [first, ...rest] = active;
-    let style = `background:${first.color}28;border-bottom:2px solid ${first.color}`;
-    if (rest.length) {
-      const shadows = rest.map((s, k) => `0 ${(k + 2) * 2 + 1}px 0 ${s.color}`).join(',');
-      style += `;box-shadow:${shadows};padding-bottom:${rest.length * 3}px`;
+    if (!coded.length) {
+      // Only a pending span — dashed indigo underline + tinted background
+      out += `<mark class="bm-hl-inline bm-hl-pending rounded-sm cursor-default" style="background:#e0e7ff;border-bottom:2px dashed #6366f1" title="Coding…">${esc(text)}</mark>`;
+    } else {
+      const [first, ...rest] = coded;
+      let style = `background:${first.color}28;border-bottom:2px solid ${first.color}`;
+      if (rest.length) {
+        const shadows = rest.map((s, k) => `0 ${(k + 2) * 2 + 1}px 0 ${s.color}`).join(',');
+        style += `;box-shadow:${shadows};padding-bottom:${rest.length * 3}px`;
+      }
+      if (pending.length) style += `;outline:2px dashed #6366f1;outline-offset:1px`;
+      const title = [...coded.map(s => s.name), ...(pending.length ? ['(Coding…)'] : [])].join(' + ');
+      out += `<mark class="bm-hl-inline rounded-sm cursor-default" style="${style}" title="${esc(title)}">${esc(text)}</mark>`;
     }
-    const title = active.map(s => s.name).join(' + ');
-    out += `<mark class="bm-hl-inline rounded-sm cursor-default" style="${style}" title="${esc(title)}">${esc(text)}</mark>`;
   }
   return out;
 }
@@ -2655,21 +2661,31 @@ function _annotateExcerpt(content, highlights) {
 function _bmHlChipsHtml(bm) {
   const hls = bm.highlights || [];
   if (!hls.length) return '';
+
+  // Group by code_id so segments of the same code appear as one chip
+  const byCode = {};
+  for (const h of hls) {
+    if (!byCode[h.code_id]) byCode[h.code_id] = { meta: h, texts: [], ids: [] };
+    byCode[h.code_id].texts.push(h.highlighted_text || '');
+    byCode[h.code_id].ids.push(h.id);
+  }
+
+  const chips = Object.values(byCode).map(({ meta, texts, ids }) => {
+    const tc  = labelTextColor(meta.code_color || '#6366f1');
+    const txt = texts.join(_BM_SEG_SEP); // no character limit
+    return `<div class="flex items-start gap-1.5">
+      <span class="w-0.5 self-stretch rounded-full shrink-0 mt-0.5" style="background:${meta.code_color || '#6366f1'}"></span>
+      <span class="text-xs italic text-gray-600 flex-1 break-words min-w-0">"${esc(txt)}"</span>
+      <span class="text-xs px-1.5 py-0.5 rounded-full font-medium shrink-0 ml-1"
+            style="background:${meta.code_color || '#6366f1'};color:${tc}">${esc(meta.code_name || '?')}</span>
+      <button class="bm-hl-remove text-gray-300 hover:text-red-500 text-base leading-none shrink-0 transition-colors"
+              data-bm-id="${bm.bookmark_id}" data-hl-ids="${ids.join(',')}" title="Remove coding">×</button>
+    </div>`;
+  });
+
   return `<div class="mt-2 pt-2 border-t border-dashed border-gray-100 space-y-1">
     <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Coded spans</p>
-    ${hls.map(h => {
-      const tc  = labelTextColor(h.code_color || '#6366f1');
-      const txt = (h.highlighted_text || '').length > 80
-        ? (h.highlighted_text || '').slice(0, 80) + '…' : (h.highlighted_text || '');
-      return `<div class="flex items-start gap-1.5">
-        <span class="w-0.5 self-stretch rounded-full shrink-0 mt-0.5" style="background:${h.code_color || '#6366f1'}"></span>
-        <span class="text-xs italic text-gray-600 flex-1 break-words min-w-0">"${esc(txt)}"</span>
-        <span class="text-xs px-1.5 py-0.5 rounded-full font-medium shrink-0 ml-1"
-              style="background:${h.code_color || '#6366f1'};color:${tc}">${esc(h.code_name || '?')}</span>
-        <button class="bm-hl-remove text-gray-300 hover:text-red-500 text-base leading-none shrink-0 transition-colors"
-                data-bm-id="${bm.bookmark_id}" data-hl-id="${h.id}" title="Remove coding">×</button>
-      </div>`;
-    }).join('')}
+    ${chips.join('')}
   </div>`;
 }
 
@@ -2679,11 +2695,15 @@ function _renderBmHlPanel(bmId, selectedText) {
   const bm    = _cachedBookmarks.find(b => b.bookmark_id === bmId);
   if (!panel || !bm) return;
   panel.dataset.hlText = selectedText;
+  // Activate the pending highlight in the excerpt so the user can see which text is being coded
+  _bmSetPendingHl(bmId, selectedText);
 
-  const truncated = selectedText.length > 60 ? selectedText.slice(0, 60) + '…' : selectedText;
+  const truncated = selectedText.length > 80 ? selectedText.slice(0, 80) + '…' : selectedText;
+  // Split combined text into individual segments for the "already assigned" check
+  const segments = selectedText.split(_BM_SEG_SEP).map(s => s.trim().toLowerCase()).filter(Boolean);
   const assignedForText = new Set(
     (bm.highlights || [])
-      .filter(h => h.highlighted_text.toLowerCase() === selectedText.toLowerCase())
+      .filter(h => segments.includes(h.highlighted_text.toLowerCase()))
       .map(h => h.code_id)
   );
 
@@ -2963,6 +2983,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
   if (hlClose) {
     const bmId = parseInt(hlClose.dataset.bmId);
     document.getElementById(`bm-hl-panel-${bmId}`)?.classList.add('hidden');
+    _bmClearPendingHl(bmId);
     _bmResetAccumulatedSel();
     return;
   }
@@ -2976,32 +2997,41 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     const panel  = document.getElementById(`bm-hl-panel-${bmId}`);
     if (!bm || !panel) return;
     const selText  = panel.dataset.hlText || '';
-    const existing = (bm.highlights || []).find(
-      h => h.code_id === codeId && h.highlighted_text.toLowerCase() === selText.toLowerCase()
+    // Split combined text into individual segments
+    const segs = selText.split(_BM_SEG_SEP).map(s => s.trim()).filter(Boolean);
+    // Find existing highlights for this code on any of the segments
+    const existingForCode = (bm.highlights || []).filter(
+      h => h.code_id === codeId && segs.some(s => s.toLowerCase() === h.highlighted_text.toLowerCase())
     );
-    if (existing) {
-      await fetch(`/api/bookmarks/${bmId}/highlights/${existing.id}`, { method: 'DELETE' });
-      bm.highlights = (bm.highlights || []).filter(h => h.id !== existing.id);
+    if (existingForCode.length) {
+      // Remove all segments for this code
+      await Promise.all(existingForCode.map(h =>
+        fetch(`/api/bookmarks/${bmId}/highlights/${h.id}`, { method: 'DELETE' })
+      ));
+      const removedIds = new Set(existingForCode.map(h => h.id));
+      bm.highlights = (bm.highlights || []).filter(h => !removedIds.has(h.id));
     } else {
-      const res  = await fetch(`/api/bookmarks/${bmId}/highlights`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code_id: codeId, highlighted_text: selText }),
-      });
-      const data = await res.json();
+      // Add highlight for each segment
       const code = _allCodes.find(c => c.id === codeId);
-      if (code && data.id) {
-        bm.highlights = [...(bm.highlights || []), {
-          id: data.id, code_id: codeId, code_name: code.name,
-          code_color: code.color, highlighted_text: selText,
-        }];
+      for (const seg of segs) {
+        const res  = await fetch(`/api/bookmarks/${bmId}/highlights`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code_id: codeId, highlighted_text: seg }),
+        });
+        const data = await res.json();
+        if (code && data.id && !(bm.highlights || []).some(h => h.id === data.id)) {
+          bm.highlights = [...(bm.highlights || []), {
+            id: data.id, code_id: codeId, code_name: code.name,
+            code_color: code.color, highlighted_text: seg,
+          }];
+        }
       }
     }
     const hlChips   = document.getElementById(`bm-hl-chips-${bmId}`);
     const excerptEl = document.querySelector(`.bm-excerpt-text[data-bm-id="${bmId}"]`);
     if (hlChips)   hlChips.innerHTML   = _bmHlChipsHtml(bm);
-    if (excerptEl) excerptEl.innerHTML = _annotateExcerpt(bm.content, bm.highlights);
-    _renderBmHlPanel(bmId, selText); // panel stays open — user can add more codes
+    _renderBmHlPanel(bmId, selText); // re-renders excerpt with pending highlight + re-renders panel
     return;
   }
 
@@ -3035,23 +3065,25 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
           a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
         renderBmCodeFilterChips();
       }
-      const hlRes  = await fetch(`/api/bookmarks/${bmId}/highlights`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code_id: newCode.id, highlighted_text: selText }),
-      });
-      const hlData = await hlRes.json();
-      if (hlData.id && !(bm.highlights || []).some(h => h.id === hlData.id)) {
-        bm.highlights = [...(bm.highlights || []), {
-          id: hlData.id, code_id: newCode.id, code_name: newCode.name,
-          code_color: newCode.color, highlighted_text: selText,
-        }];
+      // Create one highlight entry per segment
+      const segs = selText.split(_BM_SEG_SEP).map(s => s.trim()).filter(Boolean);
+      for (const seg of segs) {
+        const hlRes  = await fetch(`/api/bookmarks/${bmId}/highlights`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code_id: newCode.id, highlighted_text: seg }),
+        });
+        const hlData = await hlRes.json();
+        if (hlData.id && !(bm.highlights || []).some(h => h.id === hlData.id)) {
+          bm.highlights = [...(bm.highlights || []), {
+            id: hlData.id, code_id: newCode.id, code_name: newCode.name,
+            code_color: newCode.color, highlighted_text: seg,
+          }];
+        }
       }
-      const hlChips   = document.getElementById(`bm-hl-chips-${bmId}`);
-      const excerptEl = document.querySelector(`.bm-excerpt-text[data-bm-id="${bmId}"]`);
-      if (hlChips)   hlChips.innerHTML   = _bmHlChipsHtml(bm);
-      if (excerptEl) excerptEl.innerHTML = _annotateExcerpt(bm.content, bm.highlights);
-      _renderBmHlPanel(bmId, selText); // panel stays open — user can add more codes
+      const hlChips = document.getElementById(`bm-hl-chips-${bmId}`);
+      if (hlChips) hlChips.innerHTML = _bmHlChipsHtml(bm);
+      _renderBmHlPanel(bmId, selText); // re-renders excerpt with pending highlight + re-renders panel
       document.dispatchEvent(new CustomEvent('codebook-updated'));
     } catch (_) {
       hlCreate.disabled = false; hlCreate.textContent = 'Add';
@@ -3059,18 +3091,25 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     return;
   }
 
-  // Remove a coded span (highlight)
+  // Remove a coded span (highlight) — data-hl-ids may be comma-separated for merged chips
   const hlRemove = e.target.closest('.bm-hl-remove');
   if (hlRemove) {
-    const bmId = parseInt(hlRemove.dataset.bmId);
-    const hlId = parseInt(hlRemove.dataset.hlId);
-    const bm   = _cachedBookmarks.find(b => b.bookmark_id === bmId);
-    await fetch(`/api/bookmarks/${bmId}/highlights/${hlId}`, { method: 'DELETE' });
-    if (bm) bm.highlights = (bm.highlights || []).filter(h => h.id !== hlId);
+    const bmId  = parseInt(hlRemove.dataset.bmId);
+    const hlIds = (hlRemove.dataset.hlIds || hlRemove.dataset.hlId || '')
+      .split(',').map(s => parseInt(s.trim())).filter(Boolean);
+    const bm    = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+    await Promise.all(hlIds.map(id =>
+      fetch(`/api/bookmarks/${bmId}/highlights/${id}`, { method: 'DELETE' })
+    ));
+    if (bm) {
+      const removed = new Set(hlIds);
+      bm.highlights = (bm.highlights || []).filter(h => !removed.has(h.id));
+    }
     const hlChips   = document.getElementById(`bm-hl-chips-${bmId}`);
     const excerptEl = document.querySelector(`.bm-excerpt-text[data-bm-id="${bmId}"]`);
     if (hlChips   && bm) hlChips.innerHTML   = _bmHlChipsHtml(bm);
-    if (excerptEl && bm) excerptEl.innerHTML = _annotateExcerpt(bm.content, bm.highlights);
+    const pendingTexts = (_bmPendingHlState?.bmId === bmId) ? _bmPendingHlState.texts : [];
+    if (excerptEl && bm) excerptEl.innerHTML = _annotateExcerpt(bm.content, bm.highlights, pendingTexts);
     return;
   }
 
@@ -3193,7 +3232,7 @@ document.getElementById('bm-filter-text').addEventListener('input', () => {
 // ── Text selection → open coding popover ─────────────────────────────────────
 
 function _bmCombinedText() {
-  return (_bmAccumulatedSegments?.segments || []).join(' … ');
+  return (_bmAccumulatedSegments?.segments || []).join(_BM_SEG_SEP);
 }
 
 function _updateBmSelPopoverBtn() {
@@ -3208,6 +3247,29 @@ function _bmResetAccumulatedSel() {
   _bmSelectionState      = null;
   const lbl = document.querySelector('#bm-sel-code-btn .bm-sel-label');
   if (lbl) lbl.textContent = 'Add open coding';
+}
+
+// Set or update the active-coding pending highlight for a bookmark excerpt.
+function _bmSetPendingHl(bmId, combinedText) {
+  // Clear any previous pending highlight on a different bookmark
+  if (_bmPendingHlState && _bmPendingHlState.bmId !== bmId) {
+    const prevBm = _cachedBookmarks.find(b => b.bookmark_id === _bmPendingHlState.bmId);
+    const prevEl = document.querySelector(`.bm-excerpt-text[data-bm-id="${_bmPendingHlState.bmId}"]`);
+    if (prevBm && prevEl) prevEl.innerHTML = _annotateExcerpt(prevBm.content, prevBm.highlights);
+  }
+  const texts = (combinedText || '').split(_BM_SEG_SEP).map(s => s.trim()).filter(Boolean);
+  _bmPendingHlState = texts.length ? { bmId, texts } : null;
+  const bm = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+  const el = document.querySelector(`.bm-excerpt-text[data-bm-id="${bmId}"]`);
+  if (bm && el) el.innerHTML = _annotateExcerpt(bm.content, bm.highlights, texts);
+}
+
+// Clear the pending highlight, re-rendering the excerpt without it.
+function _bmClearPendingHl(bmId) {
+  _bmPendingHlState = null;
+  const bm = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+  const el = document.querySelector(`.bm-excerpt-text[data-bm-id="${bmId}"]`);
+  if (bm && el) el.innerHTML = _annotateExcerpt(bm.content, bm.highlights);
 }
 
 function _ensureBmSelPopover() {
@@ -3252,8 +3314,8 @@ function _showBmSelPopover(clientX, clientY, bmId, text) {
   pop.classList.remove('hidden');
 }
 
-// Mouse-up inside a bookmark excerpt → show selection popover
-document.getElementById('bookmarks-container').addEventListener('mouseup', e => {
+// Mouse-up anywhere → show selection popover if selection falls within a bookmark excerpt
+document.addEventListener('mouseup', e => {
   setTimeout(() => {
     const sel     = window.getSelection();
     const selText = sel?.toString()?.trim() || '';
@@ -3344,6 +3406,25 @@ let _cmOpenExcHlText  = null;       // highlighted_text for the span-coding row
 let _cmFilterDateFrom = '';         // YYYY-MM-DD
 let _cmFilterDateTo   = '';         // YYYY-MM-DD
 let _cmFilterSuno     = 'all';      // 'all' | 'only' | 'exclude'
+
+// Merge highlight rows that share the same bookmark_id (same code, different segments).
+// Produces one row per bookmark with highlighted_text = "seg1 ... seg2".
+function _cmMergeHighlightRows(rows) {
+  const excerpts  = rows.filter(r => r.type === 'excerpt');
+  const hlByBm    = {};
+  for (const r of rows) {
+    if (r.type !== 'highlight') continue;
+    if (!hlByBm[r.bookmark_id]) hlByBm[r.bookmark_id] = { ...r, _segs: [r.highlighted_text] };
+    else hlByBm[r.bookmark_id]._segs.push(r.highlighted_text);
+  }
+  const highlights = Object.values(hlByBm).map(r => ({
+    ...r,
+    highlighted_text: r._segs.join(_BM_SEG_SEP),
+  }));
+  return [...excerpts, ...highlights].sort((a, b) =>
+    (b.created_at || '') > (a.created_at || '') ? 1 : -1
+  );
+}
 
 function _cmFilterExcerpts(rows) {
   return rows.filter(r => {
@@ -3600,8 +3681,7 @@ function _cmRenderCatNode(node, depth, visibleIds) {
 function _cmRenderExcerptRow(r, codeId, accent) {
   const meta = `${esc(r.username || '')}${r.date ? ' · ' + esc(r.date.substring(0, 10)) : ''}`;
   if (r.type === 'highlight') {
-    const hlSnippet = (r.highlighted_text || '').substring(0, 120);
-    const more      = (r.highlighted_text || '').length > 120 ? '…' : '';
+    const hlSnippet = r.highlighted_text || '';
     return `<div class="border-l-2 pl-2 py-1 cursor-pointer cm-excerpt-item group rounded-r-md transition-colors hover:bg-amber-50/60"
                  style="border-color:${accent}"
                  data-bookmark-id="${r.bookmark_id}"
@@ -3610,7 +3690,7 @@ function _cmRenderExcerptRow(r, codeId, accent) {
                  title="Click to view span coding">
       <div class="flex items-start gap-1.5">
         <div class="flex-1 min-w-0">
-          <p class="text-xs italic text-gray-800 leading-relaxed font-medium">"${esc(hlSnippet)}${more}"</p>
+          <p class="text-xs italic text-gray-800 leading-relaxed font-medium">"${esc(hlSnippet)}"</p>
           <p class="text-[10px] mt-0.5 flex items-center gap-1">
             <span class="px-1 py-0.5 rounded text-[9px] font-semibold" style="background:${accent}20;color:${accent}">span</span>
             <span class="text-gray-400">${meta}</span>
@@ -3704,7 +3784,7 @@ function _cmOpenCodeDetail(code) {
 async function _cmFetchExcerptsFor(codeId) {
   try {
     const rows = await apiFetch(`/api/codes/${codeId}/bookmarks`);
-    _cmExcerptsCache[codeId] = rows;
+    _cmExcerptsCache[codeId] = _cmMergeHighlightRows(rows);
   } catch (_) {
     _cmExcerptsCache[codeId] = [];
   }
@@ -4699,9 +4779,15 @@ function _cmRenderCodingTable() {
     (bm.codes || []).forEach(code => {
       (excByCode[code.id] = excByCode[code.id] || []).push({ ...meta, content: bm.content || '' });
     });
-    // Span-level highlight codings — show only the highlighted text
+    // Span-level highlight codings — merge multiple highlights of same code per bookmark
+    const hlByCode = {};
     (bm.highlights || []).forEach(hl => {
-      (excByCode[hl.code_id] = excByCode[hl.code_id] || []).push({ ...meta, content: hl.highlighted_text || '' });
+      if (!hlByCode[hl.code_id]) hlByCode[hl.code_id] = [];
+      hlByCode[hl.code_id].push(hl.highlighted_text || '');
+    });
+    Object.entries(hlByCode).forEach(([codeId, texts]) => {
+      (excByCode[parseInt(codeId)] = excByCode[parseInt(codeId)] || [])
+        .push({ ...meta, content: texts.join(_BM_SEG_SEP) });
     });
   });
 
@@ -4977,8 +5063,14 @@ document.getElementById('cm-table-export-btn').addEventListener('click', () => {
     (bm.codes || []).forEach(code => {
       (excByCode[code.id] = excByCode[code.id] || []).push({ ...meta, content: bm.content || '' });
     });
+    const hlByCodeCsv = {};
     (bm.highlights || []).forEach(hl => {
-      (excByCode[hl.code_id] = excByCode[hl.code_id] || []).push({ ...meta, content: hl.highlighted_text || '' });
+      if (!hlByCodeCsv[hl.code_id]) hlByCodeCsv[hl.code_id] = [];
+      hlByCodeCsv[hl.code_id].push(hl.highlighted_text || '');
+    });
+    Object.entries(hlByCodeCsv).forEach(([codeId, texts]) => {
+      (excByCode[parseInt(codeId)] = excByCode[parseInt(codeId)] || [])
+        .push({ ...meta, content: texts.join(_BM_SEG_SEP) });
     });
   });
 
