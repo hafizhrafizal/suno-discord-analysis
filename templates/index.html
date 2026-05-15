@@ -1577,7 +1577,10 @@
       </div>
 
       <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="bookmarks-heading">
-        <h2 id="bookmarks-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-4">Saved Bookmarks</h2>
+        <div class="flex items-center gap-2 mb-4">
+          <h2 id="bookmarks-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide">Saved Bookmarks</h2>
+          <span id="bm-result-count" class="hidden text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700"></span>
+        </div>
         <div id="bookmarks-container" class="space-y-4" aria-live="polite">
           <p class="text-sm text-gray-600 text-center py-8">Loading bookmarks…</p>
         </div>
@@ -1588,15 +1591,38 @@
     <div id="page-coding" class="hidden space-y-4">
 
       <!-- ── Page-level tabs ── -->
-      <div class="bg-white rounded-2xl shadow px-4 py-2 flex items-center gap-1">
+      <div class="bg-white rounded-2xl shadow p-1 flex gap-1">
         <button id="cm-tab-manager"
-                class="px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-700 text-white transition-colors">
+                class="flex-1 py-2 text-xs font-semibold rounded-xl bg-indigo-700 text-white transition-colors">
           Coding Manager
         </button>
         <button id="cm-tab-table"
-                class="px-4 py-1.5 text-xs font-semibold rounded-lg text-gray-600 hover:bg-gray-100 transition-colors">
+                class="flex-1 py-2 text-xs font-semibold rounded-xl text-gray-600 hover:bg-gray-100 transition-colors">
           Coding Table
         </button>
+      </div>
+
+      <!-- ── Quote filter bar (shared between both tabs) ── -->
+      <div class="bg-white rounded-2xl shadow px-4 py-3 flex flex-wrap items-center gap-3">
+        <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide shrink-0">Filter Quotes</span>
+        <div class="flex items-center gap-1.5">
+          <label class="text-xs text-gray-500" for="cm-filter-month-from">From</label>
+          <input id="cm-filter-month-from" type="month"
+                 class="border border-gray-300 rounded-lg px-2 py-1 text-xs text-gray-700 cursor-pointer" />
+        </div>
+        <div class="flex items-center gap-1.5">
+          <label class="text-xs text-gray-500" for="cm-filter-month-to">To</label>
+          <input id="cm-filter-month-to" type="month"
+                 class="border border-gray-300 rounded-lg px-2 py-1 text-xs text-gray-700 cursor-pointer" />
+        </div>
+        <select id="cm-filter-suno"
+                class="border border-gray-300 rounded-lg px-2 py-1 text-xs text-gray-700 cursor-pointer">
+          <option value="all">All authors</option>
+          <option value="only">Suno team only</option>
+          <option value="exclude">Exclude Suno team</option>
+        </select>
+        <button id="cm-filter-clear"
+                class="text-xs text-gray-400 hover:text-red-500 transition-colors ml-auto hidden">✕ Clear</button>
       </div>
 
       <!-- ── Coding Manager section ── -->

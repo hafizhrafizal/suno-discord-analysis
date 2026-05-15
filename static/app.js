@@ -2716,12 +2716,26 @@ function _filterBookmarks(bms) {
 }
 
 function _renderBookmarksSorted() {
-  const container = document.getElementById('bookmarks-container');
+  const container  = document.getElementById('bookmarks-container');
+  const countBadge = document.getElementById('bm-result-count');
+
   if (!_cachedBookmarks.length) {
     container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No bookmarks yet. Use the bookmark button on any search result.</p>';
+    if (countBadge) countBadge.classList.add('hidden');
     return;
   }
+
   const filtered = _filterBookmarks(_sortBookmarks(_cachedBookmarks));
+  const total    = _cachedBookmarks.length;
+  const shown    = filtered.length;
+
+  if (countBadge) {
+    countBadge.classList.remove('hidden');
+    countBadge.textContent = shown === total
+      ? `${total}`
+      : `${shown} / ${total}`;
+  }
+
   if (!filtered.length) {
     container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No bookmarks match the current filters.</p>';
     return;
@@ -3230,6 +3244,26 @@ let _cmOpenExcBmId    = null;       // bookmark_id open in excerpt panel
 let _cmOpenExcSrcId   = null;       // source code id open in excerpt panel
 let _cmOpenExcHlId    = null;       // highlight_id when a span-coding row is open (null for whole-bookmark)
 let _cmOpenExcHlText  = null;       // highlighted_text for the span-coding row
+let _cmFilterDateFrom = '';         // YYYY-MM
+let _cmFilterDateTo   = '';         // YYYY-MM
+let _cmFilterSuno     = 'all';      // 'all' | 'only' | 'exclude'
+
+function _cmFilterExcerpts(rows) {
+  return rows.filter(r => {
+    if (_cmFilterDateFrom || _cmFilterDateTo) {
+      const m = (r.date || '').substring(0, 7);
+      if (_cmFilterDateFrom && m < _cmFilterDateFrom) return false;
+      if (_cmFilterDateTo   && m > _cmFilterDateTo)   return false;
+    }
+    if (_cmFilterSuno === 'only'    && !truthy(r.is_suno_team)) return false;
+    if (_cmFilterSuno === 'exclude' &&  truthy(r.is_suno_team)) return false;
+    return true;
+  });
+}
+
+function _cmFilterActive() {
+  return _cmFilterDateFrom || _cmFilterDateTo || _cmFilterSuno !== 'all';
+}
 
 async function loadCodingPage() {
   await _cmRefresh();
@@ -3487,11 +3521,14 @@ function _cmRenderCodeCard(code, depth) {
     const cached = _cmExcerptsCache[code.id];
     if (cached === undefined) {
       excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 text-xs text-gray-400 italic text-center py-1.5 border-l-2 border-indigo-200 pl-2 ml-3">Loading excerpts…</div>`;
-    } else if (cached.length === 0) {
-      excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 text-xs text-gray-400 italic text-center py-1.5">No excerpts yet.</div>`;
     } else {
-      const items = cached.map(r => _cmRenderExcerptRow(r, code.id, code.color)).join('');
-      excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 ml-3 space-y-1.5">${items}</div>`;
+      const visible = _cmFilterExcerpts(cached);
+      if (visible.length === 0) {
+        excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 text-xs text-gray-400 italic text-center py-1.5">${cached.length ? 'No excerpts match the current filter.' : 'No excerpts yet.'}</div>`;
+      } else {
+        const items = visible.map(r => _cmRenderExcerptRow(r, code.id, code.color)).join('');
+        excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 ml-3 space-y-1.5">${items}</div>`;
+      }
     }
   }
 
@@ -3541,15 +3578,20 @@ async function _cmFetchExcerptsFor(codeId) {
   // Targeted DOM update — avoid full re-render to preserve scroll position
   const container = document.getElementById(`cm-exc-${codeId}`);
   if (!container || !_cmExpandedCodes.has(codeId)) return;
-  const cached = _cmExcerptsCache[codeId];
+  const cached  = _cmExcerptsCache[codeId];
+  const visible = _cmFilterExcerpts(cached);
   if (!cached.length) {
     container.innerHTML = '<p class="text-xs text-gray-400 italic text-center py-1.5">No excerpts yet.</p>';
+    return;
+  }
+  if (!visible.length) {
+    container.innerHTML = '<p class="text-xs text-gray-400 italic text-center py-1.5">No excerpts match the current filter.</p>';
     return;
   }
   // Find the code's color for the left-border accent
   const code   = _cmCodes.find(c => c.id === codeId);
   const accent = code ? code.color : '#0d3e7f';
-  container.innerHTML = cached.map(r => _cmRenderExcerptRow(r, codeId, accent)).join('');
+  container.innerHTML = visible.map(r => _cmRenderExcerptRow(r, codeId, accent)).join('');
 }
 
 // ── Detail panel: Category ────────────────────────────────────────────────────
@@ -4320,12 +4362,10 @@ function _cmSwitchTab(tab) {
 
   const manBtn = document.getElementById('cm-tab-manager');
   const tblBtn = document.getElementById('cm-tab-table');
-  manBtn.className = isManager
-    ? 'px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-700 text-white transition-colors'
-    : 'px-4 py-1.5 text-xs font-semibold rounded-lg text-gray-600 hover:bg-gray-100 transition-colors';
-  tblBtn.className = !isManager
-    ? 'px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-700 text-white transition-colors'
-    : 'px-4 py-1.5 text-xs font-semibold rounded-lg text-gray-600 hover:bg-gray-100 transition-colors';
+  const _tabActive   = 'flex-1 py-2 text-xs font-semibold rounded-xl bg-indigo-700 text-white transition-colors';
+  const _tabInactive = 'flex-1 py-2 text-xs font-semibold rounded-xl text-gray-600 hover:bg-gray-100 transition-colors';
+  manBtn.className = isManager  ? _tabActive : _tabInactive;
+  tblBtn.className = !isManager ? _tabActive : _tabInactive;
 
   if (!isManager) _cmLoadCodingTable();
 }
@@ -4333,6 +4373,35 @@ function _cmSwitchTab(tab) {
 document.getElementById('cm-tab-manager').addEventListener('click', () => _cmSwitchTab('manager'));
 document.getElementById('cm-tab-table').addEventListener('click', () => _cmSwitchTab('table'));
 document.getElementById('cm-table-reload-btn').addEventListener('click', _cmLoadCodingTable);
+
+// ── Coding filter listeners ───────────────────────────────────────────────────
+
+function _cmApplyFilter() {
+  _cmFilterDateFrom = document.getElementById('cm-filter-month-from').value || '';
+  _cmFilterDateTo   = document.getElementById('cm-filter-month-to').value   || '';
+  _cmFilterSuno     = document.getElementById('cm-filter-suno').value        || 'all';
+  const clearBtn = document.getElementById('cm-filter-clear');
+  if (clearBtn) clearBtn.classList.toggle('hidden', !_cmFilterActive());
+  // Re-render both views with updated filter
+  _cmRenderTree();
+  _cmRenderCodingTable();
+}
+
+document.getElementById('cm-filter-month-from').addEventListener('change', _cmApplyFilter);
+document.getElementById('cm-filter-month-to').addEventListener('change',   _cmApplyFilter);
+document.getElementById('cm-filter-suno').addEventListener('change',        _cmApplyFilter);
+
+document.getElementById('cm-filter-clear').addEventListener('click', () => {
+  _cmFilterDateFrom = '';
+  _cmFilterDateTo   = '';
+  _cmFilterSuno     = 'all';
+  document.getElementById('cm-filter-month-from').value = '';
+  document.getElementById('cm-filter-month-to').value   = '';
+  document.getElementById('cm-filter-suno').value        = 'all';
+  document.getElementById('cm-filter-clear').classList.add('hidden');
+  _cmRenderTree();
+  _cmRenderCodingTable();
+});
 
 // ── Coding Table: load ────────────────────────────────────────────────────────
 
@@ -4370,6 +4439,14 @@ function _cmRenderCodingTable() {
 
   const excByCode = {};
   (_cachedBookmarks || []).forEach(bm => {
+    // Apply coding filter to each bookmark
+    if (_cmFilterSuno === 'only'    && !truthy(bm.is_suno_team)) return;
+    if (_cmFilterSuno === 'exclude' &&  truthy(bm.is_suno_team)) return;
+    if (_cmFilterDateFrom || _cmFilterDateTo) {
+      const m = (bm.date || '').substring(0, 7);
+      if (_cmFilterDateFrom && m < _cmFilterDateFrom) return;
+      if (_cmFilterDateTo   && m > _cmFilterDateTo)   return;
+    }
     (bm.codes || []).forEach(code => {
       (excByCode[code.id] = excByCode[code.id] || []).push({
         content:    bm.content    || '',

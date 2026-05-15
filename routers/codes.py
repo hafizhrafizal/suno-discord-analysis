@@ -272,7 +272,7 @@ async def list_code_bookmarks(code_id: int):
     rows = conn.execute(
         """SELECT 'excerpt' AS type, NULL AS highlight_id, NULL AS highlighted_text,
                   b.id AS bookmark_id, b.note, b.created_at,
-                  m.content, m.username, m.date, m.author_id
+                  m.content, m.username, m.date, m.author_id, m.is_suno_team
            FROM bookmark_codes bc
            JOIN bookmarks b ON b.id = bc.bookmark_id
            JOIN messages  m ON m.id = b.msg_id
@@ -283,7 +283,7 @@ async def list_code_bookmarks(code_id: int):
     hl_rows = conn.execute(
         """SELECT 'highlight' AS type, bch.id AS highlight_id, bch.highlighted_text,
                   b.id AS bookmark_id, b.note, b.created_at,
-                  m.content, m.username, m.date, m.author_id
+                  m.content, m.username, m.date, m.author_id, m.is_suno_team
            FROM bookmark_code_highlights bch
            JOIN bookmarks b ON b.id = bch.bookmark_id
            JOIN messages  m ON m.id = b.msg_id
