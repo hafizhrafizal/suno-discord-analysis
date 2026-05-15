@@ -3920,7 +3920,7 @@ function _cmRenderExcerptRow(r, codeId, accent) {
   }
   const snippet = (r.content || '').substring(0, 180);
   const more    = (r.content || '').length > 180 ? '…' : '';
-  return `<div class="border-l-2 pl-2 py-1 cursor-pointer cm-excerpt-item group rounded-r-md transition-colors hover:bg-indigo-50/60"
+  return `<div class="border-l-2 pl-2 py-1 cursor-grab cm-excerpt-item select-none group rounded-r-md transition-colors hover:bg-indigo-50/60"
                style="border-color:${accent}"
                draggable="true"
                data-bookmark-id="${r.bookmark_id}"
