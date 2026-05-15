@@ -2675,8 +2675,12 @@ function _renderBmCodePanel(bookmarkId) {
     <div class="p-2">
       ${existingChips}
       <div class="flex items-center gap-1.5 pt-1 border-t border-gray-100">
-        <input class="bm-new-code-input flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
-               placeholder="New code name..." data-bm-id="${bookmarkId}" />
+        <div class="relative flex-1 min-w-0">
+          <input class="bm-new-code-input w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                 placeholder="New code name..." data-bm-id="${bookmarkId}" autocomplete="off" />
+          <div class="bm-code-suggestions hidden absolute left-0 top-full mt-0.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 w-full max-h-44 overflow-y-auto"
+               data-bm-id="${bookmarkId}" data-type="whole"></div>
+        </div>
         ${_colorPickerHtml('', _randomCodeColor(), 'bm-new-code-color', `data-bm-id="${bookmarkId}"`)}
         <button class="bm-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
                 data-bm-id="${bookmarkId}">Add</button>
@@ -2816,8 +2820,12 @@ function _renderBmHlPanel(bmId, selectedText) {
       </div>
       ${codeButtons}
       <div class="flex items-center gap-1.5 pt-1 border-t border-indigo-100">
-        <input class="bm-hl-new-code-input flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
-               placeholder="New code name…" data-bm-id="${bmId}" />
+        <div class="relative flex-1 min-w-0">
+          <input class="bm-hl-new-code-input w-full border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                 placeholder="New code name…" data-bm-id="${bmId}" autocomplete="off" />
+          <div class="bm-code-suggestions hidden absolute left-0 top-full mt-0.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 w-full max-h-44 overflow-y-auto"
+               data-bm-id="${bmId}" data-type="span"></div>
+        </div>
         ${_colorPickerHtml('', _randomCodeColor(), 'bm-hl-new-code-color', `data-bm-id="${bmId}"`)}
         <button class="bm-hl-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
                 data-bm-id="${bmId}">Add</button>
@@ -2939,6 +2947,53 @@ function bookmarkCard(bm) {
 
 // Event delegation for bookmarks page
 document.getElementById('bookmarks-container').addEventListener('click', async e => {
+  // Apply a suggested existing code from the autocomplete dropdown
+  const sugItem = e.target.closest('.bm-code-suggest-item');
+  if (sugItem) {
+    const bmId   = parseInt(sugItem.dataset.bmId);
+    const codeId = parseInt(sugItem.dataset.codeId);
+    const type   = sugItem.dataset.type; // 'whole' | 'span'
+    const bm     = _cachedBookmarks.find(b => b.bookmark_id === bmId);
+    const code   = _allCodes.find(c => c.id === codeId);
+    if (bm && code) {
+      if (type === 'whole') {
+        if (!(bm.codes || []).some(c => c.id === codeId)) {
+          await fetch(`/api/bookmarks/${bmId}/codes/${codeId}`, { method: 'POST' });
+          bm.codes = [...(bm.codes || []),
+            { id: code.id, name: code.name, color: code.color, description: code.description, category_id: code.category_id }];
+          const labelsRow = document.getElementById(`bm-codes-${bmId}`);
+          if (labelsRow) labelsRow.innerHTML = _bmCodeChipsHtml(bm);
+        }
+      } else {
+        const panel   = document.getElementById(`bm-hl-panel-${bmId}`);
+        const selText = panel?.dataset.hlText || '';
+        const segs    = selText.split(_BM_SEG_SEP).map(s => s.trim()).filter(Boolean);
+        for (const seg of segs) {
+          const res  = await fetch(`/api/bookmarks/${bmId}/highlights`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code_id: codeId, highlighted_text: seg }),
+          });
+          const data = await res.json();
+          if (data.id && !(bm.highlights || []).some(h => h.id === data.id)) {
+            bm.highlights = [...(bm.highlights || []),
+              { id: data.id, code_id: codeId, code_name: code.name, code_color: code.color, highlighted_text: seg }];
+          }
+        }
+        const hlChips = document.getElementById(`bm-hl-chips-${bmId}`);
+        if (hlChips) hlChips.innerHTML = _bmHlChipsHtml(bm);
+        if (panel && selText) _renderBmHlPanel(bmId, selText);
+      }
+    }
+    // Clear input + close dropdown
+    const rel = sugItem.closest('.relative');
+    if (rel) {
+      const inp = rel.querySelector('input');
+      if (inp) inp.value = '';
+      rel.querySelector('.bm-code-suggestions')?.classList.add('hidden');
+    }
+    return;
+  }
+
   // Remove bookmark
   const removeBtn = e.target.closest('.bm-remove');
   if (removeBtn) {
@@ -3268,20 +3323,79 @@ document.getElementById('bm-filter-suno').addEventListener('change', () => {
   _renderBookmarksSorted();
 });
 
-// Enter key in inline code name input → click the Add button
+// Keyboard nav for code-name inputs and their suggestion dropdowns
 document.getElementById('bookmarks-container').addEventListener('keydown', e => {
-  if (e.key !== 'Enter') return;
-  const input = e.target.closest('.bm-new-code-input');
-  if (input) {
+  const input   = e.target.closest('.bm-new-code-input, .bm-hl-new-code-input');
+  const sugItem = e.target.closest('.bm-code-suggest-item');
+
+  if (e.key === 'ArrowDown') {
     e.preventDefault();
-    document.querySelector(`.bm-new-code-create[data-bm-id="${input.dataset.bmId}"]`)?.click();
+    if (input) {
+      input.closest('.relative')?.querySelector('.bm-code-suggest-item')?.focus();
+    } else if (sugItem) {
+      (sugItem.nextElementSibling)?.focus();
+    }
     return;
   }
-  const hlInput = e.target.closest('.bm-hl-new-code-input');
-  if (hlInput) {
+  if (e.key === 'ArrowUp') {
     e.preventDefault();
-    document.querySelector(`.bm-hl-new-code-create[data-bm-id="${hlInput.dataset.bmId}"]`)?.click();
+    if (sugItem) {
+      const prev = sugItem.previousElementSibling;
+      if (prev?.classList.contains('bm-code-suggest-item')) prev.focus();
+      else sugItem.closest('.relative')?.querySelector('input')?.focus();
+    }
+    return;
   }
+  if (e.key === 'Escape') {
+    const rel = (input || sugItem)?.closest('.relative');
+    rel?.querySelector('.bm-code-suggestions')?.classList.add('hidden');
+    rel?.querySelector('input')?.focus();
+    return;
+  }
+  if (e.key !== 'Enter') return;
+
+  if (input) {
+    const firstSug = input.closest('.relative')?.querySelector('.bm-code-suggest-item');
+    if (firstSug) { e.preventDefault(); firstSug.click(); return; }
+    e.preventDefault();
+    const cls = input.classList.contains('bm-new-code-input') ? 'bm-new-code-create' : 'bm-hl-new-code-create';
+    document.querySelector(`.${cls}[data-bm-id="${input.dataset.bmId}"]`)?.click();
+  }
+});
+
+// Live suggestions as user types in code-name input
+document.getElementById('bookmarks-container').addEventListener('input', e => {
+  const input = e.target.closest('.bm-new-code-input, .bm-hl-new-code-input');
+  if (!input) return;
+  const term   = input.value.trim().toLowerCase();
+  const rel    = input.closest('.relative');
+  const sugBox = rel?.querySelector('.bm-code-suggestions');
+  if (!sugBox) return;
+  if (!term) { sugBox.classList.add('hidden'); sugBox.innerHTML = ''; return; }
+  const matches = _allCodes.filter(c => c.name.toLowerCase().includes(term)).slice(0, 8);
+  if (!matches.length) { sugBox.classList.add('hidden'); return; }
+  const bmId = sugBox.dataset.bmId;
+  const type = sugBox.dataset.type;
+  sugBox.innerHTML = matches.map(c =>
+    `<button type="button"
+             class="bm-code-suggest-item w-full text-left px-3 py-1.5 text-xs hover:bg-indigo-50 flex items-center gap-2 transition-colors"
+             data-bm-id="${bmId}" data-code-id="${c.id}" data-type="${type}">
+       <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${c.color}"></span>
+       <span class="truncate">${esc(c.name)}</span>
+     </button>`
+  ).join('');
+  sugBox.classList.remove('hidden');
+});
+
+// Close suggestions when focus leaves the input+dropdown area
+document.getElementById('bookmarks-container').addEventListener('focusout', e => {
+  if (!e.target.closest('.bm-new-code-input, .bm-hl-new-code-input, .bm-code-suggest-item')) return;
+  const rel = e.target.closest('.relative');
+  setTimeout(() => {
+    if (rel && !rel.contains(document.activeElement)) {
+      rel.querySelector('.bm-code-suggestions')?.classList.add('hidden');
+    }
+  }, 120);
 });
 
 // Period (month) filter
