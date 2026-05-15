@@ -94,6 +94,13 @@
     /* app.js dynamically generates opacity-modifier variants */
     [class*="hover:bg-indigo-50"]:hover  { background-color: #eef3fa !important; }
     [class*="hover:bg-violet-50"]:hover  { background-color: #eef3fa !important; }
+
+    /* Bookmark excerpt — distinct selection color so the user can see which text will be coded */
+    .bm-excerpt-text::selection,
+    .bm-excerpt-text *::selection {
+      background: #c7d2fe; /* indigo-200 */
+      color: #1e1b4b;      /* indigo-950 */
+    }
   </style>
 </head>
 <body class="bg-slate-100 text-gray-900 min-h-screen overflow-x-hidden">
