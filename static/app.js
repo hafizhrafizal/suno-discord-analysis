@@ -4447,14 +4447,15 @@ function _cmRenderCodingTable() {
       if (_cmFilterDateFrom && d < _cmFilterDateFrom) return;
       if (_cmFilterDateTo   && d > _cmFilterDateTo)   return;
     }
+    const meta = { username: bm.username || '', date: (bm.date || '').substring(0, 10),
+                   note: bm.note || '', bookmarkId: bm.bookmark_id };
+    // Whole-bookmark codings — show full message content
     (bm.codes || []).forEach(code => {
-      (excByCode[code.id] = excByCode[code.id] || []).push({
-        content:    bm.content    || '',
-        username:   bm.username   || '',
-        date:      (bm.date       || '').substring(0, 10),
-        note:       bm.note       || '',
-        bookmarkId: bm.bookmark_id,
-      });
+      (excByCode[code.id] = excByCode[code.id] || []).push({ ...meta, content: bm.content || '' });
+    });
+    // Span-level highlight codings — show only the highlighted text
+    (bm.highlights || []).forEach(hl => {
+      (excByCode[hl.code_id] = excByCode[hl.code_id] || []).push({ ...meta, content: hl.highlighted_text || '' });
     });
   });
 
@@ -4705,13 +4706,12 @@ function _cmRenderHierarchyTable(container, excByCode) {
 document.getElementById('cm-table-export-btn').addEventListener('click', () => {
   const excByCode = {};
   (_cachedBookmarks || []).forEach(bm => {
+    const meta = { username: bm.username || '', date: (bm.date || '').substring(0, 10), note: bm.note || '' };
     (bm.codes || []).forEach(code => {
-      (excByCode[code.id] = excByCode[code.id] || []).push({
-        content:  bm.content  || '',
-        username: bm.username || '',
-        date:    (bm.date     || '').substring(0, 10),
-        note:     bm.note     || '',
-      });
+      (excByCode[code.id] = excByCode[code.id] || []).push({ ...meta, content: bm.content || '' });
+    });
+    (bm.highlights || []).forEach(hl => {
+      (excByCode[hl.code_id] = excByCode[hl.code_id] || []).push({ ...meta, content: hl.highlighted_text || '' });
     });
   });
 
