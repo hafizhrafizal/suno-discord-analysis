@@ -2494,8 +2494,9 @@ function _sortBookmarks(bms) {
 }
 
 let _cachedBookmarks  = [];
-let _bmSelectionState = null;  // {bmId, text} while a highlight code picker is open
-let _bmSelPopover     = null;  // floating DOM element for the selection popover
+let _bmSelectionState      = null;  // {bmId, text} while a highlight code picker is open
+let _bmSelPopover          = null;  // floating DOM element for the selection popover
+let _bmAccumulatedSegments = null;  // {bmId, segments: string[]} for Ctrl+multi-select
 
 async function loadBookmarksPage() {
   const container = document.getElementById('bookmarks-container');
@@ -2594,32 +2595,60 @@ function _renderBmCodePanel(bookmarkId) {
 }
 
 // ── Annotate excerpt text with colored highlight spans ────────────────────────
+// Handles overlapping spans: splits content at every span boundary, then renders
+// each segment with all codes that cover it (stacked bottom-border colors).
 function _annotateExcerpt(content, highlights) {
   if (!highlights?.length) return esc(content);
   const lower = content.toLowerCase();
-  const spans = [];
+
+  // Map highlights to character ranges
+  const rawSpans = [];
   for (const h of highlights) {
     const needle = (h.highlighted_text || '').toLowerCase();
     if (!needle) continue;
     const idx = lower.indexOf(needle);
     if (idx === -1) continue;
-    spans.push({
-      start: idx, end: idx + h.highlighted_text.length,
-      color: h.code_color || '#6366f1', name: h.code_name || '?',
+    rawSpans.push({
+      start: idx,
+      end:   idx + needle.length,
+      color: h.code_color || '#6366f1',
+      name:  h.code_name  || '?',
     });
   }
-  if (!spans.length) return esc(content);
-  spans.sort((a, b) => a.start - b.start || b.end - a.end);
-  let result = '', pos = 0;
-  for (const span of spans) {
-    if (span.start < pos) continue;
-    result += esc(content.slice(pos, span.start));
-    result += `<mark class="bm-hl-inline rounded-sm cursor-default"
-                     style="background:${span.color}28;border-bottom:2px solid ${span.color}"
-                     title="${esc(span.name)}">${esc(content.slice(span.start, span.end))}</mark>`;
-    pos = span.end;
+  if (!rawSpans.length) return esc(content);
+
+  // Collect every position where a span starts or ends
+  const pts = new Set([0, content.length]);
+  rawSpans.forEach(s => { pts.add(s.start); pts.add(s.end); });
+  const sorted = [...pts].sort((a, b) => a - b);
+
+  // Render each segment between consecutive change-points
+  let out = '';
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const segStart = sorted[i];
+    const segEnd   = sorted[i + 1];
+    if (segStart === segEnd) continue;
+    const text   = content.slice(segStart, segEnd);
+    // All spans that fully cover this segment
+    const active = rawSpans.filter(s => s.start <= segStart && s.end >= segEnd);
+
+    if (!active.length) {
+      out += esc(text);
+      continue;
+    }
+
+    // First span → background + primary bottom border
+    // Additional spans → stacked box-shadow borders below the primary
+    const [first, ...rest] = active;
+    let style = `background:${first.color}28;border-bottom:2px solid ${first.color}`;
+    if (rest.length) {
+      const shadows = rest.map((s, k) => `0 ${(k + 2) * 2 + 1}px 0 ${s.color}`).join(',');
+      style += `;box-shadow:${shadows};padding-bottom:${rest.length * 3}px`;
+    }
+    const title = active.map(s => s.name).join(' + ');
+    out += `<mark class="bm-hl-inline rounded-sm cursor-default" style="${style}" title="${esc(title)}">${esc(text)}</mark>`;
   }
-  return result + esc(content.slice(pos));
+  return out;
 }
 
 // ── Coded-span chips shown below each bookmark card ───────────────────────────
@@ -2934,7 +2963,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
   if (hlClose) {
     const bmId = parseInt(hlClose.dataset.bmId);
     document.getElementById(`bm-hl-panel-${bmId}`)?.classList.add('hidden');
-    _bmSelectionState = null;
+    _bmResetAccumulatedSel();
     return;
   }
 
@@ -2972,7 +3001,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     const excerptEl = document.querySelector(`.bm-excerpt-text[data-bm-id="${bmId}"]`);
     if (hlChips)   hlChips.innerHTML   = _bmHlChipsHtml(bm);
     if (excerptEl) excerptEl.innerHTML = _annotateExcerpt(bm.content, bm.highlights);
-    _renderBmHlPanel(bmId, selText);
+    _renderBmHlPanel(bmId, selText); // panel stays open — user can add more codes
     return;
   }
 
@@ -3022,7 +3051,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
       const excerptEl = document.querySelector(`.bm-excerpt-text[data-bm-id="${bmId}"]`);
       if (hlChips)   hlChips.innerHTML   = _bmHlChipsHtml(bm);
       if (excerptEl) excerptEl.innerHTML = _annotateExcerpt(bm.content, bm.highlights);
-      _renderBmHlPanel(bmId, selText);
+      _renderBmHlPanel(bmId, selText); // panel stays open — user can add more codes
       document.dispatchEvent(new CustomEvent('codebook-updated'));
     } catch (_) {
       hlCreate.disabled = false; hlCreate.textContent = 'Add';
@@ -3163,6 +3192,24 @@ document.getElementById('bm-filter-text').addEventListener('input', () => {
 
 // ── Text selection → open coding popover ─────────────────────────────────────
 
+function _bmCombinedText() {
+  return (_bmAccumulatedSegments?.segments || []).join(' … ');
+}
+
+function _updateBmSelPopoverBtn() {
+  const lbl = document.querySelector('#bm-sel-code-btn .bm-sel-label');
+  if (!lbl) return;
+  const n = _bmAccumulatedSegments?.segments.length || 1;
+  lbl.textContent = n > 1 ? `Add open coding (${n} spans)` : 'Add open coding';
+}
+
+function _bmResetAccumulatedSel() {
+  _bmAccumulatedSegments = null;
+  _bmSelectionState      = null;
+  const lbl = document.querySelector('#bm-sel-code-btn .bm-sel-label');
+  if (lbl) lbl.textContent = 'Add open coding';
+}
+
 function _ensureBmSelPopover() {
   if (_bmSelPopover) return _bmSelPopover;
   _bmSelPopover = document.createElement('div');
@@ -3175,8 +3222,9 @@ function _ensureBmSelPopover() {
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
               d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a2 2 0 012-2z"/>
       </svg>
-      Add open coding
-    </button>`;
+      <span class="bm-sel-label">Add open coding</span>
+    </button>
+    <p id="bm-sel-hint" class="hidden px-3 pb-1.5 text-[10px] text-indigo-400">Ctrl+select to add more spans</p>`;
   document.body.appendChild(_bmSelPopover);
   document.getElementById('bm-sel-code-btn').addEventListener('click', () => {
     if (!_bmSelectionState) return;
@@ -3195,9 +3243,12 @@ function _ensureBmSelPopover() {
 // Show the popover anchored near (clientX, clientY)
 function _showBmSelPopover(clientX, clientY, bmId, text) {
   _bmSelectionState = { bmId, text };
-  const pop = _ensureBmSelPopover();
-  pop.style.left = Math.min(clientX + 4, window.innerWidth  - 180) + 'px';
-  pop.style.top  = Math.min(clientY + 4, window.innerHeight -  44) + 'px';
+  const pop  = _ensureBmSelPopover();
+  const hint = document.getElementById('bm-sel-hint');
+  const n    = _bmAccumulatedSegments?.segments.length || 1;
+  if (hint) hint.classList.toggle('hidden', n > 1); // hint only on first selection
+  pop.style.left = Math.min(clientX + 4, window.innerWidth  - 200) + 'px';
+  pop.style.top  = Math.min(clientY + 4, window.innerHeight -  60) + 'px';
   pop.classList.remove('hidden');
 }
 
@@ -3206,12 +3257,47 @@ document.getElementById('bookmarks-container').addEventListener('mouseup', e => 
   setTimeout(() => {
     const sel     = window.getSelection();
     const selText = sel?.toString()?.trim() || '';
-    if (!selText) { _bmSelPopover?.classList.add('hidden'); return; }
+    if (!selText) {
+      if (!e.ctrlKey) { _bmSelPopover?.classList.add('hidden'); _bmResetAccumulatedSel(); }
+      return;
+    }
     const anchorEl = sel.anchorNode?.parentElement?.closest('.bm-excerpt-text');
     const focusEl  = sel.focusNode?.parentElement?.closest('.bm-excerpt-text');
     const el = anchorEl || focusEl;
-    if (!el) { _bmSelPopover?.classList.add('hidden'); return; }
-    _showBmSelPopover(e.clientX, e.clientY, parseInt(el.dataset.bmId), selText);
+    if (!el) {
+      if (!e.ctrlKey) { _bmSelPopover?.classList.add('hidden'); _bmResetAccumulatedSel(); }
+      return;
+    }
+    const bmId = parseInt(el.dataset.bmId);
+
+    if (e.ctrlKey && _bmAccumulatedSegments?.bmId === bmId) {
+      // Append new span to the accumulation (skip duplicates)
+      if (!_bmAccumulatedSegments.segments.includes(selText)) {
+        _bmAccumulatedSegments.segments.push(selText);
+      }
+      window.getSelection()?.removeAllRanges(); // clear browser selection — span captured
+      _bmSelectionState = { bmId, text: _bmCombinedText() };
+      _updateBmSelPopoverBtn();
+      // Hide hint once we have multiple spans
+      const hint = document.getElementById('bm-sel-hint');
+      if (hint) hint.classList.add('hidden');
+      // Keep popover visible, reposition near cursor
+      const pop = _ensureBmSelPopover();
+      pop.style.left = Math.min(e.clientX + 4, window.innerWidth  - 200) + 'px';
+      pop.style.top  = Math.min(e.clientY + 4, window.innerHeight -  60) + 'px';
+      pop.classList.remove('hidden');
+      // If the hl panel is already open for this bookmark, refresh it with combined text
+      const hlPanel = document.getElementById(`bm-hl-panel-${bmId}`);
+      if (hlPanel && !hlPanel.classList.contains('hidden')) {
+        _renderBmHlPanel(bmId, _bmCombinedText());
+      }
+    } else {
+      // Fresh selection — start accumulation (or reset if different bookmark)
+      _bmAccumulatedSegments = { bmId, segments: [selText] };
+      _bmSelectionState = { bmId, text: selText };
+      _updateBmSelPopoverBtn();
+      _showBmSelPopover(e.clientX, e.clientY, bmId, selText);
+    }
   }, 10);
 });
 
@@ -3229,10 +3315,11 @@ document.getElementById('bookmarks-container').addEventListener('contextmenu', e
   _showBmSelPopover(e.clientX, e.clientY, parseInt(excerptEl.dataset.bmId), selText);
 });
 
-// Click outside popover → hide it (but keep _bmSelectionState so the hl panel still works)
+// Click outside popover → hide it; Ctrl+click keeps accumulation alive for next span
 document.addEventListener('mousedown', e => {
   if (_bmSelPopover && !_bmSelPopover.contains(e.target)) {
     _bmSelPopover.classList.add('hidden');
+    if (!e.ctrlKey) _bmResetAccumulatedSel();
   }
 });
 
