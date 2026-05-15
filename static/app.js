@@ -4485,7 +4485,7 @@ document.getElementById('cm-code-list').addEventListener('contextmenu', e => {
     _cmCtxTargetType  = 'code';
     _cmCtxTargetId    = parseInt(card.dataset.codeId);
     _cmCtxNewParentId = null; // new category becomes a root; code re-assigned to it
-    lbl.textContent   = 'Add 2nd-order coding above this code…';
+    lbl.textContent   = 'Add 2nd-order coding above this code';
   } else {
     _cmCtxTargetType = 'cat';
     _cmCtxTargetId   = parseInt(header.dataset.catId);
@@ -4494,7 +4494,7 @@ document.getElementById('cm-code-list').addEventListener('contextmenu', e => {
     // New category inherits the existing category's current parent (insert in between)
     const existing   = _cmCategories.find(c => c.id === _cmCtxTargetId);
     _cmCtxNewParentId = existing ? existing.parent_id : null;
-    lbl.textContent  = `Add ${_cmOrderLabelFull(newOrder)} coding above this category…`;
+    lbl.textContent  = `Add ${_cmOrderLabelFull(newOrder)} coding above this category`;
   }
 
   // Position and show
