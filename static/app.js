@@ -2521,6 +2521,16 @@ function labelTextColor(hex) {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.55 ? '#1f2937' : '#ffffff';
 }
 
+const _CODE_PALETTE = [
+  '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+  '#06b6d4', '#f97316', '#ec4899', '#14b8a6', '#84cc16',
+  '#3b82f6', '#a855f7', '#22c55e', '#e11d48', '#0ea5e9',
+  '#d97706', '#7c3aed', '#059669', '#dc2626', '#0891b2',
+];
+function _randomCodeColor() {
+  return _CODE_PALETTE[Math.floor(Math.random() * _CODE_PALETTE.length)];
+}
+
 // -- Load & render code filter chips -----------------------------------------
 async function loadAllCodes() {
   try {
@@ -2588,9 +2598,9 @@ function _renderBmCodePanel(bookmarkId) {
       ${existingChips}
       <div class="flex items-center gap-1.5 pt-1 border-t border-gray-100">
         <input class="bm-new-code-input flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
-               placeholder="New code name..." maxlength="40" data-bm-id="${bookmarkId}" />
+               placeholder="New code name..." data-bm-id="${bookmarkId}" />
         <input class="bm-new-code-color w-7 h-7 rounded cursor-pointer border border-gray-200 p-0.5"
-               type="color" value="#0d3e7f" data-bm-id="${bookmarkId}" title="Pick colour" />
+               type="color" value="${_randomCodeColor()}" data-bm-id="${bookmarkId}" title="Pick colour" />
         <button class="bm-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
                 data-bm-id="${bookmarkId}">Add</button>
       </div>
@@ -2649,7 +2659,7 @@ function _annotateExcerpt(content, highlights, pendingTexts = []) {
         const shadows = rest.map((s, k) => `0 ${(k + 2) * 2 + 1}px 0 ${s.color}`).join(',');
         style += `;box-shadow:${shadows};padding-bottom:${rest.length * 3}px`;
       }
-      if (pending.length) style += `;outline:2px dashed #6366f1;outline-offset:1px`;
+      // pending coexists — no extra decoration, the coded highlight is sufficient
       const title = [...coded.map(s => s.name), ...(pending.length ? ['(Coding…)'] : [])].join(' + ');
       out += `<mark class="bm-hl-inline rounded-sm cursor-default" style="${style}" title="${esc(title)}">${esc(text)}</mark>`;
     }
@@ -2730,9 +2740,9 @@ function _renderBmHlPanel(bmId, selectedText) {
       ${codeButtons}
       <div class="flex items-center gap-1.5 pt-1 border-t border-indigo-100">
         <input class="bm-hl-new-code-input flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
-               placeholder="New code name…" maxlength="40" data-bm-id="${bmId}" />
+               placeholder="New code name…" data-bm-id="${bmId}" />
         <input class="bm-hl-new-code-color w-7 h-7 rounded cursor-pointer border border-gray-200 p-0.5"
-               type="color" value="#0d3e7f" data-bm-id="${bmId}" />
+               type="color" value="${_randomCodeColor()}" data-bm-id="${bmId}" />
         <button class="bm-hl-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
                 data-bm-id="${bmId}">Add</button>
       </div>
@@ -3243,6 +3253,13 @@ function _updateBmSelPopoverBtn() {
 }
 
 function _bmResetAccumulatedSel() {
+  // Clear the pending highlight only if the coding panel isn't currently open
+  if (_bmPendingHlState) {
+    const panel = document.getElementById(`bm-hl-panel-${_bmPendingHlState.bmId}`);
+    if (!panel || panel.classList.contains('hidden')) {
+      _bmClearPendingHl(_bmPendingHlState.bmId);
+    }
+  }
   _bmAccumulatedSegments = null;
   _bmSelectionState      = null;
   const lbl = document.querySelector('#bm-sel-code-btn .bm-sel-label');
@@ -3340,6 +3357,8 @@ document.addEventListener('mouseup', e => {
       window.getSelection()?.removeAllRanges(); // clear browser selection — span captured
       _bmSelectionState = { bmId, text: _bmCombinedText() };
       _updateBmSelPopoverBtn();
+      // Persist all accumulated spans as pending highlights so nothing disappears
+      _bmSetPendingHl(bmId, _bmCombinedText());
       // Hide hint once we have multiple spans
       const hint = document.getElementById('bm-sel-hint');
       if (hint) hint.classList.add('hidden');
@@ -3358,6 +3377,8 @@ document.addEventListener('mouseup', e => {
       _bmAccumulatedSegments = { bmId, segments: [selText] };
       _bmSelectionState = { bmId, text: selText };
       _updateBmSelPopoverBtn();
+      // Show pending highlight immediately so the first span stays marked during Ctrl+drag
+      _bmSetPendingHl(bmId, selText);
       _showBmSelPopover(e.clientX, e.clientY, bmId, selText);
     }
   }, 10);
@@ -3460,6 +3481,10 @@ async function _cmRefresh() {
   }
   _cmPopulateCategorySelects();
   _cmRenderTree();
+  // Re-fetch excerpts for expanded codes whose cache was invalidated (e.g. after an edit/delete)
+  for (const codeId of _cmExpandedCodes) {
+    if (_cmExcerptsCache[codeId] === undefined) _cmFetchExcerptsFor(codeId);
+  }
   if (_cmOpenCodeId !== null) {
     const code = _cmCodes.find(c => c.id === _cmOpenCodeId);
     if (code) _cmOpenCodeDetail(code);
@@ -4420,6 +4445,7 @@ document.getElementById('cm-detail-close').addEventListener('click', () => {
 document.getElementById('cm-new-code-btn').addEventListener('click', () => {
   document.getElementById('cm-new-code-panel').classList.toggle('hidden');
   document.getElementById('cm-new-cat-panel').classList.add('hidden');
+  document.getElementById('cm-nc-color').value = _randomCodeColor();
   document.getElementById('cm-nc-name').focus();
 });
 document.getElementById('cm-nc-cancel').addEventListener('click', () => {
@@ -4440,7 +4466,7 @@ document.getElementById('cm-nc-save').addEventListener('click', async () => {
       body: JSON.stringify({ name, color, category_id }),
     });
     document.getElementById('cm-nc-name').value  = '';
-    document.getElementById('cm-nc-color').value = '#0d3e7f';
+    document.getElementById('cm-nc-color').value = _randomCodeColor();
     document.getElementById('cm-nc-category').value = '';
     document.getElementById('cm-new-code-panel').classList.add('hidden');
     _allCodes = [..._allCodes, code].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
