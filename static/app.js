@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (typeof marked !== 'undefined') {
     marked.use({ gfm: true, breaks: true });
   }
+  _initStaticColorPickers();
 });
 
 /*
@@ -2531,6 +2532,83 @@ function _randomCodeColor() {
   return _CODE_PALETTE[Math.floor(Math.random() * _CODE_PALETTE.length)];
 }
 
+// ── Color swatch picker helpers ───────────────────────────────────────────────
+// Builds the HTML for a swatch picker that replaces <input type="color">.
+// inputId      — the id placed on the hidden <input>; may be empty for inline pickers
+// initialColor — hex string
+// inputClass   — extra class(es) added to the hidden <input> (e.g. 'bm-new-code-color')
+// inputData    — extra HTML attributes for the hidden <input> (e.g. 'data-bm-id="5"')
+function _colorPickerHtml(inputId, initialColor, inputClass = '', inputData = '') {
+  const uid   = inputId || ('cpk' + Math.random().toString(36).slice(2, 7));
+  const color = initialColor || _CODE_PALETTE[0];
+  const dots  = _CODE_PALETTE.map(c => {
+    const sel = c.toLowerCase() === color.toLowerCase() ? ' active' : '';
+    return `<button type="button" class="color-swatch-dot${sel}" style="background:${c}" data-color="${c}"></button>`;
+  }).join('');
+  return `<div class="color-picker-wrap" data-cpk="${uid}">`
+    + `<button type="button" class="color-swatch-btn" style="background:${color}" data-cpk-toggle="${uid}" title="Pick colour"></button>`
+    + `<input type="hidden"${inputId ? ` id="${inputId}"` : ''} class="cpk-value${inputClass ? ' ' + inputClass : ''}" value="${color}"${inputData ? ' ' + inputData : ''} />`
+    + `<div class="color-swatch-palette hidden" data-cpk-palette="${uid}">${dots}</div>`
+    + `</div>`;
+}
+
+// Update a named swatch picker (and its button + dot selection) to a new color.
+function _setPickerColor(inputId, color) {
+  const inp = document.getElementById(inputId);
+  if (!inp) return;
+  inp.value = color;
+  const wrap = inp.closest('.color-picker-wrap');
+  if (!wrap) return;
+  wrap.querySelector('.color-swatch-btn').style.background = color;
+  wrap.querySelectorAll('.color-swatch-dot').forEach(d =>
+    d.classList.toggle('active', d.dataset.color.toLowerCase() === color.toLowerCase()));
+}
+
+// Convert every remaining <input type="color"> in the static HTML into a swatch picker.
+function _initStaticColorPickers() {
+  document.querySelectorAll('input[type="color"]').forEach(input => {
+    const id    = input.id;
+    const color = input.value || _randomCodeColor();
+    const tmp   = document.createElement('div');
+    tmp.innerHTML = _colorPickerHtml(id, color);
+    // Carry over any lg-size class markers from the original input
+    if (input.classList.contains('lg')) tmp.firstElementChild.querySelector('.color-swatch-btn')?.classList.add('lg');
+    input.replaceWith(tmp.firstElementChild);
+  });
+}
+
+// Global delegation for all swatch picker interactions
+document.addEventListener('click', e => {
+  // Toggle dropdown
+  const toggleBtn = e.target.closest('[data-cpk-toggle]');
+  if (toggleBtn) {
+    const uid = toggleBtn.dataset.cpkToggle;
+    document.querySelectorAll(`.color-swatch-palette:not([data-cpk-palette="${uid}"])`).forEach(p => p.classList.add('hidden'));
+    document.querySelector(`[data-cpk-palette="${uid}"]`)?.classList.toggle('hidden');
+    return;
+  }
+  // Select a color
+  const dot = e.target.closest('.color-swatch-dot');
+  if (dot) {
+    const pal = dot.closest('[data-cpk-palette]');
+    if (!pal) return;
+    const wrap  = pal.closest('.color-picker-wrap');
+    const color = dot.dataset.color;
+    const inp   = wrap?.querySelector('.cpk-value');
+    const btn   = wrap?.querySelector('.color-swatch-btn');
+    if (inp) inp.value = color;
+    if (btn) btn.style.background = color;
+    pal.querySelectorAll('.color-swatch-dot').forEach(d =>
+      d.classList.toggle('active', d.dataset.color === color));
+    pal.classList.add('hidden');
+    return;
+  }
+  // Click outside → close all palettes
+  if (!e.target.closest('.color-picker-wrap')) {
+    document.querySelectorAll('.color-swatch-palette').forEach(p => p.classList.add('hidden'));
+  }
+});
+
 // -- Load & render code filter chips -----------------------------------------
 async function loadAllCodes() {
   try {
@@ -2599,8 +2677,7 @@ function _renderBmCodePanel(bookmarkId) {
       <div class="flex items-center gap-1.5 pt-1 border-t border-gray-100">
         <input class="bm-new-code-input flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
                placeholder="New code name..." data-bm-id="${bookmarkId}" />
-        <input class="bm-new-code-color w-7 h-7 rounded cursor-pointer border border-gray-200 p-0.5"
-               type="color" value="${_randomCodeColor()}" data-bm-id="${bookmarkId}" title="Pick colour" />
+        ${_colorPickerHtml('', _randomCodeColor(), 'bm-new-code-color', `data-bm-id="${bookmarkId}"`)}
         <button class="bm-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
                 data-bm-id="${bookmarkId}">Add</button>
       </div>
@@ -2741,8 +2818,7 @@ function _renderBmHlPanel(bmId, selectedText) {
       <div class="flex items-center gap-1.5 pt-1 border-t border-indigo-100">
         <input class="bm-hl-new-code-input flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
                placeholder="New code name…" data-bm-id="${bmId}" />
-        <input class="bm-hl-new-code-color w-7 h-7 rounded cursor-pointer border border-gray-200 p-0.5"
-               type="color" value="${_randomCodeColor()}" data-bm-id="${bmId}" />
+        ${_colorPickerHtml('', _randomCodeColor(), 'bm-hl-new-code-color', `data-bm-id="${bmId}"`)}
         <button class="bm-hl-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
                 data-bm-id="${bmId}">Add</button>
       </div>
@@ -3798,7 +3874,7 @@ function _cmOpenCodeDetail(code) {
   document.getElementById('cm-detail-title').textContent = 'Edit Open Coding';
   document.getElementById('cm-code-edit-section').classList.remove('hidden');
   document.getElementById('cm-edit-name').value          = code.name;
-  document.getElementById('cm-edit-color').value         = code.color;
+  _setPickerColor('cm-edit-color', code.color);
   document.getElementById('cm-edit-desc').value          = code.description || '';
   document.getElementById('cm-edit-category').value      = code.category_id ?? '';
   document.getElementById('cm-edit-ground').textContent  = code.groundedness ?? '—';
@@ -3840,7 +3916,7 @@ function _cmOpenCatDetail(cat) {
   document.getElementById('cm-detail-title').textContent = 'Edit Coding';
   document.getElementById('cm-cat-edit-section').classList.remove('hidden');
   document.getElementById('cm-cat-edit-name').value  = cat.name;
-  document.getElementById('cm-cat-edit-color').value = cat.color;
+  _setPickerColor('cm-cat-edit-color', cat.color);
   // Filter out self and descendants to avoid cycles
   const parentEl = document.getElementById('cm-cat-edit-parent');
   parentEl.innerHTML = '<option value="">— Root level (2nd-order) —</option>' +
@@ -4445,7 +4521,7 @@ document.getElementById('cm-detail-close').addEventListener('click', () => {
 document.getElementById('cm-new-code-btn').addEventListener('click', () => {
   document.getElementById('cm-new-code-panel').classList.toggle('hidden');
   document.getElementById('cm-new-cat-panel').classList.add('hidden');
-  document.getElementById('cm-nc-color').value = _randomCodeColor();
+  _setPickerColor('cm-nc-color', _randomCodeColor());
   document.getElementById('cm-nc-name').focus();
 });
 document.getElementById('cm-nc-cancel').addEventListener('click', () => {
@@ -4466,7 +4542,7 @@ document.getElementById('cm-nc-save').addEventListener('click', async () => {
       body: JSON.stringify({ name, color, category_id }),
     });
     document.getElementById('cm-nc-name').value  = '';
-    document.getElementById('cm-nc-color').value = _randomCodeColor();
+    _setPickerColor('cm-nc-color', _randomCodeColor());
     document.getElementById('cm-nc-category').value = '';
     document.getElementById('cm-new-code-panel').classList.add('hidden');
     _allCodes = [..._allCodes, code].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
@@ -4504,7 +4580,7 @@ document.getElementById('cm-cat-save').addEventListener('click', async () => {
       body: JSON.stringify({ name, color, parent_id }),
     });
     document.getElementById('cm-cat-name').value  = '';
-    document.getElementById('cm-cat-color').value = '#94a3b8';
+    _setPickerColor('cm-cat-color', '#94a3b8');
     document.getElementById('cm-cat-parent').value = '';
     document.getElementById('cm-new-cat-panel').classList.add('hidden');
     await _cmRefresh();

@@ -95,6 +95,31 @@
     [class*="hover:bg-indigo-50"]:hover  { background-color: #eef3fa !important; }
     [class*="hover:bg-violet-50"]:hover  { background-color: #eef3fa !important; }
 
+    /* ── Color swatch picker (replaces native <input type="color">) ─────────── */
+    .color-picker-wrap { display:inline-block; position:relative; vertical-align:middle; }
+    .color-swatch-btn  {
+      display:block; width:28px; height:28px; border-radius:7px; padding:0;
+      border:2px solid #e2e8f0; cursor:pointer; outline:none;
+      transition:transform .12s, border-color .12s;
+    }
+    .color-swatch-btn:hover  { transform:scale(1.1); border-color:#94a3b8; }
+    .color-swatch-btn.lg     { width:36px; height:32px; border-radius:8px; }
+    .color-swatch-palette {
+      position:absolute; top:calc(100% + 5px); left:0; z-index:300;
+      background:#fff; border:1px solid #e2e8f0; border-radius:12px;
+      box-shadow:0 8px 24px rgba(0,0,0,.13),0 2px 6px rgba(0,0,0,.07);
+      padding:8px; display:grid; grid-template-columns:repeat(5,1fr);
+      gap:5px; width:152px;
+    }
+    .color-swatch-palette.hidden { display:none !important; }
+    .color-swatch-dot {
+      width:24px; height:24px; border-radius:6px; cursor:pointer; padding:0;
+      border:2px solid transparent; outline:none;
+      transition:transform .1s, box-shadow .1s;
+    }
+    .color-swatch-dot:hover  { transform:scale(1.18); border-color:rgba(255,255,255,.9); }
+    .color-swatch-dot.active { border-color:#fff; box-shadow:0 0 0 2px #334155; }
+
     /* Bookmark excerpt — distinct selection color so the user can see which text will be coded */
     .bm-excerpt-text::selection,
     .bm-excerpt-text *::selection {
