@@ -2480,14 +2480,15 @@ document.getElementById('results-container').addEventListener('click', async e =
 
 function _sortBookmarks(bms) {
   const mode = document.getElementById('bm-sort').value;
+  const dir  = document.getElementById('bm-sort-dir').dataset.dir; // 'asc' | 'desc'
+  const asc  = dir === 'asc';
   const sorted = [...bms];
   if (mode === 'date') {
-    sorted.sort((a, b) => new Date(a.date) - new Date(b.date));
+    sorted.sort((a, b) => (new Date(a.date) - new Date(b.date)) * (asc ? 1 : -1));
   } else if (mode === 'username') {
-    sorted.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+    sorted.sort((a, b) => (a.username || '').localeCompare(b.username || '') * (asc ? 1 : -1));
   } else {
-    // 'added' sort by bookmark_id ascending (insertion order)
-    sorted.sort((a, b) => a.bookmark_id - b.bookmark_id);
+    sorted.sort((a, b) => (a.bookmark_id - b.bookmark_id) * (asc ? 1 : -1));
   }
   return sorted;
 }
@@ -3099,6 +3100,15 @@ document.getElementById('bm-sort').addEventListener('change', () => {
   _collapseAllBmContext();
   _renderBookmarksSorted();
 });
+
+document.getElementById('bm-sort-dir').addEventListener('click', () => {
+  const btn = document.getElementById('bm-sort-dir');
+  const next = btn.dataset.dir === 'asc' ? 'desc' : 'asc';
+  btn.dataset.dir  = next;
+  btn.textContent  = next === 'asc' ? '↑ Asc' : '↓ Desc';
+  _collapseAllBmContext();
+  _renderBookmarksSorted();
+});
 document.getElementById('bm-filter-suno').addEventListener('change', () => {
   _collapseAllBmContext();
   _renderBookmarksSorted();
@@ -3385,18 +3395,46 @@ function _cmCountCodes(node) {
   return node.codes.length + node.children.reduce((s, ch) => s + _cmCountCodes(ch), 0);
 }
 
+// Returns a Set of code IDs that have at least one quote matching the current filter,
+// or null when no filter is active (meaning: show everything).
+function _cmBuildFilteredCodeSet() {
+  if (!_cmFilterActive() || !(_cachedBookmarks || []).length) return null;
+  const ids = new Set();
+  _cachedBookmarks.forEach(bm => {
+    if (_cmFilterSuno === 'only'    && !truthy(bm.is_suno_team)) return;
+    if (_cmFilterSuno === 'exclude' &&  truthy(bm.is_suno_team)) return;
+    if (_cmFilterDateFrom || _cmFilterDateTo) {
+      const d = (bm.date || '').substring(0, 10);
+      if (_cmFilterDateFrom && d < _cmFilterDateFrom) return;
+      if (_cmFilterDateTo   && d > _cmFilterDateTo)   return;
+    }
+    (bm.codes      || []).forEach(c  => ids.add(c.id));
+    (bm.highlights || []).forEach(hl => ids.add(hl.code_id));
+  });
+  return ids;
+}
+
+function _cmCountVisibleCodes(node, visibleIds) {
+  if (visibleIds === null) return _cmCountCodes(node);
+  const direct = node.codes.filter(c => visibleIds.has(c.id)).length;
+  return direct + node.children.reduce((s, ch) => s + _cmCountVisibleCodes(ch, visibleIds), 0);
+}
+
 // ── Tree rendering ────────────────────────────────────────────────────────────
 
 function _cmRenderTree() {
   _cmComputeMaxDepth();
   const list = document.getElementById('cm-code-list');
   const roots = _cmBuildTree();
+  const visibleIds = _cmBuildFilteredCodeSet(); // null = no filter, show all
+
   const uncategorized = _cmCodes
     .filter(c => c.category_id == null)
+    .filter(c => visibleIds === null || visibleIds.has(c.id))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
   let html = '';
-  roots.forEach(node => { html += _cmRenderCatNode(node, 0); });
+  roots.forEach(node => { html += _cmRenderCatNode(node, 0, visibleIds); });
 
   // Uncategorized / unassigned open codings drop zone
   const ucCards = uncategorized.map(c => _cmRenderCodeCard(c, 0)).join('');
@@ -3416,10 +3454,17 @@ function _cmRenderTree() {
   list.innerHTML = html;
 }
 
-function _cmRenderCatNode(node, depth) {
+function _cmRenderCatNode(node, depth, visibleIds) {
+  const visibleCodes = visibleIds === null ? node.codes : node.codes.filter(c => visibleIds.has(c.id));
+  const childrenHtmlParts = node.children.map(ch => _cmRenderCatNode(ch, depth + 1, visibleIds));
+  const visibleChildrenHtml = childrenHtmlParts.filter(h => h !== '').join('');
+
+  // When filter is active, hide category entirely if it has no visible codes or children
+  if (visibleIds !== null && visibleCodes.length === 0 && !visibleChildrenHtml) return '';
+
+  const totalCodes   = _cmCountVisibleCodes(node, visibleIds);
+  const hasContent   = visibleCodes.length > 0 || visibleChildrenHtml !== '';
   const isCollapsed  = _cmCollapsed.has(node.id);
-  const hasContent   = node.children.length > 0 || node.codes.length > 0;
-  const totalCodes   = _cmCountCodes(node);
   const pl           = 8 + depth * 18;
   const isOpenCat    = _cmOpenCatId === node.id;
   const headerBg     = isOpenCat ? 'bg-slate-100' : 'hover:bg-gray-50';
@@ -3443,8 +3488,7 @@ function _cmRenderCatNode(node, depth) {
     return `<div class="cm-cat-node" data-cat-id="${node.id}">${header}</div>`;
   }
 
-  const childrenHtml = node.children.map(ch => _cmRenderCatNode(ch, depth + 1)).join('');
-  const codesHtml    = node.codes.map(c => _cmRenderCodeCard(c, depth + 1)).join('');
+  const codesHtml = visibleCodes.map(c => _cmRenderCodeCard(c, depth + 1)).join('');
 
   // Inner drop zone (always rendered so user can drop into an empty category)
   const dropZone = `
@@ -3455,7 +3499,7 @@ function _cmRenderCatNode(node, depth) {
     <div class="cm-cat-node" data-cat-id="${node.id}">
       ${header}
       <div class="cm-cat-children space-y-1 mt-0.5">
-        ${childrenHtml}
+        ${visibleChildrenHtml}
         <div class="space-y-1">${codesHtml}</div>
         ${dropZone}
       </div>
@@ -4481,6 +4525,7 @@ function _cmRenderClassicTable(container, excByCode) {
   function addCodeRows(code, cat3, cat2) {
     const excs = excByCode[code.id] || [];
     if (excs.length === 0) {
+      if (_cmFilterActive()) return; // hide codes with no matching quotes when filter is on
       flatRows.push({ cat3, cat2, code, exc: null });
     } else {
       excs.forEach(exc => flatRows.push({ cat3, cat2, code, exc }));
@@ -4650,6 +4695,7 @@ function _cmRenderHierarchyTable(container, excByCode) {
       </td>`;
 
     if (!excs.length) {
+      if (_cmFilterActive()) return ''; // hide codes with no matching quotes when filter is on
       return `<tr class="border-b border-gray-100 hover:bg-gray-50">
         ${codeCellHtml(1)}
         <td colspan="3" class="px-3 py-2 text-[10px] italic text-gray-300">No excerpts yet.</td>
@@ -4670,16 +4716,35 @@ function _cmRenderHierarchyTable(container, excByCode) {
 
   let tbody = '';
   function walkNode(node, depth) {
-    tbody += catHeaderRow(node, depth);
-    node.children.forEach(ch => walkNode(ch, depth + 1));
-    node.codes.forEach(code => { tbody += codeRows(code); });
+    // When filter active, collect children/codes into a buffer first so we can
+    // skip the category header entirely if nothing inside is visible.
+    if (_cmFilterActive()) {
+      const savedTbody = tbody;
+      tbody = '';
+      node.children.forEach(ch => walkNode(ch, depth + 1));
+      node.codes.forEach(code => { tbody += codeRows(code); });
+      const nodeBody = tbody;
+      tbody = savedTbody;
+      if (nodeBody) {
+        tbody += catHeaderRow(node, depth);
+        tbody += nodeBody;
+      }
+    } else {
+      tbody += catHeaderRow(node, depth);
+      node.children.forEach(ch => walkNode(ch, depth + 1));
+      node.codes.forEach(code => { tbody += codeRows(code); });
+    }
   }
   roots.forEach(node => walkNode(node, 0));
 
-  if (uncategorized.length) {
+  const visibleUncategorized = _cmFilterActive()
+    ? uncategorized.filter(c => (excByCode[c.id] || []).length > 0)
+    : uncategorized;
+
+  if (visibleUncategorized.length) {
     tbody += `<tr class="bg-gray-50"><td colspan="4" class="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
       Uncategorized Open Codings</td></tr>`;
-    uncategorized.forEach(code => { tbody += codeRows(code); });
+    visibleUncategorized.forEach(code => { tbody += codeRows(code); });
   }
 
   if (!tbody) {

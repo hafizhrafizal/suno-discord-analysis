@@ -1530,10 +1530,13 @@
         <label for="bm-sort" class="flex items-center gap-1.5 text-sm text-gray-700">
           <span>Sort by</span>
           <select id="bm-sort" class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 cursor-pointer">
+            <option value="date" selected>Content date</option>
             <option value="added">Bookmark added</option>
-            <option value="date">Content date</option>
             <option value="username">Username</option>
           </select>
+          <button id="bm-sort-dir" title="Toggle sort direction"
+                  class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-700 hover:bg-gray-100 transition-colors select-none"
+                  data-dir="desc">↓ Desc</button>
         </label>
         <label for="bm-filter-user" class="flex items-center gap-1.5 text-sm text-gray-700">
           <span class="shrink-0">Username</span>
