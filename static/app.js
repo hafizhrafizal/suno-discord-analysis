@@ -3613,6 +3613,7 @@ let _cmExpandedCodes  = new Set();  // code ids with excerpts expanded inline
 let _cmExcerptsCache  = {};         // code id → excerpt rows (or null while loading)
 let _cmDragCatId      = null;       // id of coding (category) being dragged
 let _cmDragExcerpt    = null;       // { bookmarkId, sourceCodeId } being dragged
+let _cmDragCopy       = false;      // true when Ctrl held at dragstart → copy instead of move
 let _cmOpenExcBmId    = null;       // bookmark_id open in excerpt panel
 let _cmOpenExcSrcId   = null;       // source code id open in excerpt panel
 let _cmOpenExcHlId    = null;       // highlight_id when a span-coding row is open (null for whole-bookmark)
@@ -3924,7 +3925,7 @@ function _cmRenderExcerptRow(r, codeId, accent) {
                draggable="true"
                data-bookmark-id="${r.bookmark_id}"
                data-source-code-id="${codeId}"
-               title="Click to edit · Drag to reassign">
+               title="Click to view · Drag to move · Ctrl+drag to copy">
     <div class="flex items-start gap-1.5">
       <div class="flex-1 min-w-0">
         <p class="text-xs italic text-gray-700 leading-relaxed">"${esc(snippet)}${more}"</p>
@@ -4059,6 +4060,12 @@ function _cmFlushDetailPanel() {
   document.getElementById('cm-edit-msg').classList.add('hidden');
   document.getElementById('cm-cat-edit-msg').classList.add('hidden');
   document.getElementById('cm-exc-panel-suggestions').classList.add('hidden');
+  const _ctxArea = document.getElementById('cm-exc-ctx-area');
+  const _ctxMsgs = document.getElementById('cm-exc-ctx-msgs');
+  const _ctxBtn  = document.getElementById('cm-exc-ctx-btn');
+  if (_ctxArea) _ctxArea.classList.add('hidden');
+  if (_ctxMsgs) { _ctxMsgs.classList.add('hidden'); _ctxMsgs.innerHTML = ''; }
+  if (_ctxBtn)  { _ctxBtn.dataset.open = 'false'; _ctxBtn.textContent = 'Show context ↕'; _ctxBtn.disabled = false; }
 }
 
 function _cmCloseDetail() {
@@ -4094,6 +4101,14 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
   document.getElementById('cm-exc-panel-source').textContent =
     [bm.username, bm.date ? bm.date.substring(0, 10) : null].filter(Boolean).join(' · ');
   textEl.style.borderLeftColor = srcCode ? srcCode.color : '#0d3e7f';
+
+  // Wire up conversation context toggle
+  const _ctxArea = document.getElementById('cm-exc-ctx-area');
+  const _ctxBtn  = document.getElementById('cm-exc-ctx-btn');
+  const _ctxMsgs = document.getElementById('cm-exc-ctx-msgs');
+  if (_ctxArea) _ctxArea.classList.remove('hidden');
+  if (_ctxBtn)  { _ctxBtn.dataset.msgId = bm.id || ''; _ctxBtn.dataset.open = 'false'; _ctxBtn.textContent = 'Show context ↕'; _ctxBtn.disabled = false; }
+  if (_ctxMsgs) { _ctxMsgs.classList.add('hidden'); _ctxMsgs.innerHTML = ''; }
 
   if (hlId !== null) {
     // ── Span-level coding view ──────────────────────────────────────────────
@@ -4377,12 +4392,13 @@ document.getElementById('cm-code-list').addEventListener('dragstart', e => {
   // Skip span-level highlight items (they are not draggable)
   const excerptItem = e.target.closest('.cm-excerpt-item');
   if (excerptItem && !excerptItem.dataset.highlightId) {
+    _cmDragCopy    = e.ctrlKey;
     _cmDragExcerpt = {
       bookmarkId:   parseInt(excerptItem.dataset.bookmarkId),
       sourceCodeId: parseInt(excerptItem.dataset.sourceCodeId),
     };
     _cmDragCodeId = null; _cmDragCatId = null;
-    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.effectAllowed = _cmDragCopy ? 'copy' : 'move';
     e.dataTransfer.setData('text/plain', 'excerpt');
     excerptItem.classList.add('opacity-50');
     return;
@@ -4412,9 +4428,10 @@ document.getElementById('cm-code-list').addEventListener('dragend', () => {
   _cmDragCodeId  = null;
   _cmDragCatId   = null;
   _cmDragExcerpt = null;
+  _cmDragCopy    = false;
   document.querySelectorAll('.cm-excerpt-item').forEach(i => i.classList.remove('opacity-50'));
   document.querySelectorAll('.cm-code-card').forEach(c => c.classList.remove('opacity-50'));
-  document.querySelectorAll('.cm-code-outer').forEach(o => o.classList.remove('ring-2', 'ring-green-400', 'rounded-xl'));
+  document.querySelectorAll('.cm-code-outer').forEach(o => o.classList.remove('ring-2', 'ring-green-400', 'ring-blue-400', 'rounded-xl'));
   document.querySelectorAll('.cm-cat-header').forEach(h => h.classList.remove('opacity-50', 'bg-indigo-50'));
   document.querySelectorAll('.cm-drop-zone').forEach(z => z.classList.remove('bg-indigo-100', 'ring-2', 'ring-indigo-400'));
 });
@@ -4425,7 +4442,10 @@ document.getElementById('cm-code-list').addEventListener('dragover', e => {
     const outer = e.target.closest('.cm-code-outer');
     if (outer && parseInt(outer.dataset.outerCodeId) !== _cmDragExcerpt.sourceCodeId) {
       e.preventDefault();
-      outer.classList.add('ring-2', 'ring-green-400', 'rounded-xl');
+      const isCopy = e.ctrlKey;
+      e.dataTransfer.dropEffect = isCopy ? 'copy' : 'move';
+      outer.classList.remove('ring-green-400', 'ring-blue-400');
+      outer.classList.add('ring-2', isCopy ? 'ring-blue-400' : 'ring-green-400', 'rounded-xl');
     }
     return;
   }
@@ -4445,7 +4465,7 @@ document.getElementById('cm-code-list').addEventListener('dragover', e => {
 document.getElementById('cm-code-list').addEventListener('dragleave', e => {
   if (_cmDragExcerpt !== null) {
     const outer = e.target.closest('.cm-code-outer');
-    if (outer) outer.classList.remove('ring-2', 'ring-green-400', 'rounded-xl');
+    if (outer) outer.classList.remove('ring-2', 'ring-green-400', 'ring-blue-400', 'rounded-xl');
     return;
   }
   const zone = e.target.closest('.cm-drop-zone');
@@ -4456,37 +4476,41 @@ document.getElementById('cm-code-list').addEventListener('dragleave', e => {
 
 document.getElementById('cm-code-list').addEventListener('drop', async e => {
   e.preventDefault();
-  document.querySelectorAll('.cm-code-outer').forEach(o => o.classList.remove('ring-2', 'ring-green-400', 'rounded-xl'));
+  document.querySelectorAll('.cm-code-outer').forEach(o => o.classList.remove('ring-2', 'ring-green-400', 'ring-blue-400', 'rounded-xl'));
   document.querySelectorAll('.cm-drop-zone').forEach(z => z.classList.remove('bg-indigo-100', 'ring-2', 'ring-indigo-400'));
   document.querySelectorAll('.cm-cat-header').forEach(h => h.classList.remove('bg-indigo-50', 'opacity-50'));
 
-  // ── Drop: excerpt → re-assign to another open coding ─────────────────────
+  // ── Drop: excerpt → re-assign (move) or copy to another open coding ───────
   if (_cmDragExcerpt !== null) {
-    const exc = _cmDragExcerpt;
+    const isCopy = e.ctrlKey;
+    const exc    = _cmDragExcerpt;
     _cmDragExcerpt = null;
+    _cmDragCopy    = false;
     const outer = e.target.closest('.cm-code-outer');
     if (!outer) return;
     const targetCodeId = parseInt(outer.dataset.outerCodeId);
     if (!targetCodeId || targetCodeId === exc.sourceCodeId) return;
     try {
       await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${targetCodeId}`, { method: 'POST' });
-      await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${exc.sourceCodeId}`, { method: 'DELETE' });
-      delete _cmExcerptsCache[exc.sourceCodeId];
+      if (!isCopy) {
+        await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${exc.sourceCodeId}`, { method: 'DELETE' });
+      }
+      if (!isCopy) delete _cmExcerptsCache[exc.sourceCodeId];
       delete _cmExcerptsCache[targetCodeId];
       // Update cached bookmark in place
       const bm = _cachedBookmarks.find(b => b.bookmark_id === exc.bookmarkId);
       if (bm) {
-        bm.codes = (bm.codes || []).filter(c => c.id !== exc.sourceCodeId);
+        if (!isCopy) bm.codes = (bm.codes || []).filter(c => c.id !== exc.sourceCodeId);
         if (!bm.codes.some(c => c.id === targetCodeId)) {
           const tc = _allCodes.find(c => c.id === targetCodeId);
           if (tc) bm.codes.push({ id: tc.id, name: tc.name, color: tc.color });
         }
       }
-      if (_cmExpandedCodes.has(exc.sourceCodeId)) _cmFetchExcerptsFor(exc.sourceCodeId);
+      if (!isCopy && _cmExpandedCodes.has(exc.sourceCodeId)) _cmFetchExcerptsFor(exc.sourceCodeId);
       if (_cmExpandedCodes.has(targetCodeId)) _cmFetchExcerptsFor(targetCodeId);
       await _cmRefresh();
       document.dispatchEvent(new CustomEvent('codebook-updated'));
-    } catch (err) { showErrorPopup('Move failed: ' + err.message); }
+    } catch (err) { showErrorPopup((isCopy ? 'Copy' : 'Move') + ' failed: ' + err.message); }
     return;
   }
 
@@ -4631,6 +4655,38 @@ document.getElementById('cm-cat-edit-delete').addEventListener('click', async ()
 document.getElementById('cm-detail-close').addEventListener('click', () => {
   _cmCloseDetail();
   _cmRenderTree();
+});
+
+// ── Excerpt panel: conversation context toggle ────────────────────────────────
+
+document.getElementById('cm-exc-ctx-btn').addEventListener('click', async function () {
+  const msgId   = parseInt(this.dataset.msgId);
+  const ctxMsgs = document.getElementById('cm-exc-ctx-msgs');
+  if (!msgId || !ctxMsgs) return;
+
+  if (this.dataset.open === 'true') {
+    ctxMsgs.classList.add('hidden');
+    this.dataset.open = 'false';
+    this.textContent  = 'Show context ↕';
+    return;
+  }
+
+  this.textContent = 'Loading...';
+  this.disabled    = true;
+  try {
+    const msgs = await apiFetch(`/api/context/${msgId}?before=3&after=3`);
+    ctxMsgs.innerHTML = `<div class="bg-slate-50 rounded-lg p-2.5 space-y-2">
+      <p class="text-[10px] text-gray-400 font-medium mb-1">${msgs.length} messages (3 before · 3 after)</p>
+      ${msgs.map(m => ctxMsg(m)).join('')}
+    </div>`;
+    ctxMsgs.classList.remove('hidden');
+    this.dataset.open = 'true';
+    this.textContent  = 'Hide context ↕';
+  } catch (_) {
+    this.textContent = 'Show context ↕';
+  } finally {
+    this.disabled = false;
+  }
 });
 
 // ── New Code panel ────────────────────────────────────────────────────────────

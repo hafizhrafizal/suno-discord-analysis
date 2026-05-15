@@ -1859,6 +1859,14 @@
             <div id="cm-exc-panel-text"
                  class="bg-gray-50 rounded-lg p-2.5 text-xs italic text-gray-600 max-h-28 overflow-y-auto leading-relaxed border-l-4"></div>
             <p id="cm-exc-panel-source" class="text-[11px] text-gray-400 -mt-1"></p>
+            <!-- Conversation context toggle -->
+            <div id="cm-exc-ctx-area" class="hidden">
+              <button id="cm-exc-ctx-btn" data-msg-id="" data-open="false"
+                      class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                Show context ↕
+              </button>
+              <div id="cm-exc-ctx-msgs" class="hidden mt-2 max-h-64 overflow-y-auto rounded-lg border border-gray-100"></div>
+            </div>
             <!-- Current codes -->
             <div>
               <p class="text-xs text-gray-600 mb-1.5 font-medium">Open Codings</p>
