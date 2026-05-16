@@ -3901,12 +3901,14 @@ function _cmRenderExcerptRow(r, codeId, accent) {
   const meta = `${esc(r.username || '')}${r.date ? ' · ' + esc(r.date.substring(0, 10)) : ''}`;
   if (r.type === 'highlight') {
     const hlSnippet = r.highlighted_text || '';
-    return `<div class="border-l-2 pl-2 py-1 cursor-pointer cm-excerpt-item group rounded-r-md transition-colors hover:bg-amber-50/60"
+    return `<div class="border-l-2 pl-2 py-1 cm-excerpt-item group rounded-r-md transition-colors hover:bg-amber-50/60"
                  style="border-color:${accent}"
+                 draggable="true"
                  data-bookmark-id="${r.bookmark_id}"
                  data-source-code-id="${codeId}"
                  data-highlight-id="${r.highlight_id}"
-                 title="Click to view span coding">
+                 data-hl-text="${esc(hlSnippet)}"
+                 title="Drag to move · Ctrl+drag to copy">
       <div class="flex items-start gap-1.5">
         <div class="flex-1 min-w-0">
           <p class="text-xs italic text-gray-800 leading-relaxed font-medium">"${esc(hlSnippet)}"</p>
@@ -3915,6 +3917,7 @@ function _cmRenderExcerptRow(r, codeId, accent) {
             <span class="text-gray-400">${meta}</span>
           </p>
         </div>
+        <span class="text-gray-300 shrink-0 mt-0.5 text-[11px] leading-none">⠿</span>
       </div>
     </div>`;
   }
@@ -4407,13 +4410,15 @@ document.getElementById('cm-code-list').addEventListener('selectstart', e => {
 document.getElementById('cm-code-list').addEventListener('dragstart', e => {
   // Excerpt drag — must be checked first (excerpts are inside code-outer wrappers)
   // Skip span-level highlight items (they are not draggable)
-  const excerptItem = e.target.closest('.cm-excerpt-item');
-  if (excerptItem && !excerptItem.dataset.highlightId) {
+  const excerptItem = e.target.closest('.cm-excerpt-item[draggable="true"]');
+  if (excerptItem) {
     _cmExcMdEl  = null;   // cancel click detection — this is a real drag
     _cmDragCopy = e.ctrlKey;
     _cmDragExcerpt = {
       bookmarkId:   parseInt(excerptItem.dataset.bookmarkId),
       sourceCodeId: parseInt(excerptItem.dataset.sourceCodeId),
+      highlightId:  excerptItem.dataset.highlightId ? parseInt(excerptItem.dataset.highlightId) : null,
+      hlText:       excerptItem.dataset.hlText || null,
     };
     _cmDragCodeId = null; _cmDragCatId = null;
     e.dataTransfer.effectAllowed = _cmDragCopy ? 'copy' : 'move';
@@ -4509,21 +4514,44 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
     const targetCodeId = parseInt(outer.dataset.outerCodeId);
     if (!targetCodeId || targetCodeId === exc.sourceCodeId) return;
     try {
-      await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${targetCodeId}`, { method: 'POST' });
-      if (!isCopy) {
-        await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${exc.sourceCodeId}`, { method: 'DELETE' });
+      if (exc.highlightId !== null) {
+        // ── Span highlight drag ──────────────────────────────────────────────
+        // Create the highlight under the target code
+        await apiFetch(`/api/bookmarks/${exc.bookmarkId}/highlights`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code_id: targetCodeId, highlighted_text: exc.hlText }),
+        });
+        if (!isCopy) {
+          await apiFetch(`/api/bookmarks/${exc.bookmarkId}/highlights/${exc.highlightId}`, { method: 'DELETE' });
+        }
+        // Update cached bookmark highlights
+        const bm = _cachedBookmarks.find(b => b.bookmark_id === exc.bookmarkId);
+        if (bm) {
+          if (!isCopy) bm.highlights = (bm.highlights || []).filter(h => h.id !== exc.highlightId);
+          const tc = _allCodes.find(c => c.id === targetCodeId);
+          if (tc) bm.highlights = [...(bm.highlights || []), {
+            code_id: targetCodeId, code_name: tc.name, code_color: tc.color,
+            highlighted_text: exc.hlText,
+          }];
+        }
+      } else {
+        // ── Whole-bookmark coding drag ───────────────────────────────────────
+        await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${targetCodeId}`, { method: 'POST' });
+        if (!isCopy) {
+          await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${exc.sourceCodeId}`, { method: 'DELETE' });
+        }
+        const bm = _cachedBookmarks.find(b => b.bookmark_id === exc.bookmarkId);
+        if (bm) {
+          if (!isCopy) bm.codes = (bm.codes || []).filter(c => c.id !== exc.sourceCodeId);
+          if (!bm.codes.some(c => c.id === targetCodeId)) {
+            const tc = _allCodes.find(c => c.id === targetCodeId);
+            if (tc) bm.codes.push({ id: tc.id, name: tc.name, color: tc.color });
+          }
+        }
       }
       if (!isCopy) delete _cmExcerptsCache[exc.sourceCodeId];
       delete _cmExcerptsCache[targetCodeId];
-      // Update cached bookmark in place
-      const bm = _cachedBookmarks.find(b => b.bookmark_id === exc.bookmarkId);
-      if (bm) {
-        if (!isCopy) bm.codes = (bm.codes || []).filter(c => c.id !== exc.sourceCodeId);
-        if (!bm.codes.some(c => c.id === targetCodeId)) {
-          const tc = _allCodes.find(c => c.id === targetCodeId);
-          if (tc) bm.codes.push({ id: tc.id, name: tc.name, color: tc.color });
-        }
-      }
       if (!isCopy && _cmExpandedCodes.has(exc.sourceCodeId)) _cmFetchExcerptsFor(exc.sourceCodeId);
       if (_cmExpandedCodes.has(targetCodeId)) _cmFetchExcerptsFor(targetCodeId);
       await _cmRefresh();
