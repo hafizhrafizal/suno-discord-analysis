@@ -4331,25 +4331,6 @@ document.getElementById('cm-code-list').addEventListener('click', e => {
     return;
   }
 
-  // Excerpt item click → open coding panel
-  const excerptItem = e.target.closest('.cm-excerpt-item');
-  if (excerptItem) {
-    e.stopPropagation();
-    const bmId    = parseInt(excerptItem.dataset.bookmarkId);
-    const srcCode = parseInt(excerptItem.dataset.sourceCodeId);
-    const hlIdStr = excerptItem.dataset.highlightId;
-    if (hlIdStr) {
-      // Span-level coding — look up the highlighted text from cache
-      const hlId   = parseInt(hlIdStr);
-      const cached = _cmExcerptsCache[srcCode];
-      const row    = cached?.find(r => r.highlight_id === hlId);
-      _cmOpenExcerptPanel(bmId, srcCode, hlId, row?.highlighted_text || '');
-    } else {
-      _cmOpenExcerptPanel(bmId, srcCode);
-    }
-    return;
-  }
-
   // Code card
   const card = e.target.closest('.cm-code-card');
   if (!card) return;
@@ -4383,7 +4364,42 @@ document.getElementById('cm-code-list').addEventListener('click', e => {
 
 // ── Drag & drop ───────────────────────────────────────────────────────────────
 
-// Prevent text-selection drag from hijacking excerpt item drags
+// ── Excerpt item mouse handling: prevent text selection, detect click vs drag ──
+
+let _cmExcMdEl = null;  // element where mousedown started
+let _cmExcMdX  = 0;
+let _cmExcMdY  = 0;
+
+document.getElementById('cm-code-list').addEventListener('mousedown', e => {
+  const item = e.target.closest('.cm-excerpt-item');
+  if (!item) return;
+  e.preventDefault();           // kills browser text-selection before it starts
+  _cmExcMdEl = item;
+  _cmExcMdX  = e.clientX;
+  _cmExcMdY  = e.clientY;
+});
+
+document.getElementById('cm-code-list').addEventListener('mouseup', e => {
+  const el = _cmExcMdEl;
+  _cmExcMdEl = null;
+  if (!el) return;
+  const moved = Math.abs(e.clientX - _cmExcMdX) > 5 || Math.abs(e.clientY - _cmExcMdY) > 5;
+  if (moved) return;   // was a drag, not a click
+  // Treat as click → open excerpt / span-coding panel
+  const bmId    = parseInt(el.dataset.bookmarkId);
+  const srcCode = parseInt(el.dataset.sourceCodeId);
+  const hlIdStr = el.dataset.highlightId;
+  if (hlIdStr) {
+    const hlId   = parseInt(hlIdStr);
+    const cached = _cmExcerptsCache[srcCode];
+    const row    = cached?.find(r => r.highlight_id === hlId);
+    _cmOpenExcerptPanel(bmId, srcCode, hlId, row?.highlighted_text || '');
+  } else {
+    _cmOpenExcerptPanel(bmId, srcCode);
+  }
+});
+
+// Belt-and-suspenders: also kill selectstart on excerpt items
 document.getElementById('cm-code-list').addEventListener('selectstart', e => {
   if (e.target.closest('.cm-excerpt-item[draggable="true"]')) e.preventDefault();
 });
@@ -4393,7 +4409,8 @@ document.getElementById('cm-code-list').addEventListener('dragstart', e => {
   // Skip span-level highlight items (they are not draggable)
   const excerptItem = e.target.closest('.cm-excerpt-item');
   if (excerptItem && !excerptItem.dataset.highlightId) {
-    _cmDragCopy    = e.ctrlKey;
+    _cmExcMdEl  = null;   // cancel click detection — this is a real drag
+    _cmDragCopy = e.ctrlKey;
     _cmDragExcerpt = {
       bookmarkId:   parseInt(excerptItem.dataset.bookmarkId),
       sourceCodeId: parseInt(excerptItem.dataset.sourceCodeId),
