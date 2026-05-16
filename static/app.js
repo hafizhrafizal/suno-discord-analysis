@@ -4376,7 +4376,8 @@ let _cmExcMdY  = 0;
 document.getElementById('cm-code-list').addEventListener('mousedown', e => {
   const item = e.target.closest('.cm-excerpt-item');
   if (!item) return;
-  e.preventDefault();           // kills browser text-selection before it starts
+  // Do NOT preventDefault here — it would kill dragstart in Chrome/Edge.
+  // Text selection is prevented by CSS user-select:none !important on the element.
   _cmExcMdEl = item;
   _cmExcMdX  = e.clientX;
   _cmExcMdY  = e.clientY;
