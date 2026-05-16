@@ -3921,18 +3921,18 @@ function _cmRenderExcerptRow(r, codeId, accent) {
   const snippet = (r.content || '').substring(0, 180);
   const more    = (r.content || '').length > 180 ? '…' : '';
   return `<div class="border-l-2 pl-2 py-1 cm-excerpt-item group rounded-r-md transition-colors hover:bg-indigo-50/60"
-               style="border-color:${accent};user-select:none;-webkit-user-select:none;-moz-user-select:none;-webkit-user-drag:element;cursor:grab"
+               style="border-color:${accent}"
                draggable="true"
                data-bookmark-id="${r.bookmark_id}"
                data-source-code-id="${codeId}"
-               title="Click to view · Drag to move · Ctrl+drag to copy">
+               title="Drag to move · Ctrl+drag to copy">
     <div class="flex items-start gap-1.5">
       <div class="flex-1 min-w-0">
-        <p class="text-xs italic text-gray-700 leading-relaxed" style="pointer-events:none;user-select:none">"${esc(snippet)}${more}"</p>
-        <p class="text-[10px] text-gray-400 mt-0.5" style="pointer-events:none;user-select:none">${meta}</p>
-        ${r.note ? `<p class="text-[10px] text-indigo-600" style="pointer-events:none;user-select:none">${esc(r.note)}</p>` : ''}
+        <p class="text-xs italic text-gray-700 leading-relaxed">"${esc(snippet)}${more}"</p>
+        <p class="text-[10px] text-gray-400 mt-0.5">${meta}</p>
+        ${r.note ? `<p class="text-[10px] text-indigo-600">${esc(r.note)}</p>` : ''}
       </div>
-      <span class="opacity-0 group-hover:opacity-40 text-gray-400 shrink-0 mt-0.5 text-[11px] leading-none select-none pointer-events-none">⠿</span>
+      <span class="text-gray-300 shrink-0 mt-0.5 text-[11px] leading-none">⠿</span>
     </div>
   </div>`;
 }

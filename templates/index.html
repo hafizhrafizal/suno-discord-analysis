@@ -126,6 +126,22 @@
       background: #c7d2fe; /* indigo-200 */
       color: #1e1b4b;      /* indigo-950 */
     }
+
+    /* Coding-manager excerpt rows: fully drag-only, zero text selection */
+    .cm-excerpt-item[draggable="true"] {
+      -webkit-user-drag: element;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      -moz-user-select: none !important;
+      -ms-user-select: none !important;
+      cursor: grab;
+    }
+    .cm-excerpt-item[draggable="true"] * {
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      -moz-user-select: none !important;
+      pointer-events: none !important;
+    }
   </style>
 </head>
 <body class="bg-slate-100 text-gray-900 min-h-screen overflow-x-hidden">
