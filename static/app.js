@@ -3921,18 +3921,18 @@ function _cmRenderExcerptRow(r, codeId, accent) {
   const snippet = (r.content || '').substring(0, 180);
   const more    = (r.content || '').length > 180 ? '…' : '';
   return `<div class="border-l-2 pl-2 py-1 cm-excerpt-item group rounded-r-md transition-colors hover:bg-indigo-50/60"
-               style="border-color:${accent};user-select:none;-webkit-user-select:none;-webkit-user-drag:element;cursor:grab"
+               style="border-color:${accent};user-select:none;-webkit-user-select:none;-moz-user-select:none;-webkit-user-drag:element;cursor:grab"
                draggable="true"
                data-bookmark-id="${r.bookmark_id}"
                data-source-code-id="${codeId}"
                title="Click to view · Drag to move · Ctrl+drag to copy">
-    <div class="flex items-start gap-1.5" style="pointer-events:none">
+    <div class="flex items-start gap-1.5">
       <div class="flex-1 min-w-0">
-        <p class="text-xs italic text-gray-700 leading-relaxed">"${esc(snippet)}${more}"</p>
-        <p class="text-[10px] text-gray-400 mt-0.5">${meta}</p>
-        ${r.note ? `<p class="text-[10px] text-indigo-600">${esc(r.note)}</p>` : ''}
+        <p class="text-xs italic text-gray-700 leading-relaxed" style="pointer-events:none;user-select:none">"${esc(snippet)}${more}"</p>
+        <p class="text-[10px] text-gray-400 mt-0.5" style="pointer-events:none;user-select:none">${meta}</p>
+        ${r.note ? `<p class="text-[10px] text-indigo-600" style="pointer-events:none;user-select:none">${esc(r.note)}</p>` : ''}
       </div>
-      <span class="opacity-0 group-hover:opacity-40 text-gray-400 shrink-0 mt-0.5 text-[11px] leading-none">⠿</span>
+      <span class="opacity-0 group-hover:opacity-40 text-gray-400 shrink-0 mt-0.5 text-[11px] leading-none select-none pointer-events-none">⠿</span>
     </div>
   </div>`;
 }
@@ -4383,6 +4383,11 @@ document.getElementById('cm-code-list').addEventListener('click', e => {
 
 // ── Drag & drop ───────────────────────────────────────────────────────────────
 
+// Prevent text-selection drag from hijacking excerpt item drags
+document.getElementById('cm-code-list').addEventListener('selectstart', e => {
+  if (e.target.closest('.cm-excerpt-item[draggable="true"]')) e.preventDefault();
+});
+
 document.getElementById('cm-code-list').addEventListener('dragstart', e => {
   // Excerpt drag — must be checked first (excerpts are inside code-outer wrappers)
   // Skip span-level highlight items (they are not draggable)
@@ -4655,28 +4660,43 @@ document.getElementById('cm-detail-close').addEventListener('click', () => {
 
 // ── Excerpt panel: conversation context popup ────────────────────────────────
 
+let _cmCtxActiveMsgId  = null;
+let _cmCtxActiveSource = '';
+
+async function _cmCtxLoad(msgId, source) {
+  const metaEl  = document.getElementById('cm-ctx-modal-meta');
+  const bodyEl  = document.getElementById('cm-ctx-modal-body');
+  const before  = Math.max(0, parseInt(document.getElementById('cm-ctx-before').value) || 10);
+  const after   = Math.max(0, parseInt(document.getElementById('cm-ctx-after').value)  || 10);
+  bodyEl.innerHTML = '<p class="text-xs text-gray-400 text-center py-6">Loading…</p>';
+  try {
+    const msgs = await apiFetch(`/api/context/${msgId}?before=${before}&after=${after}`);
+    metaEl.textContent = source
+      ? `${source} · ${msgs.length} messages (${before} before · ${after} after)`
+      : `${msgs.length} messages (${before} before · ${after} after)`;
+    bodyEl.innerHTML = msgs.map(m => ctxMsg(m)).join('');
+    // Scroll to the bookmarked (target) message
+    requestAnimationFrame(() => {
+      const target = bodyEl.querySelector('.ctx-target');
+      if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  } catch (err) {
+    bodyEl.innerHTML = `<p class="text-xs text-red-500 text-center py-6">${esc(err.message)}</p>`;
+  }
+}
+
 document.getElementById('cm-exc-ctx-btn').addEventListener('click', async function () {
   const msgId  = parseInt(this.dataset.msgId);
   const source = this.dataset.source || '';
   if (!msgId) return;
+  _cmCtxActiveMsgId  = msgId;
+  _cmCtxActiveSource = source;
+  document.getElementById('cm-ctx-modal').classList.remove('hidden');
+  await _cmCtxLoad(msgId, source);
+});
 
-  const modal    = document.getElementById('cm-ctx-modal');
-  const metaEl   = document.getElementById('cm-ctx-modal-meta');
-  const bodyEl   = document.getElementById('cm-ctx-modal-body');
-  const origText = this.textContent;
-  this.textContent = 'Loading…';
-  this.disabled    = true;
-  try {
-    const msgs = await apiFetch(`/api/context/${msgId}?before=10&after=10`);
-    metaEl.textContent = source ? `${source} · ${msgs.length} messages` : `${msgs.length} messages`;
-    bodyEl.innerHTML   = msgs.map(m => ctxMsg(m)).join('');
-    modal.classList.remove('hidden');
-  } catch (err) {
-    showErrorPopup('Failed to load context: ' + err.message);
-  } finally {
-    this.textContent = origText;
-    this.disabled    = false;
-  }
+document.getElementById('cm-ctx-reload-btn').addEventListener('click', async () => {
+  if (_cmCtxActiveMsgId) await _cmCtxLoad(_cmCtxActiveMsgId, _cmCtxActiveSource);
 });
 
 document.getElementById('cm-ctx-modal-close').addEventListener('click', () => {
