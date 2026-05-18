@@ -2655,10 +2655,14 @@ function _renderBmCodePanel(bookmarkId) {
   const panel = document.getElementById(`bm-code-panel-${bookmarkId}`);
   if (!panel) return;
   panel.innerHTML = `
-    <div class=”p-2”>
+    <div class=”p-2 border border-dashed border-indigo-200 rounded-xl bg-indigo-50/30”>
+      <div class=”flex items-start justify-between gap-2 mb-2”>
+        <p class=”text-xs font-medium text-indigo-700”>Coding whole quote</p>
+        <button class=”bm-code-panel-close text-gray-400 hover:text-gray-600 leading-none shrink-0 text-sm” data-bm-id=”${bookmarkId}”>✕</button>
+      </div>
       <div class=”flex items-center gap-1.5”>
         <div class=”relative flex-1 min-w-0”>
-          <input class=”bm-new-code-input w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300”
+          <input class=”bm-new-code-input w-full border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300”
                  placeholder=”Type to search or create a code…” data-bm-id=”${bookmarkId}” autocomplete=”off” />
           <div class=”bm-code-suggestions hidden absolute left-0 top-full mt-0.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 w-full max-h-44 overflow-y-auto”
                data-bm-id=”${bookmarkId}” data-type=”whole”></div>
@@ -3090,6 +3094,14 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
       createBtn.disabled = false;
       createBtn.textContent = 'Add';
     }
+    return;
+  }
+
+  // Close whole-quote code picker
+  const codeClose = e.target.closest('.bm-code-panel-close');
+  if (codeClose) {
+    const bmId = parseInt(codeClose.dataset.bmId);
+    document.getElementById(`bm-code-panel-${bmId}`)?.classList.add('hidden');
     return;
   }
 
