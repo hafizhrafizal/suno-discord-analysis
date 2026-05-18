@@ -2653,44 +2653,19 @@ function _bmCodeChipsHtml(bm) {
 // -- Render the inline code picker panel -------------------------------------
 function _renderBmCodePanel(bookmarkId) {
   const panel = document.getElementById(`bm-code-panel-${bookmarkId}`);
-  const bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
-  if (!panel || !bm) return;
-  const assignedIds = new Set((bm.codes || []).map(l => l.id));
-  // Always show assigned codes; supplement with up to 10 most-recent unassigned codes
-  const assigned   = _allCodes.filter(l => assignedIds.has(l.id));
-  const recentUnassigned = _allCodes
-    .filter(l => !assignedIds.has(l.id))
-    .sort((a, b) => b.id - a.id)
-    .slice(0, 10);
-  const chipsToShow = [...assigned, ...recentUnassigned];
-  const existingChips = chipsToShow.length
-    ? `<div class=”flex flex-wrap gap-1.5 mb-2”>
-        ${chipsToShow.map(l => {
-          const active = assignedIds.has(l.id);
-          const bg     = active ? l.color : '#f8fafc';
-          const tc     = active ? labelTextColor(l.color) : '#64748b';
-          const border = active ? l.color : '#cbd5e1';
-          return `<button class=”bm-code-toggle text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all”
-                          data-bm-id=”${bookmarkId}” data-code-id=”${l.id}”
-                          style=”background:${bg};color:${tc};border-color:${border}”>
-                    ${active ? '” ' : ''}${esc(l.name)}
-                  </button>`;
-        }).join('')}
-      </div>`
-    : '';
+  if (!panel) return;
   panel.innerHTML = `
-    <div class="p-2">
-      ${existingChips}
-      <div class="flex items-center gap-1.5 pt-1 border-t border-gray-100">
-        <div class="relative flex-1 min-w-0">
-          <input class="bm-new-code-input w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                 placeholder="New code name..." data-bm-id="${bookmarkId}" autocomplete="off" />
-          <div class="bm-code-suggestions hidden absolute left-0 top-full mt-0.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 w-full max-h-44 overflow-y-auto"
-               data-bm-id="${bookmarkId}" data-type="whole"></div>
+    <div class=”p-2”>
+      <div class=”flex items-center gap-1.5”>
+        <div class=”relative flex-1 min-w-0”>
+          <input class=”bm-new-code-input w-full border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300”
+                 placeholder=”Type to search or create a code…” data-bm-id=”${bookmarkId}” autocomplete=”off” />
+          <div class=”bm-code-suggestions hidden absolute left-0 top-full mt-0.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 w-full max-h-44 overflow-y-auto”
+               data-bm-id=”${bookmarkId}” data-type=”whole”></div>
         </div>
-        ${_colorPickerHtml('', _randomCodeColor(), 'bm-new-code-color', `data-bm-id="${bookmarkId}"`)}
-        <button class="bm-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
-                data-bm-id="${bookmarkId}">Add</button>
+        ${_colorPickerHtml('', _randomCodeColor(), 'bm-new-code-color', `data-bm-id=”${bookmarkId}”`)}
+        <button class=”bm-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0”
+                data-bm-id=”${bookmarkId}”>Add</button>
       </div>
     </div>`;
 }
