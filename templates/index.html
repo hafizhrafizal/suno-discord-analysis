@@ -1655,9 +1655,11 @@
       </div>
 
       <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="bookmarks-heading">
-        <div class="flex items-center gap-2 mb-4">
+        <div class="flex items-center gap-2 mb-4 flex-wrap">
           <h2 id="bookmarks-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide">Saved Bookmarks</h2>
           <span id="bm-result-count" class="hidden text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700"></span>
+          <span id="bm-coded-count" class="hidden text-xs font-semibold px-2 py-0.5 rounded-full bg-green-50 text-green-700"></span>
+          <button id="bm-close-all-panels" class="hidden ml-auto text-xs text-gray-500 hover:text-gray-700 border border-gray-300 hover:border-gray-400 rounded-lg px-2.5 py-0.5 transition-colors">Close all coding sections</button>
         </div>
         <div id="bookmarks-container" class="space-y-4" aria-live="polite">
           <p class="text-sm text-gray-600 text-center py-8">Loading bookmarks…</p>

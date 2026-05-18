@@ -2870,9 +2870,14 @@ function _renderBookmarksSorted() {
   const container  = document.getElementById('bookmarks-container');
   const countBadge = document.getElementById('bm-result-count');
 
+  const codedBadge     = document.getElementById('bm-coded-count');
+  const closeAllBtn    = document.getElementById('bm-close-all-panels');
+
   if (!_cachedBookmarks.length) {
     container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No bookmarks yet. Use the bookmark button on any search result.</p>';
-    if (countBadge) countBadge.classList.add('hidden');
+    if (countBadge)  countBadge.classList.add('hidden');
+    if (codedBadge)  codedBadge.classList.add('hidden');
+    if (closeAllBtn) closeAllBtn.classList.add('hidden');
     return;
   }
 
@@ -2882,10 +2887,18 @@ function _renderBookmarksSorted() {
 
   if (countBadge) {
     countBadge.classList.remove('hidden');
-    countBadge.textContent = shown === total
-      ? `${total}`
-      : `${shown} / ${total}`;
+    countBadge.textContent = shown === total ? `${total}` : `${shown} / ${total}`;
   }
+
+  if (codedBadge) {
+    const codedCount = _cachedBookmarks.filter(bm =>
+      (bm.codes?.length > 0) || (bm.highlights?.length > 0)
+    ).length;
+    codedBadge.classList.toggle('hidden', codedCount === 0);
+    codedBadge.textContent = `${codedCount} / ${total} coded`;
+  }
+
+  if (closeAllBtn) closeAllBtn.classList.remove('hidden');
 
   if (!filtered.length) {
     container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No bookmarks match the current filters.</p>';
@@ -3328,6 +3341,11 @@ document.getElementById('bm-sort-dir').addEventListener('click', () => {
 document.getElementById('bm-filter-suno').addEventListener('change', () => {
   _collapseAllBmContext();
   _renderBookmarksSorted();
+});
+
+document.getElementById('bm-close-all-panels').addEventListener('click', () => {
+  document.querySelectorAll('[id^="bm-code-panel-"]').forEach(p => p.classList.add('hidden'));
+  document.querySelectorAll('[id^="bm-hl-panel-"]').forEach(p => p.classList.add('hidden'));
 });
 
 // Keyboard nav for code-name inputs and their suggestion dropdowns
