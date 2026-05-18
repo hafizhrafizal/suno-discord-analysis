@@ -2656,17 +2656,24 @@ function _renderBmCodePanel(bookmarkId) {
   const bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
   if (!panel || !bm) return;
   const assignedIds = new Set((bm.codes || []).map(l => l.id));
-  const existingChips = _allCodes.length
-    ? `<div class="flex flex-wrap gap-1.5 mb-2">
-        ${_allCodes.map(l => {
+  // Always show assigned codes; supplement with up to 10 most-recent unassigned codes
+  const assigned   = _allCodes.filter(l => assignedIds.has(l.id));
+  const recentUnassigned = _allCodes
+    .filter(l => !assignedIds.has(l.id))
+    .sort((a, b) => b.id - a.id)
+    .slice(0, 10);
+  const chipsToShow = [...assigned, ...recentUnassigned];
+  const existingChips = chipsToShow.length
+    ? `<div class=”flex flex-wrap gap-1.5 mb-2”>
+        ${chipsToShow.map(l => {
           const active = assignedIds.has(l.id);
           const bg     = active ? l.color : '#f8fafc';
           const tc     = active ? labelTextColor(l.color) : '#64748b';
           const border = active ? l.color : '#cbd5e1';
-          return `<button class="bm-code-toggle text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all"
-                          data-bm-id="${bookmarkId}" data-code-id="${l.id}"
-                          style="background:${bg};color:${tc};border-color:${border}">
-                    ${active ? '“ ' : ''}${esc(l.name)}
+          return `<button class=”bm-code-toggle text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all”
+                          data-bm-id=”${bookmarkId}” data-code-id=”${l.id}”
+                          style=”background:${bg};color:${tc};border-color:${border}”>
+                    ${active ? '” ' : ''}${esc(l.name)}
                   </button>`;
         }).join('')}
       </div>`
