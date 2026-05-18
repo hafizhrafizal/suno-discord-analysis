@@ -3668,6 +3668,9 @@ async function _cmRefresh() {
       apiFetch('/api/codes'),
       apiFetch('/api/code-categories'),
     ]);
+    if (_cmFilterActive()) {
+      _cachedBookmarks = await apiFetch('/api/bookmarks');
+    }
   } catch (e) {
     document.getElementById('cm-code-list').innerHTML =
       `<p class="text-sm text-red-500 text-center py-8">Failed to load: ${esc(e.message)}</p>`;
@@ -4927,12 +4930,15 @@ document.getElementById('cm-table-reload-btn').addEventListener('click', _cmLoad
 
 // ── Coding filter listeners ───────────────────────────────────────────────────
 
-function _cmApplyFilter() {
+async function _cmApplyFilter() {
   _cmFilterDateFrom = document.getElementById('cm-filter-month-from').value || '';
   _cmFilterDateTo   = document.getElementById('cm-filter-month-to').value   || '';
   _cmFilterSuno     = document.getElementById('cm-filter-suno').value        || 'all';
   const clearBtn = document.getElementById('cm-filter-clear');
   if (clearBtn) clearBtn.classList.toggle('hidden', !_cmFilterActive());
+  if (_cmFilterActive()) {
+    _cachedBookmarks = await apiFetch('/api/bookmarks');
+  }
   // Re-render both views with updated filter
   _cmRenderTree();
   _cmRenderCodingTable();
