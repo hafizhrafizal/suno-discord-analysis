@@ -3614,6 +3614,7 @@ let _cmExcerptsCache  = {};         // code id → excerpt rows (or null while l
 let _cmDragCatId      = null;       // id of coding (category) being dragged
 let _cmDragExcerpt    = null;       // { bookmarkId, sourceCodeId } being dragged
 let _cmDragCopy       = false;      // true when Ctrl held at dragstart → copy instead of move
+let _cmDragScrollRAF  = null;       // rAF id for edge-scroll during drag
 let _cmOpenExcBmId    = null;       // bookmark_id open in excerpt panel
 let _cmOpenExcSrcId   = null;       // source code id open in excerpt panel
 let _cmOpenExcHlId    = null;       // highlight_id when a span-coding row is open (null for whole-bookmark)
@@ -4451,7 +4452,30 @@ document.getElementById('cm-code-list').addEventListener('dragstart', e => {
   }
 });
 
+// Auto-scroll the page when dragging near the top/bottom viewport edge.
+function _cmCancelDragScroll() {
+  if (_cmDragScrollRAF !== null) { cancelAnimationFrame(_cmDragScrollRAF); _cmDragScrollRAF = null; }
+}
+
+document.addEventListener('dragover', e => {
+  const active = _cmDragCodeId !== null || _cmDragCatId !== null || _cmDragExcerpt !== null;
+  if (!active) { _cmCancelDragScroll(); return; }
+  const EDGE = 80, MAX_SPEED = 14;
+  const y = e.clientY, h = window.innerHeight;
+  _cmCancelDragScroll();
+  if (y < EDGE) {
+    const speed = Math.max(1, Math.round(MAX_SPEED * (1 - y / EDGE)));
+    const tick  = () => { window.scrollBy(0, -speed); _cmDragScrollRAF = requestAnimationFrame(tick); };
+    _cmDragScrollRAF = requestAnimationFrame(tick);
+  } else if (y > h - EDGE) {
+    const speed = Math.max(1, Math.round(MAX_SPEED * (1 - (h - y) / EDGE)));
+    const tick  = () => { window.scrollBy(0,  speed); _cmDragScrollRAF = requestAnimationFrame(tick); };
+    _cmDragScrollRAF = requestAnimationFrame(tick);
+  }
+});
+
 document.getElementById('cm-code-list').addEventListener('dragend', () => {
+  _cmCancelDragScroll();
   _cmDragCodeId  = null;
   _cmDragCatId   = null;
   _cmDragExcerpt = null;
@@ -5403,6 +5427,14 @@ function _cmRenderHierarchyTable(container, excByCode) {
 document.getElementById('cm-table-export-btn').addEventListener('click', () => {
   const excByCode = {};
   (_cachedBookmarks || []).forEach(bm => {
+    // Apply the same filter as the coding table view
+    if (_cmFilterSuno === 'only'    && !truthy(bm.is_suno_team)) return;
+    if (_cmFilterSuno === 'exclude' &&  truthy(bm.is_suno_team)) return;
+    if (_cmFilterDateFrom || _cmFilterDateTo) {
+      const d = (bm.date || '').substring(0, 7);
+      if (_cmFilterDateFrom && d < _cmFilterDateFrom) return;
+      if (_cmFilterDateTo   && d > _cmFilterDateTo)   return;
+    }
     const meta = { username: bm.username || '', date: (bm.date || '').substring(0, 10), note: bm.note || '' };
     (bm.codes || []).forEach(code => {
       (excByCode[code.id] = excByCode[code.id] || []).push({ ...meta, content: bm.content || '' });
@@ -5425,9 +5457,10 @@ document.getElementById('cm-table-export-btn').addEventListener('click', () => {
   const uncategorized = _cmCodes.filter(c => c.category_id == null);
 
   function csvCode(code) {
+    const excs = excByCode[code.id] || [];
+    if (_cmFilterActive() && excs.length === 0) return; // hide codes with no matching quotes under filter
     const path = _cmGetCatPath(code.category_id).map(c => c.name).join(' > ');
-    const excs = excByCode[code.id] || [null];
-    excs.forEach(exc => {
+    (excs.length ? excs : [null]).forEach(exc => {
       rows.push([
         path, code.name, code.description || '',
         exc ? exc.content : '', exc ? exc.username : '', exc ? exc.date : '', exc ? exc.note : '',
