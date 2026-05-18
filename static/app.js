@@ -2891,11 +2891,11 @@ function _renderBookmarksSorted() {
   }
 
   if (codedBadge) {
-    const codedCount = _cachedBookmarks.filter(bm =>
+    const codedCount = filtered.filter(bm =>
       (bm.codes?.length > 0) || (bm.highlights?.length > 0)
     ).length;
-    codedBadge.classList.toggle('hidden', codedCount === 0);
-    codedBadge.textContent = `${codedCount} / ${total} coded`;
+    codedBadge.classList.toggle('hidden', shown === 0);
+    codedBadge.textContent = `coded ${codedCount} / ${shown}`;
   }
 
   if (closeAllBtn) closeAllBtn.classList.remove('hidden');
