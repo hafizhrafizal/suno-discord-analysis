@@ -2668,6 +2668,7 @@ function _renderBmCodePanel(bookmarkId) {
                 data-bm-id=”${bookmarkId}”>Add</button>
       </div>
     </div>`;
+  requestAnimationFrame(() => panel.querySelector('.bm-new-code-input')?.focus());
 }
 
 // ── Annotate excerpt text with colored highlight spans ────────────────────────
@@ -2768,31 +2769,9 @@ function _renderBmHlPanel(bmId, selectedText) {
   const bm    = _cachedBookmarks.find(b => b.bookmark_id === bmId);
   if (!panel || !bm) return;
   panel.dataset.hlText = selectedText;
-  // Activate the pending highlight in the excerpt so the user can see which text is being coded
   _bmSetPendingHl(bmId, selectedText);
 
   const truncated = selectedText.length > 80 ? selectedText.slice(0, 80) + '…' : selectedText;
-  // Split combined text into individual segments for the "already assigned" check
-  const segments = selectedText.split(_BM_SEG_SEP).map(s => s.trim().toLowerCase()).filter(Boolean);
-  const assignedForText = new Set(
-    (bm.highlights || [])
-      .filter(h => segments.includes(h.highlighted_text.toLowerCase()))
-      .map(h => h.code_id)
-  );
-
-  const codeButtons = _allCodes.length
-    ? `<div class="flex flex-wrap gap-1.5 mb-2">
-        ${_allCodes.map(l => {
-          const active = assignedForText.has(l.id);
-          const bg     = active ? l.color : '#f8fafc';
-          const tc     = active ? labelTextColor(l.color) : '#64748b';
-          const bd     = active ? l.color : '#cbd5e1';
-          return `<button class="bm-hl-code-toggle text-xs px-2.5 py-0.5 rounded-full font-medium border transition-all"
-                          data-bm-id="${bmId}" data-code-id="${l.id}"
-                          style="background:${bg};color:${tc};border-color:${bd}">${active ? '✓ ' : ''}${esc(l.name)}</button>`;
-        }).join('')}
-      </div>`
-    : '<p class="text-xs text-gray-400 mb-2 italic">No codes yet — create one below.</p>';
 
   panel.innerHTML = `
     <div class="p-2 border border-dashed border-indigo-200 rounded-xl bg-indigo-50/30">
@@ -2800,11 +2779,10 @@ function _renderBmHlPanel(bmId, selectedText) {
         <p class="text-xs font-medium text-indigo-700">Coding: <em class="text-indigo-500 not-italic">"${esc(truncated)}"</em></p>
         <button class="bm-hl-panel-close text-gray-400 hover:text-gray-600 leading-none shrink-0 text-sm" data-bm-id="${bmId}">✕</button>
       </div>
-      ${codeButtons}
-      <div class="flex items-center gap-1.5 pt-1 border-t border-indigo-100">
+      <div class="flex items-center gap-1.5">
         <div class="relative flex-1 min-w-0">
           <input class="bm-hl-new-code-input w-full border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                 placeholder="New code name…" data-bm-id="${bmId}" autocomplete="off" />
+                 placeholder="Type to search or create a code…" data-bm-id="${bmId}" autocomplete="off" />
           <div class="bm-code-suggestions hidden absolute left-0 top-full mt-0.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 w-full max-h-44 overflow-y-auto"
                data-bm-id="${bmId}" data-type="span"></div>
         </div>
@@ -2813,6 +2791,7 @@ function _renderBmHlPanel(bmId, selectedText) {
                 data-bm-id="${bmId}">Add</button>
       </div>
     </div>`;
+  requestAnimationFrame(() => panel.querySelector('.bm-hl-new-code-input')?.focus());
 }
 
 // -- filter bookmarks ---------------------------------------------------------
