@@ -444,7 +444,7 @@
       </section>
 
       <!-- Search -->
-      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="search-heading">
+      <section class="bg-white rounded-2xl shadow p-5 sticky top-[57px] z-40" aria-labelledby="search-heading">
         <h2 id="search-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">Search</h2>
 
         <!-- Top-level tabs: Search Chat | Search Users -->
@@ -784,6 +784,20 @@
           <span class="text-xs text-gray-600">(same CSV, original order)</span>
         </div>
       </section>
+
+      <!-- ── Analysis tab bar (shown when results exist) ── -->
+      <div id="sr-viz-tabbar" class="hidden bg-white rounded-2xl shadow px-3 py-2 flex gap-2 flex-wrap">
+        <button id="sr-tab-btn" data-target="sr-section"
+                class="sr-viz-tab flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 transition-colors">
+          <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          Summarize &amp; Analyse
+        </button>
+        <button id="viz-tab-btn" data-target="trend-section"
+                class="sr-viz-tab flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg text-gray-600 hover:bg-indigo-50 hover:text-indigo-700 transition-colors">
+          <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+          Visualization
+        </button>
+      </div>
 
       <!-- ── Summarize & Analyse Results ── -->
       <section id="sr-section" class="hidden space-y-4" aria-labelledby="sr-heading">

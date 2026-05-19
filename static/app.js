@@ -1136,6 +1136,8 @@ document.querySelectorAll('.search-tab').forEach(btn => {
     document.getElementById('results-container').innerHTML = '';
     document.getElementById('sr-section').classList.add('hidden');
     document.getElementById('trend-section').classList.add('hidden');
+    const _tabbar = document.getElementById('sr-viz-tabbar');
+    if (_tabbar) _tabbar.classList.add('hidden');
     const _banner = document.getElementById('chart-filter-banner');
     if (_banner) _banner.remove();
     if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
@@ -1438,7 +1440,10 @@ function renderResults(results) {
   // Trend chart + summarize panel
   renderTrendChart(currentResults, _trendBucket);
   _updateSrCountLabel();
-  if (results.length) document.getElementById('sr-section').classList.remove('hidden');
+  if (results.length) {
+    const tabbar = document.getElementById('sr-viz-tabbar');
+    if (tabbar) tabbar.classList.remove('hidden');
+  }
 }
 
 // -- TREND CHART -----------------------------------------------------------
@@ -1558,7 +1563,7 @@ function renderTrendChart(results, bucket) {
   const banner = document.getElementById('chart-filter-banner');
   if (banner) banner.classList.add('hidden');
 
-  section.classList.remove('hidden');
+  // section visibility controlled by tab clicks — do not auto-show
   if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
 
   _trendChart = new Chart(document.getElementById('trend-chart'), {
@@ -1621,6 +1626,36 @@ function renderTrendChart(results, bucket) {
   document.getElementById('trend-btn-month').addEventListener('click', () => _setTrendBucket('month'));
   document.getElementById('trend-btn-week').addEventListener('click',  () => _setTrendBucket('week'));
   document.getElementById('trend-btn-day').addEventListener('click',   () => _setTrendBucket('day'));
+}());
+
+// -- ANALYSIS TABS (Summarize / Visualization) ----------------------------
+(function () {
+  const PANELS = ['sr-section', 'trend-section'];
+
+  document.getElementById('sr-viz-tabbar')?.addEventListener('click', e => {
+    const btn = e.target.closest('.sr-viz-tab');
+    if (!btn) return;
+    const targetId = btn.dataset.target;
+
+    // Toggle: clicking the active tab collapses it
+    const targetEl = document.getElementById(targetId);
+    const isOpen   = !targetEl?.classList.contains('hidden') && btn.classList.contains('sr-viz-tab-active');
+
+    // Hide all panels and deactivate all tabs
+    PANELS.forEach(id => document.getElementById(id)?.classList.add('hidden'));
+    document.querySelectorAll('.sr-viz-tab').forEach(b => {
+      b.classList.remove('sr-viz-tab-active', 'bg-indigo-100', 'text-indigo-700');
+    });
+
+    if (!isOpen && targetEl) {
+      targetEl.classList.remove('hidden');
+      btn.classList.add('sr-viz-tab-active', 'bg-indigo-100', 'text-indigo-700');
+      // Resize chart if the visualization panel just became visible
+      if (targetId === 'trend-section' && _trendChart) {
+        requestAnimationFrame(() => _trendChart.resize());
+      }
+    }
+  });
 }());
 
 // -- SUMMARIZE RESULTS -----------------------------------------------------
@@ -5495,6 +5530,8 @@ async function searchUsersInRange() {
   document.getElementById('sr-section').classList.add('hidden');
   const _trendSec = document.getElementById('trend-section');
   if (_trendSec) _trendSec.classList.add('hidden');
+  const _tabbar2 = document.getElementById('sr-viz-tabbar');
+  if (_tabbar2) _tabbar2.classList.add('hidden');
   if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
   btn.disabled    = true;
   btn.textContent = 'Searching...';
