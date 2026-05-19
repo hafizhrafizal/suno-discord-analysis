@@ -3681,7 +3681,7 @@ function _cmMergeHighlightRows(rows) {
 function _cmFilterExcerpts(rows) {
   return rows.filter(r => {
     if (_cmFilterDateFrom || _cmFilterDateTo) {
-      const d = (r.date || '').substring(0, 7); // compare at YYYY-MM precision
+      const d = (r.date || '').substring(0, 10);
       if (_cmFilterDateFrom && d < _cmFilterDateFrom) return false;
       if (_cmFilterDateTo   && d > _cmFilterDateTo)   return false;
     }
@@ -3831,7 +3831,7 @@ function _cmBuildFilteredCodeSet() {
     if (_cmFilterSuno === 'only'    && !truthy(bm.is_suno_team)) return;
     if (_cmFilterSuno === 'exclude' &&  truthy(bm.is_suno_team)) return;
     if (_cmFilterDateFrom || _cmFilterDateTo) {
-      const d = (bm.date || '').substring(0, 7); // compare at YYYY-MM precision
+      const d = (bm.date || '').substring(0, 10);
       if (_cmFilterDateFrom && d < _cmFilterDateFrom) return;
       if (_cmFilterDateTo   && d > _cmFilterDateTo)   return;
     }
@@ -5173,7 +5173,7 @@ function _cmRenderCodingTable() {
     if (_cmFilterSuno === 'only'    && !truthy(bm.is_suno_team)) return;
     if (_cmFilterSuno === 'exclude' &&  truthy(bm.is_suno_team)) return;
     if (_cmFilterDateFrom || _cmFilterDateTo) {
-      const d = (bm.date || '').substring(0, 7); // compare at YYYY-MM precision
+      const d = (bm.date || '').substring(0, 10);
       if (_cmFilterDateFrom && d < _cmFilterDateFrom) return;
       if (_cmFilterDateTo   && d > _cmFilterDateTo)   return;
     }
