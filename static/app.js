@@ -1658,6 +1658,42 @@ function renderTrendChart(results, bucket) {
   });
 }());
 
+// -- SEARCH PANEL COLLAPSE -------------------------------------------------
+(function () {
+  const section   = document.getElementById('search-section');
+  const body      = document.getElementById('search-body');
+  const btn       = document.getElementById('search-collapse-btn');
+  const icon      = document.getElementById('search-collapse-icon');
+  if (!section || !body || !btn || !icon) return;
+
+  let _collapsed = false;
+
+  function _setCollapsed(collapsed) {
+    _collapsed = collapsed;
+    body.classList.toggle('hidden', collapsed);
+    icon.style.transform = collapsed ? 'rotate(180deg)' : '';
+    btn.title = collapsed ? 'Expand search' : 'Collapse search';
+    // tighten vertical padding when collapsed so the sticky bar is compact
+    section.style.paddingBottom = collapsed ? '0.5rem' : '';
+    section.style.paddingTop    = collapsed ? '0.5rem' : '';
+  }
+
+  btn.addEventListener('click', () => _setCollapsed(!_collapsed));
+
+  // Show toggle button only when scrolled away from top; auto-expand at top
+  let _rafPending = false;
+  window.addEventListener('scroll', () => {
+    if (_rafPending) return;
+    _rafPending = true;
+    requestAnimationFrame(() => {
+      _rafPending = false;
+      const atTop = window.scrollY < 10;
+      btn.classList.toggle('hidden', atTop);
+      if (atTop && _collapsed) _setCollapsed(false);
+    });
+  }, { passive: true });
+}());
+
 // -- SUMMARIZE RESULTS -----------------------------------------------------
 const LOG_ICONS = {
   filter:      '🔍',

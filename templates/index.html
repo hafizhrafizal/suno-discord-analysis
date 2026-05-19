@@ -444,8 +444,16 @@
       </section>
 
       <!-- Search -->
-      <section class="bg-white rounded-2xl shadow p-5 sticky top-[57px] z-40" aria-labelledby="search-heading">
-        <h2 id="search-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-3">Search</h2>
+      <section id="search-section" class="bg-white rounded-2xl shadow p-5 sticky top-[57px] z-40" aria-labelledby="search-heading">
+        <div class="flex items-center justify-between">
+          <h2 id="search-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide">Search</h2>
+          <button id="search-collapse-btn" class="hidden text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100" aria-label="Toggle search panel" title="Collapse search">
+            <svg id="search-collapse-icon" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+            </svg>
+          </button>
+        </div>
+        <div id="search-body" class="mt-3">
 
         <!-- Top-level tabs: Search Chat | Search Users -->
         <div class="flex gap-1 mb-4" role="tablist" aria-label="Search category">
@@ -783,6 +791,7 @@
           </label>
           <span class="text-xs text-gray-600">(same CSV, original order)</span>
         </div>
+        </div><!-- /#search-body -->
       </section>
 
       <!-- ── Analysis tab bar (shown when results exist) ── -->
