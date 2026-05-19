@@ -2837,6 +2837,7 @@ function _renderBmHlPanel(bmId, selectedText) {
 function _filterBookmarks(bms) {
   const userTerm  = (document.getElementById('bm-filter-user').value || '').trim().toLowerCase();
   const sunoMode  = document.getElementById('bm-filter-suno').value;
+  const codedMode = document.getElementById('bm-filter-coded')?.value || 'all';
   const textRaw   = (document.getElementById('bm-filter-text').value || '').trim();
   const monthFrom = (document.getElementById('bm-month-from').value || '').trim();
   const monthTo   = (document.getElementById('bm-month-to').value || '').trim();
@@ -2854,6 +2855,11 @@ function _filterBookmarks(bms) {
     if (textTerms.length > 0) {
       const hay = ((bm.username || '') + ' ' + (bm.content || '') + ' ' + (bm.note || '')).toLowerCase();
       if (!textTerms.every(t => hay.includes(t))) return false;
+    }
+    if (codedMode !== 'all') {
+      const isCoded = (bm.codes?.length > 0) || (bm.highlights?.length > 0);
+      if (codedMode === 'coded'   && !isCoded) return false;
+      if (codedMode === 'uncoded' &&  isCoded) return false;
     }
     return true;
   });
@@ -3340,6 +3346,10 @@ document.getElementById('bm-sort-dir').addEventListener('click', () => {
   _renderBookmarksSorted();
 });
 document.getElementById('bm-filter-suno').addEventListener('change', () => {
+  _collapseAllBmContext();
+  _renderBookmarksSorted();
+});
+document.getElementById('bm-filter-coded').addEventListener('change', () => {
   _collapseAllBmContext();
   _renderBookmarksSorted();
 });
