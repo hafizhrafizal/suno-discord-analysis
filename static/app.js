@@ -5113,6 +5113,14 @@ document.getElementById('cm-merge-btn').addEventListener('click', async () => {
 
 document.getElementById('cm-refresh-btn').addEventListener('click', _cmRefresh);
 
+document.getElementById('cm-collapse-all-btn').addEventListener('click', () => {
+  _cmExpandedCodes.clear();
+  _cmCollapsed.clear();
+  _cmCategories.forEach(cat => _cmCollapsed.add(cat.id));
+  _cmCloseDetail();
+  _cmRenderTree();
+});
+
 document.addEventListener('codebook-updated', () => {
   if (!document.getElementById('page-coding').classList.contains('hidden')) {
     _cmRefresh();
