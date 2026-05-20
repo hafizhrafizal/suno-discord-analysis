@@ -9,6 +9,7 @@ Exports:
 """
 
 import logging
+import time
 from typing import Optional
 
 from config import (
@@ -319,17 +320,32 @@ def _init_qdrant() -> dict:
 
     try:
         client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY or None, timeout=120)
-        logger.info("Vector backend: Qdrant (%s)", QDRANT_URL)
     except Exception as exc:
-        logger.error("Failed to connect to Qdrant: %s", exc)
+        logger.error("Failed to create Qdrant client: %s", exc)
         return {}
 
-    try:
-        existing = {c.name for c in client.get_collections().collections}
-        logger.info("Existing Qdrant collections: %s", existing)
-    except Exception as exc:
-        logger.error("Failed to list Qdrant collections: %s", exc)
-        existing = set()
+    # Wait for Qdrant to become reachable (common in Docker Compose where the
+    # app container starts before the Qdrant container is fully ready).
+    _QDRANT_MAX_WAIT = 60   # seconds total
+    _QDRANT_POLL     = 3    # seconds between attempts
+    deadline = time.monotonic() + _QDRANT_MAX_WAIT
+    existing: set = set()
+    while True:
+        try:
+            existing = {c.name for c in client.get_collections().collections}
+            logger.info("Vector backend: Qdrant (%s) — existing collections: %s",
+                        QDRANT_URL, existing)
+            break
+        except Exception as exc:
+            if time.monotonic() >= deadline:
+                logger.error(
+                    "Qdrant at %s did not become reachable within %ds: %s — "
+                    "vector search will be unavailable.",
+                    QDRANT_URL, _QDRANT_MAX_WAIT, exc,
+                )
+                return {}
+            logger.warning("Qdrant not ready yet (%s) — retrying in %ds…", exc, _QDRANT_POLL)
+            time.sleep(_QDRANT_POLL)
 
     cols: dict = {}
     for model_id, cfg in EMBEDDING_MODELS.items():
