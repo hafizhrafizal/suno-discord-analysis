@@ -5114,11 +5114,30 @@ document.getElementById('cm-merge-btn').addEventListener('click', async () => {
 document.getElementById('cm-refresh-btn').addEventListener('click', _cmRefresh);
 
 document.getElementById('cm-collapse-all-btn').addEventListener('click', () => {
-  _cmExpandedCodes.clear();
-  _cmCollapsed.clear();
-  _cmCategories.forEach(cat => _cmCollapsed.add(cat.id));
-  _cmCloseDetail();
-  _cmRenderTree();
+  const btn = document.getElementById('cm-collapse-all-btn');
+  const isExpanded = btn.dataset.state !== 'collapsed';
+
+  if (isExpanded) {
+    // Collapse everything
+    _cmExpandedCodes.clear();
+    _cmCollapsed.clear();
+    _cmCategories.forEach(cat => _cmCollapsed.add(cat.id));
+    _cmCloseDetail();
+    _cmRenderTree();
+    btn.textContent = 'Expand all';
+    btn.dataset.state = 'collapsed';
+  } else {
+    // Expand all categories and all code quote lists
+    _cmCollapsed.clear();
+    _cmCodes.forEach(c => _cmExpandedCodes.add(c.id));
+    _cmRenderTree();
+    // Fetch excerpts for any codes not yet cached
+    _cmCodes.forEach(c => {
+      if (_cmExcerptsCache[c.id] === undefined) _cmFetchExcerptsFor(c.id);
+    });
+    btn.textContent = 'Collapse all';
+    btn.dataset.state = 'expanded';
+  }
 });
 
 document.addEventListener('codebook-updated', () => {
