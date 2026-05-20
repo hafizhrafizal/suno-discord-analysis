@@ -2188,11 +2188,7 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="/static/app.js"></script>
-
-  <!-- Coding manager excerpt right-click context menu -->
+  <!-- Coding manager excerpt right-click context menu (must be before app.js) -->
   <div id="cm-exc-ctx-menu" class="hidden fixed z-[200] bg-white rounded-xl shadow-xl border border-gray-200 py-1 min-w-[200px] select-none">
     <button id="cm-ctx-add-coding" class="w-full text-left flex items-center gap-2.5 px-4 py-2 text-sm text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors">
       <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2207,5 +2203,9 @@
       Change open coding
     </button>
   </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>
