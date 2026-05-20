@@ -4347,9 +4347,14 @@ async function _cmExcPanelAssignCode(codeId) {
     }
     delete _cmExcerptsCache[oldCodeId];
     delete _cmExcerptsCache[codeId];
+    // Auto-expand the destination code so the moved quote is immediately visible
+    _cmExpandedCodes.add(codeId);
     _cmCloseDetail();
-    if (_cmExpandedCodes.has(oldCodeId)) _cmFetchExcerptsFor(oldCodeId);
-    if (_cmExpandedCodes.has(codeId))    _cmFetchExcerptsFor(codeId);
+    // Re-render tree so filter visibility and expand states update
+    _cmRenderTree();
+    // Fetch fresh excerpts for both affected codes
+    _cmFetchExcerptsFor(oldCodeId);
+    _cmFetchExcerptsFor(codeId);
     return;
   }
 
@@ -4480,6 +4485,31 @@ document.getElementById('cm-ctx-change-coding').addEventListener('click', () => 
   const { bookmarkId, sourceCodeId, hlId, hlText } = _cmCtxMenuData;
   _cmCtxMenuData = null;
   _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId, hlText, true);
+});
+
+document.getElementById('cm-ctx-delete-coding').addEventListener('click', async () => {
+  if (!_cmCtxMenuData) return;
+  const { bookmarkId, sourceCodeId, hlId } = _cmCtxMenuData;
+  _cmCtxMenuData = null;
+  const bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
+  try {
+    if (hlId !== null) {
+      // Span coding: delete the specific highlight
+      await apiFetch(`/api/bookmarks/${bookmarkId}/highlights/${hlId}`, { method: 'DELETE' });
+      if (bm) bm.highlights = (bm.highlights || []).filter(h => h.highlight_id !== hlId);
+    } else {
+      // Whole-bookmark coding: remove the code assignment
+      await apiFetch(`/api/bookmarks/${bookmarkId}/codes/${sourceCodeId}`, { method: 'DELETE' });
+      if (bm) bm.codes = (bm.codes || []).filter(c => c.id !== sourceCodeId);
+    }
+  } catch (err) {
+    showErrorPopup('Failed to delete coding: ' + err.message);
+    return;
+  }
+  delete _cmExcerptsCache[sourceCodeId];
+  if (_cmOpenExcBmId === bookmarkId) _cmCloseDetail();
+  _cmRenderTree();
+  _cmFetchExcerptsFor(sourceCodeId);
 });
 
 // Dismiss context menu on any outside click or right-click
