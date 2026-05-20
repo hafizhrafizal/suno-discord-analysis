@@ -3691,6 +3691,8 @@ let _cmOpenExcBmId    = null;       // bookmark_id open in excerpt panel
 let _cmOpenExcSrcId   = null;       // source code id open in excerpt panel
 let _cmOpenExcHlId    = null;       // highlight_id when a span-coding row is open (null for whole-bookmark)
 let _cmOpenExcHlText  = null;       // highlighted_text for the span-coding row
+let _cmExcPanelChangeMode = false;  // true when panel is in "change coding" mode
+let _cmCtxMenuData    = null;       // excerpt right-click payload
 let _cmFilterDateFrom = '';         // YYYY-MM-DD
 let _cmFilterDateTo   = '';         // YYYY-MM-DD
 let _cmFilterSuno     = 'all';      // 'all' | 'only' | 'exclude'
@@ -4127,12 +4129,13 @@ function _cmOpenCatDetail(cat) {
 }
 
 function _cmFlushDetailPanel() {
-  _cmOpenCodeId    = null;
-  _cmOpenCatId     = null;
-  _cmOpenExcBmId   = null;
-  _cmOpenExcSrcId  = null;
-  _cmOpenExcHlId   = null;
-  _cmOpenExcHlText = null;
+  _cmOpenCodeId         = null;
+  _cmOpenCatId          = null;
+  _cmOpenExcBmId        = null;
+  _cmOpenExcSrcId       = null;
+  _cmOpenExcHlId        = null;
+  _cmOpenExcHlText      = null;
+  _cmExcPanelChangeMode = false;
   document.getElementById('cm-code-edit-section').classList.add('hidden');
   document.getElementById('cm-cat-edit-section').classList.add('hidden');
   document.getElementById('cm-exc-edit-section').classList.add('hidden');
@@ -4150,7 +4153,7 @@ function _cmCloseDetail() {
 
 // ── Excerpt coding panel (sidebar) ───────────────────────────────────────────
 
-async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText = null) {
+async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText = null, changeMode = false) {
   let bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
   if (!bm) {
     try {
@@ -4161,15 +4164,17 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
   if (!bm) return;
 
   _cmFlushDetailPanel();
-  _cmOpenExcBmId   = bookmarkId;
-  _cmOpenExcSrcId  = sourceCodeId;
-  _cmOpenExcHlId   = hlId;
-  _cmOpenExcHlText = hlText;
+  _cmOpenExcBmId        = bookmarkId;
+  _cmOpenExcSrcId       = sourceCodeId;
+  _cmOpenExcHlId        = hlId;
+  _cmOpenExcHlText      = hlText;
+  _cmExcPanelChangeMode = changeMode;
 
   const textEl   = document.getElementById('cm-exc-panel-text');
   const srcCode  = _cmCodes.find(c => c.id === sourceCodeId);
   const addEl    = document.getElementById('cm-exc-panel-add-section');
   const codesLbl = document.querySelector('#cm-exc-edit-section .text-xs.font-medium');
+  const addLbl   = addEl?.querySelector('label');
 
   document.getElementById('cm-exc-edit-section').classList.remove('hidden');
   document.getElementById('cm-detail-panel').classList.remove('hidden');
@@ -4185,25 +4190,54 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
     _ctxBtn.classList.remove('hidden');
   }
 
+  if (changeMode) {
+    // ── Change-coding mode: show source chip, search for replacement ─────────
+    document.getElementById('cm-detail-title').textContent =
+      hlId !== null ? 'Change Span Coding' : 'Change Open Coding';
+    textEl.innerHTML = hlId !== null
+      ? `<strong class="not-italic font-semibold text-gray-800 block mb-1">"${esc(hlText || '')}"</strong>`
+        + `<span class="text-gray-400 text-[10px] block mt-1">Full excerpt: ${esc((bm.content || '').substring(0, 200))}${(bm.content || '').length > 200 ? '…' : ''}</span>`
+      : esc(`"${bm.content || ''}"`);
+    if (codesLbl) codesLbl.textContent = 'Changing from:';
+    // Show source code chip (read-only, no × button)
+    const codesContainer = document.getElementById('cm-exc-panel-codes');
+    if (srcCode) {
+      const tc = labelTextColor(srcCode.color);
+      codesContainer.innerHTML =
+        `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium"
+               style="background:${srcCode.color};color:${tc}">${esc(srcCode.name)}</span>`;
+    } else {
+      codesContainer.innerHTML = '';
+    }
+    if (addEl) addEl.classList.remove('hidden');
+    if (addLbl) addLbl.textContent = 'Replace with:';
+    const searchEl = document.getElementById('cm-exc-panel-search');
+    searchEl.value = '';
+    searchEl.placeholder = 'Search or create replacement coding…';
+    searchEl.focus();
+    return;
+  }
+
+  // Reset search placeholder in case it was changed by change-mode
+  const searchEl = document.getElementById('cm-exc-panel-search');
+  searchEl.placeholder = 'Type to search or create…';
+  if (addLbl) addLbl.textContent = 'Add Open Coding';
+
   if (hlId !== null) {
     // ── Span-level coding view ──────────────────────────────────────────────
     document.getElementById('cm-detail-title').textContent = 'Span Coding';
-    // Show the highlighted text in the text box, then full context below
     textEl.innerHTML = `<strong class="not-italic font-semibold text-gray-800 block mb-1">"${esc(hlText || '')}"</strong>`
       + `<span class="text-gray-400 text-[10px] block mt-1">Full excerpt: ${esc((bm.content || '').substring(0, 200))}${(bm.content || '').length > 200 ? '…' : ''}</span>`;
-    // Show just the single code for this span
     if (codesLbl) codesLbl.textContent = 'Span coding';
     _cmExcPanelRenderSpanCode(srcCode, bookmarkId, hlId);
-    // Hide "Add Open Coding" section — span codings are managed from the Bookmarks page
     if (addEl) addEl.classList.add('hidden');
   } else {
-    // ── Whole-bookmark coding view (existing behaviour) ─────────────────────
+    // ── Whole-bookmark coding view ──────────────────────────────────────────
     document.getElementById('cm-detail-title').textContent = 'Edit Open Codings';
     textEl.textContent = `"${bm.content || ''}"`;
     if (codesLbl) codesLbl.textContent = 'Open Codings';
     _cmExcPanelRenderCodes(bm, bookmarkId);
     if (addEl) addEl.classList.remove('hidden');
-    const searchEl = document.getElementById('cm-exc-panel-search');
     searchEl.value = '';
     searchEl.focus();
   }
@@ -4245,7 +4279,10 @@ function _cmExcPanelRenderCodes(bm, bookmarkId) {
 
 function _cmExcPanelShowSuggestions(q) {
   const bm          = _cachedBookmarks.find(b => b.bookmark_id === _cmOpenExcBmId);
-  const assignedIds = new Set((bm ? bm.codes || [] : []).map(c => c.id));
+  // In change mode exclude only the source code; in add mode exclude all already-assigned codes
+  const assignedIds = _cmExcPanelChangeMode
+    ? new Set([_cmOpenExcSrcId])
+    : new Set((bm ? bm.codes || [] : []).map(c => c.id));
   const sugEl       = document.getElementById('cm-exc-panel-suggestions');
 
   if (!q) { sugEl.classList.add('hidden'); sugEl.innerHTML = ''; return; }
@@ -4278,6 +4315,45 @@ function _cmExcPanelShowSuggestions(q) {
 async function _cmExcPanelAssignCode(codeId) {
   const bookmarkId = _cmOpenExcBmId;
   const bm         = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
+
+  if (_cmExcPanelChangeMode) {
+    const oldCodeId = _cmOpenExcSrcId;
+    try {
+      if (_cmOpenExcHlId !== null) {
+        // Span: POST new highlight with new code, DELETE old highlight
+        await apiFetch(`/api/bookmarks/${bookmarkId}/highlights`, {
+          method: 'POST',
+          body: JSON.stringify({ code_id: codeId, highlighted_text: _cmOpenExcHlText }),
+        });
+        await apiFetch(`/api/bookmarks/${bookmarkId}/highlights/${_cmOpenExcHlId}`, { method: 'DELETE' });
+        if (bm) bm.highlights = (bm.highlights || []).filter(h => h.highlight_id !== _cmOpenExcHlId);
+      } else {
+        // Whole-bookmark: DELETE old code assignment, POST new code assignment
+        await apiFetch(`/api/bookmarks/${bookmarkId}/codes/${oldCodeId}`, { method: 'DELETE' });
+        await apiFetch(`/api/bookmarks/${bookmarkId}/codes/${codeId}`, { method: 'POST' });
+        const newCode = _cmCodes.find(c => c.id === codeId);
+        if (bm) {
+          bm.codes = (bm.codes || []).filter(c => c.id !== oldCodeId);
+          if (newCode && !(bm.codes).some(c => c.id === codeId)) {
+            bm.codes.push({ id: newCode.id, name: newCode.name, color: newCode.color,
+              description: newCode.description, category_id: newCode.category_id });
+          }
+        }
+      }
+    } catch (err) {
+      showErrorPopup('Failed to change coding: ' + err.message);
+      _cmExcPanelChangeMode = false;
+      return;
+    }
+    delete _cmExcerptsCache[oldCodeId];
+    delete _cmExcerptsCache[codeId];
+    _cmCloseDetail();
+    if (_cmExpandedCodes.has(oldCodeId)) _cmFetchExcerptsFor(oldCodeId);
+    if (_cmExpandedCodes.has(codeId))    _cmFetchExcerptsFor(codeId);
+    return;
+  }
+
+  // Normal ADD mode
   try {
     await apiFetch(`/api/bookmarks/${bookmarkId}/codes/${codeId}`, { method: 'POST' });
     const code = _cmCodes.find(c => c.id === codeId);
@@ -4308,7 +4384,9 @@ document.getElementById('cm-exc-panel-search').addEventListener('keydown', async
   const q = e.target.value.trim();
   if (!q) return;
   const bm          = _cachedBookmarks.find(b => b.bookmark_id === _cmOpenExcBmId);
-  const assignedIds = new Set((bm ? bm.codes || [] : []).map(c => c.id));
+  const assignedIds = _cmExcPanelChangeMode
+    ? new Set([_cmOpenExcSrcId])
+    : new Set((bm ? bm.codes || [] : []).map(c => c.id));
   const match       = _cmCodes.find(c =>
     !assignedIds.has(c.id) && c.name.toLowerCase() === q.toLowerCase()
   );
@@ -4367,6 +4445,47 @@ document.getElementById('cm-exc-panel-codes').addEventListener('click', async e 
     _cmExcPanelRenderCodes(bm, bookmarkId);
   } catch (err) {
     showErrorPopup('Failed to remove coding: ' + err.message);
+  }
+});
+
+// ── Excerpt row right-click context menu ─────────────────────────────────────
+
+document.getElementById('cm-code-list').addEventListener('contextmenu', e => {
+  const row = e.target.closest('.cm-excerpt-item');
+  if (!row) return;
+  e.preventDefault();
+  _cmCtxMenuData = {
+    bookmarkId:   parseInt(row.dataset.bookmarkId),
+    sourceCodeId: parseInt(row.dataset.sourceCodeId),
+    hlId:         row.dataset.highlightId ? parseInt(row.dataset.highlightId) : null,
+    hlText:       row.dataset.hlText || null,
+  };
+  const menu = document.getElementById('cm-exc-ctx-menu');
+  const x = Math.min(e.clientX, window.innerWidth  - 220);
+  const y = Math.min(e.clientY, window.innerHeight - 80);
+  menu.style.left = x + 'px';
+  menu.style.top  = y + 'px';
+  menu.classList.remove('hidden');
+});
+
+document.getElementById('cm-ctx-add-coding').addEventListener('click', () => {
+  if (!_cmCtxMenuData) return;
+  const { bookmarkId, sourceCodeId, hlId, hlText } = _cmCtxMenuData;
+  _cmCtxMenuData = null;
+  _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId, hlText, false);
+});
+
+document.getElementById('cm-ctx-change-coding').addEventListener('click', () => {
+  if (!_cmCtxMenuData) return;
+  const { bookmarkId, sourceCodeId, hlId, hlText } = _cmCtxMenuData;
+  _cmCtxMenuData = null;
+  _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId, hlText, true);
+});
+
+// Dismiss context menu on any outside click or right-click
+document.addEventListener('click', e => {
+  if (!e.target.closest('#cm-exc-ctx-menu')) {
+    document.getElementById('cm-exc-ctx-menu')?.classList.add('hidden');
   }
 });
 
