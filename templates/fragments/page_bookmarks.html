@@ -1,0 +1,91 @@
+﻿    <!-- -- BOOKMARKS PAGE ------------------------------------------------ -->
+    <div id="page-bookmarks" class="hidden space-y-4">
+
+      <!-- Sticky context-window control bar -->
+      <div class="sticky top-[57px] z-30 bg-white rounded-2xl shadow border border-gray-200 px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2"
+           role="search" aria-label="Bookmark filters">
+        <span class="font-semibold text-sm text-gray-800">Context window</span>
+        <label for="bm-ctx-before" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span>Before</span>
+          <input id="bm-ctx-before" type="number" value="10" min="0" max="100"
+                 class="w-16 border border-gray-400 rounded-lg px-2 py-1 text-sm text-center text-gray-900" />
+          <span class="text-gray-600 text-xs">msgs</span>
+        </label>
+        <label for="bm-ctx-after" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span>After</span>
+          <input id="bm-ctx-after" type="number" value="10" min="0" max="100"
+                 class="w-16 border border-gray-400 rounded-lg px-2 py-1 text-sm text-center text-gray-900" />
+          <span class="text-gray-600 text-xs">msgs</span>
+        </label>
+        <label for="bm-sort" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span>Sort by</span>
+          <select id="bm-sort" class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 cursor-pointer">
+            <option value="date" selected>Content date</option>
+            <option value="added">Bookmark added</option>
+            <option value="username">Username</option>
+          </select>
+          <button id="bm-sort-dir" title="Toggle sort direction"
+                  class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-700 hover:bg-gray-100 transition-colors select-none"
+                  data-dir="desc">â†“ Desc</button>
+        </label>
+        <label for="bm-filter-user" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span class="shrink-0">Username</span>
+          <input id="bm-filter-user" type="text" placeholder="Filter by usernameâ€¦"
+                 class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 w-32 sm:w-40 min-w-0" />
+        </label>
+        <label for="bm-filter-suno" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span>Suno Team</span>
+          <select id="bm-filter-suno" class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 cursor-pointer">
+            <option value="all">All</option>
+            <option value="only">Only Suno Team</option>
+            <option value="exclude">Exclude Suno Team</option>
+          </select>
+        </label>
+        <label for="bm-filter-coded" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span class="shrink-0">Coded</span>
+          <select id="bm-filter-coded" class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 cursor-pointer">
+            <option value="all">All</option>
+            <option value="coded">Coded only</option>
+            <option value="uncoded">Uncoded only</option>
+          </select>
+        </label>
+        <label for="bm-filter-text" class="flex items-center gap-1.5 text-sm text-gray-700">
+          <span class="shrink-0">Search</span>
+          <input id="bm-filter-text" type="text" placeholder="Whole-word content searchâ€¦"
+                 class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900 w-44 sm:w-56 min-w-0" />
+        </label>
+        <span class="text-xs text-gray-600">Changing values collapses open context panels.</span>
+        <button id="bm-refresh-btn" class="ml-auto text-xs font-semibold text-indigo-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700 rounded">Refresh</button>
+        <!-- Period filter row -->
+        <div class="w-full flex flex-wrap items-center gap-2 pt-2 border-t border-gray-200">
+          <span class="text-xs text-gray-700 font-semibold shrink-0">Period:</span>
+          <label for="bm-month-from" class="flex items-center gap-1.5 text-sm text-gray-700">
+            <span class="text-xs shrink-0">From</span>
+            <input id="bm-month-from" type="date"
+                   class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900" />
+          </label>
+          <label for="bm-month-to" class="flex items-center gap-1.5 text-sm text-gray-700">
+            <span class="text-xs shrink-0">To</span>
+            <input id="bm-month-to" type="date"
+                   class="border border-gray-400 rounded-lg px-2 py-1 text-sm text-gray-900" />
+          </label>
+          <button id="bm-month-clear"
+                  class="text-xs text-gray-400 hover:text-gray-700
+                         focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-500 rounded px-2 py-1">
+            Clear
+          </button>
+        </div>
+      </div>
+
+      <section class="bg-white rounded-2xl shadow p-5" aria-labelledby="bookmarks-heading">
+        <div class="flex items-center gap-2 mb-4 flex-wrap">
+          <h2 id="bookmarks-heading" class="font-semibold text-sm text-gray-700 uppercase tracking-wide">Saved Bookmarks</h2>
+          <span id="bm-result-count" class="hidden text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700"></span>
+          <span id="bm-coded-count" class="hidden text-xs font-semibold px-2 py-0.5 rounded-full bg-green-50 text-green-700"></span>
+          <button id="bm-close-all-panels" class="hidden ml-auto text-xs text-gray-500 hover:text-gray-700 border border-gray-300 hover:border-gray-400 rounded-lg px-2.5 py-0.5 transition-colors">Close all coding sections</button>
+        </div>
+        <div id="bookmarks-container" class="space-y-4" aria-live="polite">
+          <p class="text-sm text-gray-600 text-center py-8">Loading bookmarksâ€¦</p>
+        </div>
+      </section>
+    </div><!-- /page-bookmarks -->

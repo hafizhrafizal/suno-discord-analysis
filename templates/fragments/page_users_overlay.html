@@ -1,0 +1,142 @@
+﻿  <!-- â”€â”€ User Profile Overlay â”€â”€ -->
+  <div id="user-profile-overlay"
+       class="fixed inset-0 z-50 hidden flex-col bg-slate-100"
+       role="dialog" aria-modal="true" aria-labelledby="upo-username">
+
+    <!-- Header bar -->
+    <div class="bg-indigo-700 px-5 py-3 flex items-center gap-4 shrink-0">
+      <button id="upo-back"
+              class="text-indigo-200 hover:text-white text-sm font-medium flex items-center gap-1
+                     focus-visible:outline focus-visible:outline-2 focus-visible:outline-white rounded"
+              aria-label="Close profile">
+        â† Back
+      </button>
+      <h2 id="upo-username" class="text-white font-bold text-base flex-1 truncate"></h2>
+      <span id="upo-msg-count" class="text-indigo-200 text-xs shrink-0"></span>
+      <button id="upo-sum-toggle"
+              class="text-xs font-semibold bg-white/20 hover:bg-white/30 text-white
+                     px-3 py-1.5 rounded-lg transition-colors shrink-0
+                     focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+        âœ¦ Summarize
+      </button>
+    </div>
+
+    <!-- Stats bar -->
+    <div id="upo-stats" class="bg-white border-b border-gray-200 px-5 py-3 shrink-0 overflow-x-auto">
+      <!-- filled by JS -->
+    </div>
+
+    <!-- Message filter bar -->
+    <div class="bg-white border-b border-gray-200 px-5 py-2.5 shrink-0 flex flex-wrap gap-2 items-center">
+      <label for="upo-date-from" class="filter-label">From</label>
+      <input id="upo-date-from" type="date" class="search-input" />
+      <label for="upo-date-to" class="filter-label">To</label>
+      <input id="upo-date-to" type="date" class="search-input" />
+      <label for="upo-keyword" class="filter-label">Contains</label>
+      <input id="upo-keyword" type="text" placeholder="keywordâ€¦" class="search-input flex-1 min-w-[8rem]" />
+      <label for="upo-min-words" class="filter-label">Min words</label>
+      <input id="upo-min-words" type="number" value="0" min="0" placeholder="0"
+             class="search-input w-20 text-center" aria-label="Minimum word count" />
+      <button id="upo-filter-btn" class="search-btn">Filter</button>
+      <span id="upo-filter-count" class="text-xs text-gray-500 ml-1"></span>
+    </div>
+
+    <!-- Context window controls -->
+    <div class="bg-gray-50 border-b border-gray-200 px-5 py-2 shrink-0 flex flex-wrap gap-2 items-center">
+      <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Context window</span>
+      <label for="upo-ctx-before" class="filter-label">Before</label>
+      <input id="upo-ctx-before" type="number" value="5" min="0" max="100"
+             class="search-input w-16 text-center" aria-label="Messages before" />
+      <label for="upo-ctx-after" class="filter-label">After</label>
+      <input id="upo-ctx-after" type="number" value="5" min="0" max="100"
+             class="search-input w-16 text-center" aria-label="Messages after" />
+      <span class="text-xs text-gray-400">msgs Â· click "Show context" on any message</span>
+    </div>
+
+    <!-- Summarize panel (hidden by default) -->
+    <div id="upo-sum-panel" class="hidden bg-indigo-50 border-b border-indigo-200 px-5 py-4 shrink-0 overflow-y-auto max-h-[50vh]">
+      <div class="flex flex-wrap gap-2 items-end mb-3">
+        <div>
+          <label for="upo-sum-limit" class="block text-xs font-semibold text-gray-600 mb-1">Messages (oldest first)</label>
+          <input id="upo-sum-limit" type="number" value="50" min="1"
+                 class="search-input w-24 text-xs py-1" />
+        </div>
+        <div>
+          <label for="upo-sum-model" class="block text-xs font-semibold text-gray-600 mb-1">Model</label>
+          <select id="upo-sum-model" class="search-input text-xs py-1">
+            <option value="gpt-5.4" selected>GPT-5.4</option>
+            <option value="gpt-5.4-mini">GPT-5.4 mini</option>
+            <option value="gpt-4.1">GPT-4.1</option>
+            <option value="gpt-4.1-mini">GPT-4.1 mini</option>
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="gpt-4o-mini">GPT-4o mini</option>
+            <option value="o4-mini">o4 mini</option>
+          </select>
+        </div>
+        <button id="upo-sum-run" class="search-btn self-end">Run Summary</button>
+      </div>
+      <label for="upo-sum-prompt" class="block text-xs font-semibold text-gray-600 mb-1">
+        Custom instructions (optional)
+      </label>
+      <textarea id="upo-sum-prompt" rows="2"
+        placeholder="e.g. Focus on feature requests. Highlight recurring concerns."
+        class="search-input w-full resize-none text-xs mb-3"></textarea>
+      <p class="text-xs text-gray-500 mb-3">
+        Each message is sent with <strong id="upo-sum-ctx-hint">5 before / 5 after</strong>
+        context messages (from the context window settings above).
+      </p>
+
+      <!-- Results -->
+      <div id="upo-sum-results" class="hidden space-y-3">
+        <div class="bg-white rounded-xl border border-indigo-100 p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pipeline</span>
+            <button id="upo-sum-log-toggle"
+                    class="text-xs text-gray-400 hover:text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-gray-500 rounded">
+              â–² Hide
+            </button>
+          </div>
+          <div id="upo-sum-log" class="space-y-0.5" aria-live="polite"></div>
+        </div>
+        <div id="upo-sum-output"
+             class="bg-white rounded-xl border border-indigo-100 p-5 text-sm text-gray-900 markdown-body"
+             aria-live="polite"></div>
+        <div class="flex justify-end mt-2">
+          <button id="upo-sum-export-pdf"
+                  class="hidden search-btn text-xs py-1 px-3 bg-indigo-600 hover:bg-indigo-700 text-white">
+            Export PDF
+          </button>
+        </div>
+
+        <!-- Follow-up Q&A -->
+        <section id="upo-fu-section" class="hidden bg-white rounded-xl border border-indigo-100 p-4">
+          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h4 class="text-sm font-semibold text-gray-700">Follow-up Questions</h4>
+            <button id="upo-fu-clear"
+                    class="text-xs font-semibold text-red-700 hover:text-red-900
+                           border border-red-300 hover:border-red-500 px-3 py-1
+                           rounded-lg transition-colors
+                           focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-700">
+              Clear Q&amp;A
+            </button>
+          </div>
+          <div id="upo-fu-history"
+               class="space-y-3 mb-3 max-h-[20rem] overflow-y-auto pr-1"
+               aria-live="polite"></div>
+          <div class="flex gap-2 items-end">
+            <label for="upo-fu-input" class="sr-only">Follow-up question</label>
+            <textarea id="upo-fu-input" rows="2"
+              placeholder="Ask a follow-up question about this profile analysisâ€¦"
+              class="search-input flex-1 resize-none min-w-0"></textarea>
+            <button id="upo-fu-send" class="search-btn self-end shrink-0">Ask</button>
+          </div>
+          <p class="text-xs text-gray-500 mt-1.5">Ctrl+Enter or click Ask</p>
+        </section>
+      </div>
+    </div>
+
+    <!-- Message list -->
+    <div id="upo-messages" class="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+      <!-- filled by JS -->
+    </div>
+  </div>
