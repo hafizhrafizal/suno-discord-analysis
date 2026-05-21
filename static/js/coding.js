@@ -9,10 +9,10 @@ let _cmOpenCatId      = null;
 let _cmCollapsed      = new Set();  // category ids that are collapsed
 let _cmDragCodeId     = null;       // id of code being dragged
 let _cmExpandedCodes  = new Set();  // code ids with excerpts expanded inline
-let _cmExcerptsCache  = {};         // code id â†’ excerpt rows (or null while loading)
+let _cmExcerptsCache  = {};         // code id → excerpt rows (or null while loading)
 let _cmDragCatId      = null;       // id of coding (category) being dragged
 let _cmDragExcerpt    = null;       // { bookmarkId, sourceCodeId } being dragged
-let _cmDragCopy       = false;      // true when Ctrl held at dragstart â†’ copy instead of move
+let _cmDragCopy       = false;      // true when Ctrl held at dragstart → copy instead of move
 let _cmDragScrollRAF  = null;       // rAF id for edge-scroll during drag
 let _cmOpenExcBmId    = null;       // bookmark_id open in excerpt panel
 let _cmOpenExcSrcId   = null;       // source code id open in excerpt panel
@@ -300,8 +300,8 @@ function _cmRenderCatNode(node, depth, visibleIds) {
 }
 
 // Renders a single row in a code's inline excerpt list.
-// r.type === 'excerpt'  â†’ whole-bookmark coding (draggable, full snippet)
-// r.type === 'highlight' â†’ span-level coding (read-only, shows highlighted text)
+// r.type === 'excerpt'  → whole-bookmark coding (draggable, full snippet)
+// r.type === 'highlight' → span-level coding (read-only, shows highlighted text)
 function _cmRenderExcerptRow(r, codeId, accent) {
   const meta = `${esc(r.username || '')}${r.date ? ' · ' + esc(r.date.substring(0, 10)) : ''}`;
   if (r.type === 'highlight') {
@@ -526,7 +526,7 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
         + `<span class="text-gray-400 text-[10px] block mt-1">Full excerpt: ${esc((bm.content || '').substring(0, 200))}${(bm.content || '').length > 200 ? '…' : ''}</span>`
       : esc(`"${bm.content || ''}"`);
     if (codesLbl) codesLbl.textContent = 'Changing from:';
-    // Show source code chip (read-only, no Ã— button)
+    // Show source code chip (read-only, no × button)
     const codesContainer = document.getElementById('cm-exc-panel-codes');
     if (srcCode) {
       const tc = labelTextColor(srcCode.color);
@@ -599,7 +599,7 @@ function _cmExcPanelRenderCodes(bm, bookmarkId) {
       ${esc(c.name)}
       <button class="cm-exc-panel-remove-code ml-0.5 hover:opacity-70 font-bold leading-none"
               data-code-id="${c.id}" data-bookmark-id="${bookmarkId}"
-              title="Remove this coding">Ã—</button>
+              title="Remove this coding">×</button>
     </span>`;
   }).join('');
 }
@@ -703,7 +703,7 @@ async function _cmExcPanelAssignCode(codeId) {
   }
 }
 
-// Panel search input â†’ live suggestions + Enter to confirm
+// Panel search input → live suggestions + Enter to confirm
 document.getElementById('cm-exc-panel-search').addEventListener('input', e => {
   _cmExcPanelShowSuggestions(e.target.value.trim());
 });
@@ -877,7 +877,7 @@ document.getElementById('cm-code-list').addEventListener('click', e => {
     return;
   }
 
-  // Category header â†’ toggle collapse or open detail
+  // Category header → toggle collapse or open detail
   const catHeader = e.target.closest('.cm-cat-header');
   if (catHeader && !e.target.closest('.cm-tree-toggle') && !e.target.closest('.cm-edit-cat-btn')) {
     const id = parseInt(catHeader.dataset.catId);
@@ -941,7 +941,7 @@ document.getElementById('cm-code-list').addEventListener('mouseup', e => {
   if (!el) return;
   const moved = Math.abs(e.clientX - _cmExcMdX) > 5 || Math.abs(e.clientY - _cmExcMdY) > 5;
   if (moved) return;   // was a drag, not a click
-  // Treat as click â†’ open excerpt / span-coding panel
+  // Treat as click → open excerpt / span-coding panel
   const bmId    = parseInt(el.dataset.bookmarkId);
   const srcCode = parseInt(el.dataset.sourceCodeId);
   const hlIdStr = el.dataset.highlightId;
@@ -1079,7 +1079,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
   document.querySelectorAll('.cm-drop-zone').forEach(z => z.classList.remove('bg-indigo-100', 'ring-2', 'ring-indigo-400'));
   document.querySelectorAll('.cm-cat-header').forEach(h => h.classList.remove('bg-indigo-50', 'opacity-50'));
 
-  // â"€â"€ Drop: excerpt â†’ re-assign (move) or copy to another open coding â"€â"€â"€â"€â"€â"€â"€
+  // â"€â"€ Drop: excerpt → re-assign (move) or copy to another open coding â"€â"€â"€â"€â"€â"€â"€
   if (_cmDragExcerpt !== null) {
     const isCopy = e.ctrlKey;
     const exc    = _cmDragExcerpt;
@@ -1144,7 +1144,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
   const rawId       = target.dataset.dropCatId ?? target.dataset.catId;
   const newParentId = rawId ? parseInt(rawId) : null;
 
-  // â"€â"€ Drop: open coding â†’ assign to a coding level â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  // â"€â"€ Drop: open coding → assign to a coding level â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   if (_cmDragCodeId !== null) {
     const codeId = _cmDragCodeId;
     _cmDragCodeId = null;
@@ -1163,7 +1163,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
     return;
   }
 
-  // â"€â"€ Drop: coding â†’ re-parent to a higher-order coding â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  // â"€â"€ Drop: coding → re-parent to a higher-order coding â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   if (_cmDragCatId !== null) {
     const catId = _cmDragCatId;
     _cmDragCatId = null;
@@ -1556,7 +1556,7 @@ document.querySelectorAll('.cm-phase-btn').forEach(btn => {
     const already = btn.classList.contains('cm-phase-active');
     _cmClearPhaseActive();
     if (already) {
-      // Second click on same phase â†’ clear the date filter
+      // Second click on same phase → clear the date filter
       document.getElementById('cm-filter-month-from').value = '';
       document.getElementById('cm-filter-month-to').value   = '';
     } else {
@@ -1588,7 +1588,7 @@ let _cmCtxTargetId    = null; // int
 let _cmCtxNewParentId = null; // parent_id for the new category (null = root)
 
 function _cmOrderLabelFull(n) {
-  // n = 2 â†’ "2nd-order", 3 â†’ "3rd-order", etc.
+  // n = 2 → "2nd-order", 3 → "3rd-order", etc.
   const s = n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
   return `${s}-order`;
 }
@@ -1622,7 +1622,7 @@ document.getElementById('cm-code-list').addEventListener('contextmenu', e => {
     _cmCtxTargetType = 'cat';
     _cmCtxTargetId   = parseInt(header.dataset.catId);
     const depth      = parseInt(header.dataset.depth) || 0;
-    const newOrder   = depth + 3; // depth 0 = 2nd-order â†’ new parent = 3rd-order
+    const newOrder   = depth + 3; // depth 0 = 2nd-order → new parent = 3rd-order
     // New category inherits the existing category's current parent (insert in between)
     const existing   = _cmCategories.find(c => c.id === _cmCtxTargetId);
     _cmCtxNewParentId = existing ? existing.parent_id : null;
@@ -1764,8 +1764,8 @@ function _cmRenderCodingTable() {
 }
 
 // Classic fixed-column table: used when â‰¤ 3 order levels exist
-// maxDepth=0 â†’ [2nd-order | Open Coding | Quote | Source | Note]
-// maxDepth=1 â†’ [3rd-order | 2nd-order | Open Coding | Quote | Source | Note]
+// maxDepth=0 → [2nd-order | Open Coding | Quote | Source | Note]
+// maxDepth=1 → [3rd-order | 2nd-order | Open Coding | Quote | Source | Note]
 function _cmRenderClassicTable(container, excByCode) {
   const roots = _cmBuildTree();
   const uncategorized = _cmCodes
@@ -1805,7 +1805,7 @@ function _cmRenderClassicTable(container, excByCode) {
     return;
   }
 
-  // For each position, compute rowspan (> 0 = first in group â†’ render cell; 0 = skip)
+  // For each position, compute rowspan (> 0 = first in group → render cell; 0 = skip)
   function computeSpans(keyFn) {
     const n = flatRows.length;
     const result = new Array(n).fill(0);

@@ -140,10 +140,10 @@ function _sortAndRenderUsers() {
     const ind = th.querySelector('.sort-ind');
     if (!ind) return;
     if (col === _usersSortCol) {
-      ind.textContent = _usersSortDir === 'asc' ? ' â†’' : ' â†"';
+      ind.textContent = _usersSortDir === 'asc' ? ' →' : ' ↓';
       ind.style.color = '#4f46e5';
     } else {
-      ind.textContent = ' â†•';
+      ind.textContent = ' ↕';
       ind.style.color = '';
     }
   });
@@ -171,7 +171,7 @@ document.getElementById('users-table').addEventListener('click', e => {
   _sortAndRenderUsers();
 });
 
-// Username click â†’ open profile
+// Username click → open profile
 document.getElementById('users-tbody').addEventListener('click', e => {
   const btn = e.target.closest('[data-username]');
   if (!btn) return;
@@ -344,7 +344,7 @@ async function _fetchProfileMessages() {
           </button>
           <button class="upo-ctx-btn text-xs text-indigo-600 hover:text-indigo-800 font-medium
                          focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600 rounded"
-                  data-id="${msg.id}" data-open="false">Show context â†•</button>
+                  data-id="${msg.id}" data-open="false">Show context ↕</button>
         </div>
         <div id="upo-ctx-${msg.id}" class="hidden mt-2"></div>
       `;
@@ -382,7 +382,7 @@ document.getElementById('upo-sum-log-toggle').addEventListener('click', () => {
 });
 
 function _upoSumLog(step, label, msg) {
-  const icons = { input:'ðŸ"‹', context:'ðŸ"¡', llm:'âœ¨', fallback:'âš ï¸' };
+  const icons = { input:'📋', context:'📡', llm:'✨', fallback:'⚠️' };
   const div = document.createElement('div');
   div.className = 'text-xs text-gray-600 flex items-start gap-1.5 py-0.5';
   div.innerHTML = `<span class="shrink-0">${icons[step] || '"¢'}</span>
@@ -736,7 +736,7 @@ async function upoToggleContext(id, btn) {
   if (btn.dataset.open === 'true') {
     ctxEl.classList.add('hidden');
     btn.dataset.open = 'false';
-    btn.textContent  = 'Show context â†•';
+    btn.textContent  = 'Show context ↕';
     return;
   }
   const before = parseInt(document.getElementById('upo-ctx-before').value, 10) || 5;
@@ -754,9 +754,9 @@ async function upoToggleContext(id, btn) {
       </div>`;
     ctxEl.classList.remove('hidden');
     btn.dataset.open = 'true';
-    btn.textContent  = 'Hide context â†•';
+    btn.textContent  = 'Hide context ↕';
   } catch (e) {
-    btn.textContent = 'Show context â†•';
+    btn.textContent = 'Show context ↕';
     console.error(e);
   } finally {
     btn.disabled = false;
@@ -857,7 +857,7 @@ if (APP_MODE === 'multi' && CURRENT_USER) {
     if (e.key === 'Escape') _closeMenu();
   });
 
-  // Admin â†’ navigate to admin page
+  // Admin → navigate to admin page
   if (adminBtn) {
     adminBtn.addEventListener('click', () => {
       _closeMenu();
@@ -865,7 +865,7 @@ if (APP_MODE === 'multi' && CURRENT_USER) {
     });
   }
 
-  // Config â†’ navigate to settings page
+  // Config → navigate to settings page
   if (configBtn) {
     configBtn.addEventListener('click', () => {
       _closeMenu();
@@ -918,7 +918,7 @@ if (APP_MODE === 'multi' && CURRENT_USER) {
       if (!keySet) showApiKeyPopup(true);
     } catch (_) {}
   } else {
-    // Single mode: restore API key from localStorage â†’ send to server.
+    // Single mode: restore API key from localStorage → send to server.
     // If no key is stored yet, show the popup so the user can enter one.
     const storedKey = localStorage.getItem(STORAGE_KEY);
     if (storedKey) {

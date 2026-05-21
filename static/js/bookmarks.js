@@ -139,7 +139,7 @@ function _renderBmCodePanel(bookmarkId) {
     <div class="p-2 border border-dashed border-indigo-200 rounded-xl bg-indigo-50/30">
       <div class="flex items-start justify-between gap-2 mb-2">
         <p class="text-xs font-medium text-indigo-700">Coding whole quote</p>
-        <button class="bm-code-panel-close text-gray-400 hover:text-gray-600 leading-none shrink-0 text-sm" data-bm-id="${bookmarkId}">âœ•</button>
+        <button class="bm-code-panel-close text-gray-400 hover:text-gray-600 leading-none shrink-0 text-sm" data-bm-id="${bookmarkId}">✕</button>
       </div>
       <div class="flex items-center gap-1.5">
         <div class="relative flex-1 min-w-0">
@@ -238,7 +238,7 @@ function _bmHlChipsHtml(bm) {
       <span class="text-xs px-1.5 py-0.5 rounded-full font-medium shrink-0 ml-1"
             style="background:${meta.code_color || '#6366f1'};color:${tc}">${esc(meta.code_name || '?')}</span>
       <button class="bm-hl-remove text-gray-300 hover:text-red-500 text-base leading-none shrink-0 transition-colors"
-              data-bm-id="${bm.bookmark_id}" data-hl-ids="${ids.join(',')}" title="Remove coding">Ã—</button>
+              data-bm-id="${bm.bookmark_id}" data-hl-ids="${ids.join(',')}" title="Remove coding">×</button>
     </div>`;
   });
 
@@ -262,7 +262,7 @@ function _renderBmHlPanel(bmId, selectedText) {
     <div class="p-2 border border-dashed border-indigo-200 rounded-xl bg-indigo-50/30">
       <div class="flex items-start justify-between gap-2 mb-2">
         <p class="text-xs font-medium text-indigo-700">Coding: <em class="text-indigo-500 not-italic">"${esc(truncated)}"</em></p>
-        <button class="bm-hl-panel-close text-gray-400 hover:text-gray-600 leading-none shrink-0 text-sm" data-bm-id="${bmId}">âœ•</button>
+        <button class="bm-hl-panel-close text-gray-400 hover:text-gray-600 leading-none shrink-0 text-sm" data-bm-id="${bmId}">✕</button>
       </div>
       <div class="flex items-center gap-1.5">
         <div class="relative flex-1 min-w-0">
@@ -387,8 +387,8 @@ function bookmarkCard(bm) {
         </div>
         <p class="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words bm-excerpt-text"
            data-bm-id="${bm.bookmark_id}">${_annotateExcerpt(bm.content, bm.highlights)}</p>
-        ${hasContent(bm.attachments) ? `<p class="text-xs text-gray-500 mt-1">ðŸ"Ž ${esc(bm.attachments)}</p>` : ''}
-        ${hasContent(bm.reactions)   ? `<p class="text-xs text-gray-500 mt-1">ðŸ’¬ ${esc(bm.reactions)}</p>`   : ''}
+        ${hasContent(bm.attachments) ? `<p class="text-xs text-gray-500 mt-1">📎 ${esc(bm.attachments)}</p>` : ''}
+        ${hasContent(bm.reactions)   ? `<p class="text-xs text-gray-500 mt-1">💬 ${esc(bm.reactions)}</p>`   : ''}
         <!-- Codes -->
         <div class="flex items-center flex-wrap gap-1 mt-2 min-h-[1.5rem]" id="bm-codes-${bm.bookmark_id}">
           ${_bmCodeChipsHtml(bm)}
@@ -403,7 +403,7 @@ function bookmarkCard(bm) {
       <div class="border-t bg-gray-50 px-4 py-2 flex justify-end">
         <button class="bm-ctx-toggle text-xs text-indigo-600 hover:text-indigo-800 font-medium"
                 data-id="${bm.id}" data-open="false">
-          Show context â†•
+          Show context ↕
         </button>
       </div>
       <div id="bmctx-${bm.id}" class="hidden"></div>
@@ -736,7 +736,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
   if (ctxBtn.dataset.open === 'true') {
     ctxEl.classList.add('hidden');
     ctxBtn.dataset.open = 'false';
-    ctxBtn.textContent  = 'Show context â†•';
+    ctxBtn.textContent  = 'Show context ↕';
     return;
   }
 
@@ -757,9 +757,9 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
       </div>`;
     ctxEl.classList.remove('hidden');
     ctxBtn.dataset.open = 'true';
-    ctxBtn.textContent  = 'Hide context â†•';
+    ctxBtn.textContent  = 'Hide context ↕';
   } catch (_) {
-    ctxBtn.textContent = 'Show context â†•';
+    ctxBtn.textContent = 'Show context ↕';
   } finally {
     ctxBtn.disabled = false;
   }
@@ -773,7 +773,7 @@ function _collapseAllBmContext() {
     const ctxEl = document.getElementById(`bmctx-${btn.dataset.id}`);
     if (ctxEl) ctxEl.classList.add('hidden');
     btn.dataset.open = 'false';
-    btn.textContent  = 'Show context â†•';
+    btn.textContent  = 'Show context ↕';
   });
 }
 document.getElementById('bm-ctx-before').addEventListener('change', _collapseAllBmContext);
@@ -787,7 +787,7 @@ document.getElementById('bm-sort-dir').addEventListener('click', () => {
   const btn = document.getElementById('bm-sort-dir');
   const next = btn.dataset.dir === 'asc' ? 'desc' : 'asc';
   btn.dataset.dir  = next;
-  btn.textContent  = next === 'asc' ? 'â†‘ Asc' : 'â†" Desc';
+  btn.textContent  = next === 'asc' ? '↑ Asc' : '↓ Desc';
   _collapseAllBmContext();
   _renderBookmarksSorted();
 });
@@ -914,7 +914,7 @@ document.getElementById('bm-filter-text').addEventListener('input', () => {
   }, 250);
 });
 
-// â"€â"€ Text selection â†’ open coding popover â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// â"€â"€ Text selection → open coding popover â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function _bmCombinedText() {
   return (_bmAccumulatedSegments?.segments || []).join(_BM_SEG_SEP);
@@ -1006,7 +1006,7 @@ function _showBmSelPopover(clientX, clientY, bmId, text) {
   pop.classList.remove('hidden');
 }
 
-// Mouse-up anywhere â†’ show selection popover if selection falls within a bookmark excerpt
+// Mouse-up anywhere → show selection popover if selection falls within a bookmark excerpt
 document.addEventListener('mouseup', e => {
   setTimeout(() => {
     const sel     = window.getSelection();
@@ -1059,7 +1059,7 @@ document.addEventListener('mouseup', e => {
   }, 10);
 });
 
-// Right-click inside a bookmark excerpt (text selected) â†’ replace native menu
+// Right-click inside a bookmark excerpt (text selected) → replace native menu
 document.getElementById('bookmarks-container').addEventListener('contextmenu', e => {
   const excerptEl = e.target.closest('.bm-excerpt-text');
   if (!excerptEl) return;
@@ -1073,7 +1073,7 @@ document.getElementById('bookmarks-container').addEventListener('contextmenu', e
   _showBmSelPopover(e.clientX, e.clientY, parseInt(excerptEl.dataset.bmId), selText);
 });
 
-// Click outside popover â†’ hide it; Ctrl+click keeps accumulation alive for next span
+// Click outside popover → hide it; Ctrl+click keeps accumulation alive for next span
 document.addEventListener('mousedown', e => {
   if (_bmSelPopover && !_bmSelPopover.contains(e.target)) {
     _bmSelPopover.classList.add('hidden');

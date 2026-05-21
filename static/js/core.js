@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
 /*
    FETCH HELPER
    Wraps fetch() so non-JSON responses (proxy 502/504, nginx error pages,
-   HTTPâ†’HTTPS redirects) produce a clear error instead of "Unexpected token '<'".
+   HTTP→HTTPS redirects) produce a clear error instead of "Unexpected token '<'".
  */
 async function apiFetch(url, options = {}) {
   if (options.body && typeof options.body === 'string') {
@@ -363,7 +363,7 @@ document.addEventListener('click', e => {
     pal.classList.add('hidden');
     return;
   }
-  // Click outside â†’ close all palettes
+  // Click outside → close all palettes
   if (!e.target.closest('.color-picker-wrap')) {
     document.querySelectorAll('.color-swatch-palette').forEach(p => p.classList.add('hidden'));
   }

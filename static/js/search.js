@@ -343,7 +343,7 @@ const _MONTH_NAMES = ['January','February','March','April','May','June',
                       'July','August','September','October','November','December'];
 
 function _binResultsByBucket(results, bucket) {
-  // sortKey â†’ { display, count, dateFrom, dateTo }
+  // sortKey → { display, count, dateFrom, dateTo }
   const bins = new Map();
   for (const r of results) {
     const d = new Date(r.date);
@@ -416,7 +416,7 @@ function _applyChartRangeFilter(range) {
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/>
     </svg>
-    <span>Showing <strong>${filtered.length}</strong> of <strong>${currentResults.length}</strong> messages &mdash; <strong>${esc(range.label)}</strong> (${range.from === range.to ? range.from : range.from + ' â†’ ' + range.to})</span>
+    <span>Showing <strong>${filtered.length}</strong> of <strong>${currentResults.length}</strong> messages &mdash; <strong>${esc(range.label)}</strong> (${range.from === range.to ? range.from : range.from + ' → ' + range.to})</span>
     <button id="chart-filter-clear" class="ml-auto text-indigo-600 hover:text-indigo-900 font-semibold">"¢ Clear</button>
   `;
   banner.classList.remove('hidden');
@@ -486,7 +486,7 @@ function renderTrendChart(results, bucket) {
             title: items => {
               const r = _trendRanges[items[0].dataIndex];
               if (!r) return items[0].label;
-              return r.from === r.to ? r.from : `${r.from} â†’ ${r.to}`;
+              return r.from === r.to ? r.from : `${r.from} → ${r.to}`;
             },
             label: item => `${item.raw} messages click to filter`,
           },
@@ -588,15 +588,15 @@ function renderTrendChart(results, bucket) {
 
 // -- SUMMARIZE RESULTS -----------------------------------------------------
 const LOG_ICONS = {
-  filter:      'ðŸ"',
-  retrieval:   'ðŸ"¡',
-  dedup:       'ðŸ§¹',
-  cluster:     'ðŸ"®',
-  sample:      'ðŸŽ¯',
-  llm:         'âœ¨',
-  fallback:    'âš ï¸',
-  meta:        'ðŸ"…',
-  instruction: 'ðŸ"',
+  filter:      '🔍',
+  retrieval:   '📡',
+  dedup:       '🧹',
+  cluster:     '🔮',
+  sample:      '🎯',
+  llm:         '✨',
+  fallback:    '⚠️',
+  meta:        '📅',
+  instruction: '📝',
 };
 function _updateSrCountLabel() {
   const el = document.getElementById('sr-count-label');
@@ -1276,9 +1276,9 @@ function msgCard(msg) {
     ? highlightTerms(msg.username, activeFilterTokens)
     : esc(msg.username);
   const attachLine = hasContent(msg.attachments)
-    ? `<p class="text-xs text-gray-500 mt-1">ðŸ"Ž ${esc(msg.attachments)}</p>` : '';
+    ? `<p class="text-xs text-gray-500 mt-1">📎 ${esc(msg.attachments)}</p>` : '';
   const reactLine = hasContent(msg.reactions)
-    ? `<p class="text-xs text-gray-500 mt-1">ðŸ’¬ ${esc(msg.reactions)}</p>` : '';
+    ? `<p class="text-xs text-gray-500 mt-1">💬 ${esc(msg.reactions)}</p>` : '';
 
   // Find source filename
   const src = allUploads.find(u => u.id === msg.upload_id);
@@ -1310,7 +1310,7 @@ function msgCard(msg) {
         </button>
         <button class="ctx-toggle text-xs text-indigo-600 hover:text-indigo-800 font-medium"
                 data-id="${msg.id}" data-open="false">
-          Show context â†•
+          Show context ↕
         </button>
       </div>
       <div id="ctx-${msg.id}" class="hidden"></div>
@@ -1323,7 +1323,7 @@ async function toggleContext(id, btn) {
   if (btn.dataset.open === 'true') {
     ctxEl.classList.add('hidden');
     btn.dataset.open = 'false';
-    btn.textContent = 'Show context â†•';
+    btn.textContent = 'Show context ↕';
     return;
   }
   const before = document.getElementById('ctx-before').value || 5;
@@ -1342,8 +1342,8 @@ async function toggleContext(id, btn) {
       </div>`;
     ctxEl.classList.remove('hidden');
     btn.dataset.open = 'true';
-    btn.textContent = 'Hide context â†•';
-  } catch (e) { btn.textContent = 'Show context â†•'; console.error(e); }
+    btn.textContent = 'Hide context ↕';
+  } catch (e) { btn.textContent = 'Show context ↕'; console.error(e); }
   finally { btn.disabled = false; }
 }
 
