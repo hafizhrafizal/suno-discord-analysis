@@ -1,4 +1,4 @@
-﻿// -- BOOKMARKS -------------------------------------------------------------
+// -- BOOKMARKS -------------------------------------------------------------
 
 async function loadBookmarkIds() {
   try {
@@ -125,7 +125,7 @@ function _bmCodeChipsHtml(bm) {
     return `<span class="bm-code-chip text-xs px-2 py-0.5 rounded-full font-medium cursor-pointer select-none"
                   style="background:${l.color};color:${tc}"
                   data-bm-id="${bm.bookmark_id}" data-code-id="${l.id}"
-                  title="Remove code">${esc(l.name)} â€”</span>`;
+                  title="Remove code">${esc(l.name)} —</span>`;
   }).join('');
   return chips + `<button class="bm-code-btn text-xs text-gray-400 hover:text-indigo-600 border border-dashed border-gray-300 hover:border-indigo-400 rounded-full px-2 py-0.5 transition-colors"
                           data-bm-id="${bm.bookmark_id}">+ code</button>`;
@@ -136,30 +136,30 @@ function _renderBmCodePanel(bookmarkId) {
   const panel = document.getElementById(`bm-code-panel-${bookmarkId}`);
   if (!panel) return;
   panel.innerHTML = `
-    <div class=â€p-2 border border-dashed border-indigo-200 rounded-xl bg-indigo-50/30â€>
-      <div class=â€flex items-start justify-between gap-2 mb-2â€>
-        <p class=â€text-xs font-medium text-indigo-700â€>Coding whole quote</p>
-        <button class=â€bm-code-panel-close text-gray-400 hover:text-gray-600 leading-none shrink-0 text-smâ€ data-bm-id=â€${bookmarkId}â€>âœ•</button>
+    <div class="p-2 border border-dashed border-indigo-200 rounded-xl bg-indigo-50/30">
+      <div class="flex items-start justify-between gap-2 mb-2">
+        <p class="text-xs font-medium text-indigo-700">Coding whole quote</p>
+        <button class="bm-code-panel-close text-gray-400 hover:text-gray-600 leading-none shrink-0 text-sm" data-bm-id="${bookmarkId}">âœ•</button>
       </div>
-      <div class=â€flex items-center gap-1.5â€>
-        <div class=â€relative flex-1 min-w-0â€>
-          <input class=â€bm-new-code-input w-full border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300â€
-                 placeholder=â€Type to search or create a codeâ€¦â€ data-bm-id=â€${bookmarkId}â€ autocomplete=â€offâ€ />
-          <div class=â€bm-code-suggestions hidden absolute left-0 top-full mt-0.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 w-full max-h-44 overflow-y-autoâ€
-               data-bm-id=â€${bookmarkId}â€ data-type=â€wholeâ€></div>
+      <div class="flex items-center gap-1.5">
+        <div class="relative flex-1 min-w-0">
+          <input class="bm-new-code-input w-full border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                 placeholder="Type to search or create a code…" data-bm-id="${bookmarkId}" autocomplete="off" />
+          <div class="bm-code-suggestions hidden absolute left-0 top-full mt-0.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 w-full max-h-44 overflow-y-auto"
+               data-bm-id="${bookmarkId}" data-type="whole"></div>
         </div>
-        ${_colorPickerHtml('', _randomCodeColor(), 'bm-new-code-color', `data-bm-id=â€${bookmarkId}â€`)}
-        <button class=â€bm-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0â€
-                data-bm-id=â€${bookmarkId}â€>Add</button>
+        ${_colorPickerHtml('', _randomCodeColor(), 'bm-new-code-color', `data-bm-id="${bookmarkId}"`)}
+        <button class="bm-new-code-create text-xs px-2.5 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 shrink-0"
+                data-bm-id="${bookmarkId}">Add</button>
       </div>
     </div>`;
   requestAnimationFrame(() => panel.querySelector('.bm-new-code-input')?.focus());
 }
 
-// â”€â”€ Annotate excerpt text with colored highlight spans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Annotate excerpt text with colored highlight spans â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 // Handles overlapping spans: splits content at every span boundary, then renders
 // each segment with all codes that cover it (stacked bottom-border colors).
-// pendingTexts: text strings actively being coded â€” shown with dashed indigo underline.
+// pendingTexts: text strings actively being coded — shown with dashed indigo underline.
 function _annotateExcerpt(content, highlights, pendingTexts = []) {
   const lower = content.toLowerCase();
 
@@ -178,7 +178,7 @@ function _annotateExcerpt(content, highlights, pendingTexts = []) {
     const idx = lower.indexOf(needle);
     if (idx === -1) continue;
     rawSpans.push({ start: idx, end: idx + needle.length,
-                    color: '#6366f1', name: 'Codingâ€¦', pending: true });
+                    color: '#6366f1', name: 'Coding…', pending: true });
   }
   if (!rawSpans.length) return esc(content);
 
@@ -199,8 +199,8 @@ function _annotateExcerpt(content, highlights, pendingTexts = []) {
     const pending = active.filter(s =>  s.pending);
 
     if (!coded.length) {
-      // Only a pending span â€” dashed indigo underline + tinted background
-      out += `<mark class="bm-hl-inline bm-hl-pending rounded-sm cursor-default" style="background:#e0e7ff;border-bottom:2px dashed #6366f1" title="Codingâ€¦">${esc(text)}</mark>`;
+      // Only a pending span — dashed indigo underline + tinted background
+      out += `<mark class="bm-hl-inline bm-hl-pending rounded-sm cursor-default" style="background:#e0e7ff;border-bottom:2px dashed #6366f1" title="Coding…">${esc(text)}</mark>`;
     } else {
       const [first, ...rest] = coded;
       let style = `background:${first.color}28;border-bottom:2px solid ${first.color}`;
@@ -208,15 +208,15 @@ function _annotateExcerpt(content, highlights, pendingTexts = []) {
         const shadows = rest.map((s, k) => `0 ${(k + 2) * 2 + 1}px 0 ${s.color}`).join(',');
         style += `;box-shadow:${shadows};padding-bottom:${rest.length * 3}px`;
       }
-      // pending coexists â€” no extra decoration, the coded highlight is sufficient
-      const title = [...coded.map(s => s.name), ...(pending.length ? ['(Codingâ€¦)'] : [])].join(' + ');
+      // pending coexists — no extra decoration, the coded highlight is sufficient
+      const title = [...coded.map(s => s.name), ...(pending.length ? ['(Coding…)'] : [])].join(' + ');
       out += `<mark class="bm-hl-inline rounded-sm cursor-default" style="${style}" title="${esc(title)}">${esc(text)}</mark>`;
     }
   }
   return out;
 }
 
-// â”€â”€ Coded-span chips shown below each bookmark card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Coded-span chips shown below each bookmark card â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 function _bmHlChipsHtml(bm) {
   const hls = bm.highlights || [];
   if (!hls.length) return '';
@@ -248,7 +248,7 @@ function _bmHlChipsHtml(bm) {
   </div>`;
 }
 
-// â”€â”€ Highlight code picker panel (opened when text is selected) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Highlight code picker panel (opened when text is selected) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 function _renderBmHlPanel(bmId, selectedText) {
   const panel = document.getElementById(`bm-hl-panel-${bmId}`);
   const bm    = _cachedBookmarks.find(b => b.bookmark_id === bmId);
@@ -256,7 +256,7 @@ function _renderBmHlPanel(bmId, selectedText) {
   panel.dataset.hlText = selectedText;
   _bmSetPendingHl(bmId, selectedText);
 
-  const truncated = selectedText.length > 80 ? selectedText.slice(0, 80) + 'â€¦' : selectedText;
+  const truncated = selectedText.length > 80 ? selectedText.slice(0, 80) + '…' : selectedText;
 
   panel.innerHTML = `
     <div class="p-2 border border-dashed border-indigo-200 rounded-xl bg-indigo-50/30">
@@ -267,7 +267,7 @@ function _renderBmHlPanel(bmId, selectedText) {
       <div class="flex items-center gap-1.5">
         <div class="relative flex-1 min-w-0">
           <input class="bm-hl-new-code-input w-full border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                 placeholder="Type to search or create a codeâ€¦" data-bm-id="${bmId}" autocomplete="off" />
+                 placeholder="Type to search or create a code…" data-bm-id="${bmId}" autocomplete="off" />
           <div class="bm-code-suggestions hidden absolute left-0 top-full mt-0.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 w-full max-h-44 overflow-y-auto"
                data-bm-id="${bmId}" data-type="span"></div>
         </div>
@@ -387,7 +387,7 @@ function bookmarkCard(bm) {
         </div>
         <p class="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap break-words bm-excerpt-text"
            data-bm-id="${bm.bookmark_id}">${_annotateExcerpt(bm.content, bm.highlights)}</p>
-        ${hasContent(bm.attachments) ? `<p class="text-xs text-gray-500 mt-1">ðŸ“Ž ${esc(bm.attachments)}</p>` : ''}
+        ${hasContent(bm.attachments) ? `<p class="text-xs text-gray-500 mt-1">ðŸ"Ž ${esc(bm.attachments)}</p>` : ''}
         ${hasContent(bm.reactions)   ? `<p class="text-xs text-gray-500 mt-1">ðŸ’¬ ${esc(bm.reactions)}</p>`   : ''}
         <!-- Codes -->
         <div class="flex items-center flex-wrap gap-1 mt-2 min-h-[1.5rem]" id="bm-codes-${bm.bookmark_id}">
@@ -485,7 +485,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     return;
   }
 
-  // Remove code chip (â€” click on assigned label)
+  // Remove code chip (— click on assigned label)
   const labelChip = e.target.closest('.bm-code-chip');
   if (labelChip) {
     const bmId    = parseInt(labelChip.dataset.bmId);
@@ -705,7 +705,7 @@ document.getElementById('bookmarks-container').addEventListener('click', async e
     return;
   }
 
-  // Remove a coded span (highlight) â€” data-hl-ids may be comma-separated for merged chips
+  // Remove a coded span (highlight) — data-hl-ids may be comma-separated for merged chips
   const hlRemove = e.target.closest('.bm-hl-remove');
   if (hlRemove) {
     const bmId  = parseInt(hlRemove.dataset.bmId);
@@ -787,7 +787,7 @@ document.getElementById('bm-sort-dir').addEventListener('click', () => {
   const btn = document.getElementById('bm-sort-dir');
   const next = btn.dataset.dir === 'asc' ? 'desc' : 'asc';
   btn.dataset.dir  = next;
-  btn.textContent  = next === 'asc' ? 'â†‘ Asc' : 'â†“ Desc';
+  btn.textContent  = next === 'asc' ? 'â†‘ Asc' : 'â†" Desc';
   _collapseAllBmContext();
   _renderBookmarksSorted();
 });
@@ -914,7 +914,7 @@ document.getElementById('bm-filter-text').addEventListener('input', () => {
   }, 250);
 });
 
-// â”€â”€ Text selection â†’ open coding popover â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Text selection â†’ open coding popover â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function _bmCombinedText() {
   return (_bmAccumulatedSegments?.segments || []).join(_BM_SEG_SEP);
@@ -1029,7 +1029,7 @@ document.addEventListener('mouseup', e => {
       if (!_bmAccumulatedSegments.segments.includes(selText)) {
         _bmAccumulatedSegments.segments.push(selText);
       }
-      window.getSelection()?.removeAllRanges(); // clear browser selection â€” span captured
+      window.getSelection()?.removeAllRanges(); // clear browser selection — span captured
       _bmSelectionState = { bmId, text: _bmCombinedText() };
       _updateBmSelPopoverBtn();
       // Persist all accumulated spans as pending highlights so nothing disappears
@@ -1048,7 +1048,7 @@ document.addEventListener('mouseup', e => {
         _renderBmHlPanel(bmId, _bmCombinedText());
       }
     } else {
-      // Fresh selection â€” start accumulation (or reset if different bookmark)
+      // Fresh selection — start accumulation (or reset if different bookmark)
       _bmAccumulatedSegments = { bmId, segments: [selText] };
       _bmSelectionState = { bmId, text: selText };
       _updateBmSelPopoverBtn();

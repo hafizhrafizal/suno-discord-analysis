@@ -1,4 +1,4 @@
-﻿// -- CODING MANAGER --------------------------------------------------------
+// -- CODING MANAGER --------------------------------------------------------
 
 let _cmCodes          = [];
 let _cmCategories     = [];
@@ -97,25 +97,25 @@ async function _cmRefresh() {
   }
 }
 
-// â”€â”€ Category select population â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Category select population â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function _cmPopulateCategorySelects() {
   const sorted = [..._cmCategories].sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
-  const codeOpts = '<option value="">â€” Uncategorized â€”</option>' +
+  const codeOpts = '<option value="">— Uncategorized —</option>' +
     sorted.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   document.getElementById('cm-nc-category').innerHTML   = codeOpts;
   document.getElementById('cm-edit-category').innerHTML = codeOpts;
 
   // Parent-coding selects (used for create & edit of codings)
-  const parentOpts = '<option value="">â€” Root level (2nd-order) â€”</option>' +
+  const parentOpts = '<option value="">— Root level (2nd-order) —</option>' +
     sorted.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   document.getElementById('cm-cat-parent').innerHTML      = parentOpts;
   document.getElementById('cm-cat-edit-parent').innerHTML = parentOpts;
 }
 
-// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 let _cmTreeMaxDepth = 0;
 
@@ -151,7 +151,7 @@ function _cmGetDescendantCatIds(catId) {
   return result;
 }
 
-// â”€â”€ Tree building â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Tree building â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function _cmBuildTree() {
   const catMap = {};
@@ -212,7 +212,7 @@ function _cmCountVisibleCodes(node, visibleIds) {
   return direct + node.children.reduce((s, ch) => s + _cmCountVisibleCodes(ch, visibleIds), 0);
 }
 
-// â”€â”€ Tree rendering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Tree rendering â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function _cmRenderTree() {
   _cmComputeMaxDepth();
@@ -303,7 +303,7 @@ function _cmRenderCatNode(node, depth, visibleIds) {
 // r.type === 'excerpt'  â†’ whole-bookmark coding (draggable, full snippet)
 // r.type === 'highlight' â†’ span-level coding (read-only, shows highlighted text)
 function _cmRenderExcerptRow(r, codeId, accent) {
-  const meta = `${esc(r.username || '')}${r.date ? ' Â· ' + esc(r.date.substring(0, 10)) : ''}`;
+  const meta = `${esc(r.username || '')}${r.date ? ' · ' + esc(r.date.substring(0, 10)) : ''}`;
   if (r.type === 'highlight') {
     const hlSnippet = r.highlighted_text || '';
     return `<div class="border-l-2 pl-2 py-1 cm-excerpt-item group rounded-r-md transition-colors hover:bg-amber-50/60"
@@ -313,7 +313,7 @@ function _cmRenderExcerptRow(r, codeId, accent) {
                  data-source-code-id="${codeId}"
                  data-highlight-id="${r.highlight_id}"
                  data-hl-text="${esc(hlSnippet)}"
-                 title="Drag to move Â· Ctrl+drag to copy">
+                 title="Drag to move · Ctrl+drag to copy">
       <div class="flex items-start gap-1.5">
         <div class="flex-1 min-w-0">
           <p class="text-xs italic text-gray-800 leading-relaxed font-medium">"${esc(hlSnippet)}"</p>
@@ -327,13 +327,13 @@ function _cmRenderExcerptRow(r, codeId, accent) {
     </div>`;
   }
   const snippet = (r.content || '').substring(0, 180);
-  const more    = (r.content || '').length > 180 ? 'â€¦' : '';
+  const more    = (r.content || '').length > 180 ? '…' : '';
   return `<div class="border-l-2 pl-2 py-1 cm-excerpt-item group rounded-r-md transition-colors hover:bg-indigo-50/60"
                style="border-color:${accent}"
                draggable="true"
                data-bookmark-id="${r.bookmark_id}"
                data-source-code-id="${codeId}"
-               title="Drag to move Â· Ctrl+drag to copy">
+               title="Drag to move · Ctrl+drag to copy">
     <div class="flex items-start gap-1.5">
       <div class="flex-1 min-w-0">
         <p class="text-xs italic text-gray-700 leading-relaxed">"${esc(snippet)}${more}"</p>
@@ -359,7 +359,7 @@ function _cmRenderCodeCard(code, depth) {
   if (isExpanded) {
     const cached = _cmExcerptsCache[code.id];
     if (cached === undefined) {
-      excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 text-xs text-gray-400 italic text-center py-1.5 border-l-2 border-indigo-200 pl-2 ml-3">Loading excerptsâ€¦</div>`;
+      excerptsHtml = `<div id="cm-exc-${code.id}" class="mt-1 text-xs text-gray-400 italic text-center py-1.5 border-l-2 border-indigo-200 pl-2 ml-3">Loading excerpts…</div>`;
     } else {
       const visible = _cmFilterExcerpts(cached);
       if (visible.length === 0) {
@@ -392,7 +392,7 @@ function _cmRenderCodeCard(code, depth) {
     </div>`;
 }
 
-// â”€â”€ Detail panel: Code â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Detail panel: Code â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function _cmOpenCodeDetail(code) {
   _cmFlushDetailPanel();
@@ -403,8 +403,8 @@ function _cmOpenCodeDetail(code) {
   _setPickerColor('cm-edit-color', code.color);
   document.getElementById('cm-edit-desc').value          = code.description || '';
   document.getElementById('cm-edit-category').value      = code.category_id ?? '';
-  document.getElementById('cm-edit-ground').textContent  = code.groundedness ?? 'â€”';
-  document.getElementById('cm-edit-density').textContent = code.density ?? 'â€”';
+  document.getElementById('cm-edit-ground').textContent  = code.groundedness ?? '—';
+  document.getElementById('cm-edit-density').textContent = code.density ?? '—';
   document.getElementById('cm-detail-panel').classList.remove('hidden');
 }
 
@@ -415,7 +415,7 @@ async function _cmFetchExcerptsFor(codeId) {
   } catch (_) {
     _cmExcerptsCache[codeId] = [];
   }
-  // Targeted DOM update â€” avoid full re-render to preserve scroll position
+  // Targeted DOM update — avoid full re-render to preserve scroll position
   const container = document.getElementById(`cm-exc-${codeId}`);
   if (!container || !_cmExpandedCodes.has(codeId)) return;
   const cached  = _cmExcerptsCache[codeId];
@@ -434,7 +434,7 @@ async function _cmFetchExcerptsFor(codeId) {
   container.innerHTML = visible.map(r => _cmRenderExcerptRow(r, codeId, accent)).join('');
 }
 
-// â”€â”€ Detail panel: Category â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Detail panel: Category â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function _cmOpenCatDetail(cat) {
   _cmFlushDetailPanel();
@@ -445,7 +445,7 @@ function _cmOpenCatDetail(cat) {
   _setPickerColor('cm-cat-edit-color', cat.color);
   // Filter out self and descendants to avoid cycles
   const parentEl = document.getElementById('cm-cat-edit-parent');
-  parentEl.innerHTML = '<option value="">â€” Root level (2nd-order) â€”</option>' +
+  parentEl.innerHTML = '<option value="">— Root level (2nd-order) —</option>' +
     _cmCategories
       .filter(c => c.id !== cat.id)
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
@@ -478,7 +478,7 @@ function _cmCloseDetail() {
   document.getElementById('cm-detail-panel').classList.add('hidden');
 }
 
-// â”€â”€ Excerpt coding panel (sidebar) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Excerpt coding panel (sidebar) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText = null, changeMode = false) {
   let bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
@@ -506,24 +506,24 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
   document.getElementById('cm-exc-edit-section').classList.remove('hidden');
   document.getElementById('cm-detail-panel').classList.remove('hidden');
   document.getElementById('cm-exc-panel-source').textContent =
-    [bm.username, bm.date ? bm.date.substring(0, 10) : null].filter(Boolean).join(' Â· ');
+    [bm.username, bm.date ? bm.date.substring(0, 10) : null].filter(Boolean).join(' · ');
   textEl.style.borderLeftColor = srcCode ? srcCode.color : '#0d3e7f';
 
   // Show conversation context button
   const _ctxBtn = document.getElementById('cm-exc-ctx-btn');
   if (_ctxBtn) {
     _ctxBtn.dataset.msgId  = bm.id || '';
-    _ctxBtn.dataset.source = [bm.username, bm.date ? bm.date.substring(0, 10) : null].filter(Boolean).join(' Â· ');
+    _ctxBtn.dataset.source = [bm.username, bm.date ? bm.date.substring(0, 10) : null].filter(Boolean).join(' · ');
     _ctxBtn.classList.remove('hidden');
   }
 
   if (changeMode) {
-    // â”€â”€ Change-coding mode: show source chip, search for replacement â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â"€â"€ Change-coding mode: show source chip, search for replacement â"€â"€â"€â"€â"€â"€â"€â"€â"€
     document.getElementById('cm-detail-title').textContent =
       hlId !== null ? 'Change Span Coding' : 'Change Open Coding';
     textEl.innerHTML = hlId !== null
       ? `<strong class="not-italic font-semibold text-gray-800 block mb-1">"${esc(hlText || '')}"</strong>`
-        + `<span class="text-gray-400 text-[10px] block mt-1">Full excerpt: ${esc((bm.content || '').substring(0, 200))}${(bm.content || '').length > 200 ? 'â€¦' : ''}</span>`
+        + `<span class="text-gray-400 text-[10px] block mt-1">Full excerpt: ${esc((bm.content || '').substring(0, 200))}${(bm.content || '').length > 200 ? '…' : ''}</span>`
       : esc(`"${bm.content || ''}"`);
     if (codesLbl) codesLbl.textContent = 'Changing from:';
     // Show source code chip (read-only, no Ã— button)
@@ -540,26 +540,26 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
     if (addLbl) addLbl.textContent = 'Replace with:';
     const searchEl = document.getElementById('cm-exc-panel-search');
     searchEl.value = '';
-    searchEl.placeholder = 'Search or create replacement codingâ€¦';
+    searchEl.placeholder = 'Search or create replacement coding…';
     searchEl.focus();
     return;
   }
 
   // Reset search placeholder in case it was changed by change-mode
   const searchEl = document.getElementById('cm-exc-panel-search');
-  searchEl.placeholder = 'Type to search or createâ€¦';
+  searchEl.placeholder = 'Type to search or create…';
   if (addLbl) addLbl.textContent = 'Add Open Coding';
 
   if (hlId !== null) {
-    // â”€â”€ Span-level coding view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â"€â"€ Span-level coding view â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
     document.getElementById('cm-detail-title').textContent = 'Span Coding';
     textEl.innerHTML = `<strong class="not-italic font-semibold text-gray-800 block mb-1">"${esc(hlText || '')}"</strong>`
-      + `<span class="text-gray-400 text-[10px] block mt-1">Full excerpt: ${esc((bm.content || '').substring(0, 200))}${(bm.content || '').length > 200 ? 'â€¦' : ''}</span>`;
+      + `<span class="text-gray-400 text-[10px] block mt-1">Full excerpt: ${esc((bm.content || '').substring(0, 200))}${(bm.content || '').length > 200 ? '…' : ''}</span>`;
     if (codesLbl) codesLbl.textContent = 'Span coding';
     _cmExcPanelRenderSpanCode(srcCode, bookmarkId, hlId);
     if (addEl) addEl.classList.add('hidden');
   } else {
-    // â”€â”€ Whole-bookmark coding view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // â"€â"€ Whole-bookmark coding view â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
     document.getElementById('cm-detail-title').textContent = 'Edit Open Codings';
     textEl.textContent = `"${bm.content || ''}"`;
     if (codesLbl) codesLbl.textContent = 'Open Codings';
@@ -780,7 +780,7 @@ document.getElementById('cm-exc-panel-codes').addEventListener('click', async e 
   }
 });
 
-// â”€â”€ Excerpt row right-click context menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Excerpt row right-click context menu â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 document.getElementById('cm-code-list').addEventListener('contextmenu', e => {
   const row = e.target.closest('.cm-excerpt-item');
@@ -846,7 +846,7 @@ document.addEventListener('click', e => {
   }
 });
 
-// â”€â”€ Tree click delegation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Tree click delegation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 document.getElementById('cm-code-list').addEventListener('click', e => {
   // Checkbox in merge mode
@@ -917,9 +917,9 @@ document.getElementById('cm-code-list').addEventListener('click', e => {
   }
 });
 
-// â”€â”€ Drag & drop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Drag & drop â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
-// â”€â”€ Excerpt item mouse handling: prevent text selection, detect click vs drag â”€â”€
+// â"€â"€ Excerpt item mouse handling: prevent text selection, detect click vs drag â"€â"€
 
 let _cmExcMdEl = null;  // element where mousedown started
 let _cmExcMdX  = 0;
@@ -928,7 +928,7 @@ let _cmExcMdY  = 0;
 document.getElementById('cm-code-list').addEventListener('mousedown', e => {
   const item = e.target.closest('.cm-excerpt-item');
   if (!item) return;
-  // Do NOT preventDefault here â€” it would kill dragstart in Chrome/Edge.
+  // Do NOT preventDefault here — it would kill dragstart in Chrome/Edge.
   // Text selection is prevented by CSS user-select:none !important on the element.
   _cmExcMdEl = item;
   _cmExcMdX  = e.clientX;
@@ -961,11 +961,11 @@ document.getElementById('cm-code-list').addEventListener('selectstart', e => {
 });
 
 document.getElementById('cm-code-list').addEventListener('dragstart', e => {
-  // Excerpt drag â€” must be checked first (excerpts are inside code-outer wrappers)
+  // Excerpt drag — must be checked first (excerpts are inside code-outer wrappers)
   // Skip span-level highlight items (they are not draggable)
   const excerptItem = e.target.closest('.cm-excerpt-item[draggable="true"]');
   if (excerptItem) {
-    _cmExcMdEl  = null;   // cancel click detection â€” this is a real drag
+    _cmExcMdEl  = null;   // cancel click detection — this is a real drag
     _cmDragCopy = e.ctrlKey;
     _cmDragExcerpt = {
       bookmarkId:   parseInt(excerptItem.dataset.bookmarkId),
@@ -989,7 +989,7 @@ document.getElementById('cm-code-list').addEventListener('dragstart', e => {
     card.classList.add('opacity-50');
     return;
   }
-  // Coding (category) header drag â€” not toggle/edit buttons
+  // Coding (category) header drag — not toggle/edit buttons
   const catHeader = e.target.closest('.cm-cat-header');
   if (catHeader && !e.target.closest('.cm-tree-toggle') && !e.target.closest('.cm-edit-cat-btn')) {
     _cmDragCatId  = parseInt(catHeader.dataset.catId);
@@ -1036,7 +1036,7 @@ document.getElementById('cm-code-list').addEventListener('dragend', () => {
 });
 
 document.getElementById('cm-code-list').addEventListener('dragover', e => {
-  // â”€â”€ Excerpt drag: only open-coding wrappers are valid targets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â"€â"€ Excerpt drag: only open-coding wrappers are valid targets â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   if (_cmDragExcerpt !== null) {
     const outer = e.target.closest('.cm-code-outer');
     if (outer && parseInt(outer.dataset.outerCodeId) !== _cmDragExcerpt.sourceCodeId) {
@@ -1048,7 +1048,7 @@ document.getElementById('cm-code-list').addEventListener('dragover', e => {
     }
     return;
   }
-  // â”€â”€ Code/cat drag: zones and cat headers are valid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â"€â"€ Code/cat drag: zones and cat headers are valid â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   if (_cmDragCodeId === null && _cmDragCatId === null) return;
   const zone = e.target.closest('.cm-drop-zone');
   if (zone) { e.preventDefault(); zone.classList.add('bg-indigo-100', 'ring-2', 'ring-indigo-400'); return; }
@@ -1079,7 +1079,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
   document.querySelectorAll('.cm-drop-zone').forEach(z => z.classList.remove('bg-indigo-100', 'ring-2', 'ring-indigo-400'));
   document.querySelectorAll('.cm-cat-header').forEach(h => h.classList.remove('bg-indigo-50', 'opacity-50'));
 
-  // â”€â”€ Drop: excerpt â†’ re-assign (move) or copy to another open coding â”€â”€â”€â”€â”€â”€â”€
+  // â"€â"€ Drop: excerpt â†’ re-assign (move) or copy to another open coding â"€â"€â"€â"€â"€â"€â"€
   if (_cmDragExcerpt !== null) {
     const isCopy = e.ctrlKey;
     const exc    = _cmDragExcerpt;
@@ -1091,7 +1091,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
     if (!targetCodeId || targetCodeId === exc.sourceCodeId) return;
     try {
       if (exc.highlightId !== null) {
-        // â”€â”€ Span highlight drag â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // â"€â"€ Span highlight drag â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         // Create the highlight under the target code
         await apiFetch(`/api/bookmarks/${exc.bookmarkId}/highlights`, {
           method: 'POST',
@@ -1112,7 +1112,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
           }];
         }
       } else {
-        // â”€â”€ Whole-bookmark coding drag â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // â"€â"€ Whole-bookmark coding drag â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${targetCodeId}`, { method: 'POST' });
         if (!isCopy) {
           await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${exc.sourceCodeId}`, { method: 'DELETE' });
@@ -1144,7 +1144,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
   const rawId       = target.dataset.dropCatId ?? target.dataset.catId;
   const newParentId = rawId ? parseInt(rawId) : null;
 
-  // â”€â”€ Drop: open coding â†’ assign to a coding level â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â"€â"€ Drop: open coding â†’ assign to a coding level â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   if (_cmDragCodeId !== null) {
     const codeId = _cmDragCodeId;
     _cmDragCodeId = null;
@@ -1163,7 +1163,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
     return;
   }
 
-  // â”€â”€ Drop: coding â†’ re-parent to a higher-order coding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â"€â"€ Drop: coding â†’ re-parent to a higher-order coding â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
   if (_cmDragCatId !== null) {
     const catId = _cmDragCatId;
     _cmDragCatId = null;
@@ -1181,7 +1181,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
   }
 });
 
-// â”€â”€ Code save / delete â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Code save / delete â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 document.getElementById('cm-code-edit-section').addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
@@ -1237,7 +1237,7 @@ document.getElementById('cm-edit-delete').addEventListener('click', async () => 
   } catch (err) { showErrorPopup('Failed to delete: ' + err.message); }
 });
 
-// â”€â”€ Category save / delete â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Category save / delete â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 document.getElementById('cm-cat-edit-save').addEventListener('click', async () => {
   if (_cmOpenCatId === null) return;
@@ -1272,14 +1272,14 @@ document.getElementById('cm-cat-edit-delete').addEventListener('click', async ()
   } catch (err) { showErrorPopup('Failed to delete: ' + err.message); }
 });
 
-// â”€â”€ Detail close â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Detail close â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 document.getElementById('cm-detail-close').addEventListener('click', () => {
   _cmCloseDetail();
   _cmRenderTree();
 });
 
-// â”€â”€ Excerpt panel: conversation context popup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Excerpt panel: conversation context popup â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 let _cmCtxActiveMsgId  = null;
 let _cmCtxActiveSource = '';
@@ -1289,12 +1289,12 @@ async function _cmCtxLoad(msgId, source) {
   const bodyEl  = document.getElementById('cm-ctx-modal-body');
   const before  = Math.max(0, parseInt(document.getElementById('cm-ctx-before').value) || 10);
   const after   = Math.max(0, parseInt(document.getElementById('cm-ctx-after').value)  || 10);
-  bodyEl.innerHTML = '<p class="text-xs text-gray-400 text-center py-6">Loadingâ€¦</p>';
+  bodyEl.innerHTML = '<p class="text-xs text-gray-400 text-center py-6">Loading…</p>';
   try {
     const msgs = await apiFetch(`/api/context/${msgId}?before=${before}&after=${after}`);
     metaEl.textContent = source
-      ? `${source} Â· ${msgs.length} messages (${before} before Â· ${after} after)`
-      : `${msgs.length} messages (${before} before Â· ${after} after)`;
+      ? `${source} · ${msgs.length} messages (${before} before · ${after} after)`
+      : `${msgs.length} messages (${before} before · ${after} after)`;
     bodyEl.innerHTML = msgs.map(m => ctxMsg(m)).join('');
     // Scroll to the bookmarked (target) message
     requestAnimationFrame(() => {
@@ -1327,7 +1327,7 @@ document.getElementById('cm-ctx-modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden');
 });
 
-// â”€â”€ New Code panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ New Code panel â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 document.getElementById('cm-new-code-btn').addEventListener('click', () => {
   document.getElementById('cm-new-code-panel').classList.toggle('hidden');
@@ -1366,7 +1366,7 @@ document.getElementById('cm-nc-save').addEventListener('click', async () => {
   }
 });
 
-// â”€â”€ New Theme panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ New Theme panel â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 document.getElementById('cm-new-cat-btn').addEventListener('click', () => {
   document.getElementById('cm-new-cat-panel').classList.toggle('hidden');
@@ -1401,7 +1401,7 @@ document.getElementById('cm-cat-save').addEventListener('click', async () => {
   }
 });
 
-// â”€â”€ Merge mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Merge mode â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 document.getElementById('cm-select-mode-toggle').addEventListener('change', e => {
   _cmMergeMode = e.target.checked;
@@ -1503,7 +1503,7 @@ document.addEventListener('codebook-updated', () => {
   }
 });
 
-// â”€â”€ Coding page tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Coding page tabs â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 let _cmActiveTab = 'manager'; // 'manager' | 'table'
 
@@ -1527,7 +1527,7 @@ document.getElementById('cm-tab-manager').addEventListener('click', () => _cmSwi
 document.getElementById('cm-tab-table').addEventListener('click', () => _cmSwitchTab('table'));
 document.getElementById('cm-table-reload-btn').addEventListener('click', _cmLoadCodingTable);
 
-// â”€â”€ Coding filter listeners â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Coding filter listeners â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 async function _cmApplyFilter() {
   _cmFilterDateFrom = document.getElementById('cm-filter-month-from').value || '';
@@ -1581,7 +1581,7 @@ document.getElementById('cm-filter-clear').addEventListener('click', () => {
   _cmRenderCodingTable();
 });
 
-// â”€â”€ Coding Manager: right-click "Add higher-level coding" â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Coding Manager: right-click "Add higher-level coding" â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 let _cmCtxTargetType  = null; // 'code' | 'cat'
 let _cmCtxTargetId    = null; // int
@@ -1694,11 +1694,11 @@ document.addEventListener('click', e => {
   if (!menu.classList.contains('hidden') && !menu.contains(e.target)) _cmHideCtxMenu();
 });
 
-// â”€â”€ Coding Table: load â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Coding Table: load â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 async function _cmLoadCodingTable() {
   const container = document.getElementById('cm-coding-table-container');
-  container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">Loadingâ€¦</p>';
+  container.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">Loading…</p>';
   // Ensure codes & categories are loaded
   if (!_cmCodes.length && !_cmCategories.length) await _cmRefresh();
   // Ensure bookmarks are loaded (needed for excerpts)
@@ -1712,7 +1712,7 @@ async function _cmLoadCodingTable() {
   _cmRenderCodingTable();
 }
 
-// â”€â”€ Coding Table: render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Coding Table: render â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function _cmGetCatPath(catId) {
   const path = [];
@@ -1740,11 +1740,11 @@ function _cmRenderCodingTable() {
     }
     const meta = { username: bm.username || '', date: (bm.date || '').substring(0, 10),
                    note: bm.note || '', bookmarkId: bm.bookmark_id };
-    // Whole-bookmark codings â€” show full message content
+    // Whole-bookmark codings — show full message content
     (bm.codes || []).forEach(code => {
       (excByCode[code.id] = excByCode[code.id] || []).push({ ...meta, content: bm.content || '' });
     });
-    // Span-level highlight codings â€” merge multiple highlights of same code per bookmark
+    // Span-level highlight codings — merge multiple highlights of same code per bookmark
     const hlByCode = {};
     (bm.highlights || []).forEach(hl => {
       if (!hlByCode[hl.code_id]) hlByCode[hl.code_id] = [];
@@ -1844,7 +1844,7 @@ function _cmRenderClassicTable(container, excByCode) {
             </div></td>`;
       } else {
         tbody += `<td class="px-3 py-2 align-top border-r border-gray-100 text-[10px] italic text-gray-400"
-            rowspan="${cat3Spans[i]}">â€”</td>`;
+            rowspan="${cat3Spans[i]}">—</td>`;
       }
     }
 
@@ -1859,7 +1859,7 @@ function _cmRenderClassicTable(container, excByCode) {
             </div></td>`;
       } else {
         tbody += `<td class="px-3 py-2 align-top border-r border-gray-100 text-[10px] italic text-gray-400"
-            rowspan="${cat2Spans[i]}">â€”</td>`;
+            rowspan="${cat2Spans[i]}">—</td>`;
       }
     }
 
@@ -1880,10 +1880,10 @@ function _cmRenderClassicTable(container, excByCode) {
     // Excerpt columns
     if (exc) {
       const snippet = exc.content.substring(0, 220);
-      const more    = exc.content.length > 220 ? 'â€¦' : '';
+      const more    = exc.content.length > 220 ? '…' : '';
       tbody += `<td class="px-3 py-2 text-xs italic text-gray-700 leading-relaxed max-w-xs">"${esc(snippet)}${more}"</td>
         <td class="px-3 py-2 text-[10px] text-gray-500 whitespace-nowrap align-top">${esc(exc.username)}<br>${esc(exc.date)}</td>
-        <td class="px-3 py-2 text-[10px] text-gray-400 align-top">${esc(exc.note) || 'â€”'}</td>`;
+        <td class="px-3 py-2 text-[10px] text-gray-400 align-top">${esc(exc.note) || '—'}</td>`;
     } else {
       tbody += `<td colspan="3" class="px-3 py-2 text-[10px] italic text-gray-300">No excerpts yet.</td>`;
     }
@@ -1957,12 +1957,12 @@ function _cmRenderHierarchyTable(container, excByCode) {
 
     return excs.map((exc, i) => {
       const snippet = exc.content.substring(0, 220);
-      const more    = exc.content.length > 220 ? 'â€¦' : '';
+      const more    = exc.content.length > 220 ? '…' : '';
       return `<tr class="border-b border-gray-100 hover:bg-gray-50">
         ${i === 0 ? codeCellHtml(excs.length) : ''}
         <td class="px-3 py-2 text-xs italic text-gray-700 leading-relaxed max-w-xs">"${esc(snippet)}${more}"</td>
         <td class="px-3 py-2 text-[10px] text-gray-500 whitespace-nowrap align-top">${esc(exc.username)}<br>${esc(exc.date)}</td>
-        <td class="px-3 py-2 text-[10px] text-gray-400 align-top">${esc(exc.note) || 'â€”'}</td>
+        <td class="px-3 py-2 text-[10px] text-gray-400 align-top">${esc(exc.note) || '—'}</td>
       </tr>`;
     }).join('');
   }
@@ -2019,7 +2019,7 @@ function _cmRenderHierarchyTable(container, excByCode) {
     </table>`;
 }
 
-// â”€â”€ Coding Table: CSV export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Coding Table: CSV export â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 document.getElementById('cm-table-export-btn').addEventListener('click', () => {
   const excByCode = {};

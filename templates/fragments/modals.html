@@ -1,4 +1,4 @@
-﻿  <!-- â”€â”€ API Key Setup Popup â”€â”€ -->
+  <!-- â”€â”€ API Key Setup Popup â”€â”€ -->
   <div id="apikey-popup" class="fixed inset-0 z-50 flex items-center justify-center hidden"
        role="dialog" aria-modal="true" aria-labelledby="apikey-popup-title">
     <div id="apikey-backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
@@ -24,14 +24,14 @@
           <label for="apikey-popup-input" class="block text-sm font-semibold text-gray-700 mb-2">
             Your API key
           </label>
-          <input id="apikey-popup-input" type="password" placeholder="sk-â€¦" autocomplete="off"
+          <input id="apikey-popup-input" type="password" placeholder="sk-…" autocomplete="off"
                  class="w-full border border-gray-400 rounded-lg px-3 py-2.5 text-sm font-mono text-gray-900 mb-3
                         focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600" />
         </form>
 
         <p id="apikey-popup-desc" class="text-xs text-gray-600 mb-5 leading-relaxed">
           Stored in <strong>browser localStorage</strong> and restored on each visit.
-          Sent only to your own server â€” never to third parties.
+          Sent only to your own server — never to third parties.
         </p>
 
         <div class="flex items-center gap-3">
@@ -87,7 +87,7 @@
       <div class="flex-1 min-w-0">
         <h1 class="text-base font-bold tracking-tight leading-none">Suno Discord Analysis</h1>
         <!-- text-indigo-100 on bg-indigo-700 â†’ 6.2:1 âœ“ -->
-        <p id="stats-bar" class="text-indigo-100 text-xs mt-0.5 truncate" aria-live="polite" aria-atomic="true">Loadingâ€¦</p>
+        <p id="stats-bar" class="text-indigo-100 text-xs mt-0.5 truncate" aria-live="polite" aria-atomic="true">Loading…</p>
       </div>
 
       <!-- Page navigation -->
@@ -148,7 +148,7 @@
           <!-- Username header -->
           <div class="px-4 py-2.5 border-b border-gray-100">
             <p class="text-xs text-gray-500">Signed in as</p>
-            <p id="user-dropdown-name" class="text-sm font-semibold text-gray-900 truncate mt-0.5">â€”</p>
+            <p id="user-dropdown-name" class="text-sm font-semibold text-gray-900 truncate mt-0.5">—</p>
           </div>
 
           <!-- Admin (shown only for admins via JS) -->
@@ -205,7 +205,7 @@
         <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Delete progress">
           <div id="delete-progress-fill" class="progress-fill"></div>
         </div>
-        <p id="delete-progress-label" class="mt-2 text-xs text-gray-600" aria-live="polite">Deletingâ€¦</p>
+        <p id="delete-progress-label" class="mt-2 text-xs text-gray-600" aria-live="polite">Deleting…</p>
       </div>
       <div id="delete-status" class="hidden mb-4 p-3 rounded-lg text-sm" aria-live="polite"></div>
       <div class="flex gap-2 justify-end">

@@ -1,4 +1,4 @@
-﻿// -- MARKED CONFIGURATION --------------------------------------------------
+// -- MARKED CONFIGURATION --------------------------------------------------
 document.addEventListener('DOMContentLoaded', () => {
   if (typeof marked !== 'undefined') {
     marked.use({ gfm: true, breaks: true });
@@ -192,7 +192,7 @@ function renderScopeChips() {
 
 function toggleScopeChip(uploadId) {
   if (selectedUploadIds.size === 0) {
-    // Currently "all" â€” switch to explicitly selecting all except clicked
+    // Currently "all" — switch to explicitly selecting all except clicked
     allUploads.forEach(u => { if (u.id !== uploadId) selectedUploadIds.add(u.id); });
   } else if (selectedUploadIds.has(uploadId)) {
     selectedUploadIds.delete(uploadId);
@@ -244,7 +244,7 @@ async function loadModelOptions() {
               ${m.active ? '<span class="text-xs px-1.5 py-0.5 rounded font-medium" style="background:#ede9fe;color:#5b21b6">active</span>' : ''}
             </div>
             <p class="text-xs text-gray-500 mt-0.5">${esc(m.description)}</p>
-            <p class="text-xs text-gray-400">${m.dims}-dimÂ· ${m.embedded_count.toLocaleString()} msgs embedded</p>
+            <p class="text-xs text-gray-400">${m.dims}-dim· ${m.embedded_count.toLocaleString()} msgs embedded</p>
             ${availabilityNote}
           </div>
         </div>
@@ -264,7 +264,7 @@ async function loadModelOptions() {
           const cnt     = models.find(m => m.id === radio.value)?.embedded_count || 0;
           const msg = document.getElementById('model-msg');
           msg.textContent = `Switched to ${d.label}.` +
-            (isLocal && cnt === 0 ? ' Weights will download on first use (~0.4â€“1.3 GB).' : '');
+            (isLocal && cnt === 0 ? ' Weights will download on first use (~0.4""1.3 GB).' : '');
           msg.classList.remove('hidden');
           loadStats();
           loadModelOptions();
@@ -292,12 +292,12 @@ function _randomCodeColor() {
   return _CODE_PALETTE[Math.floor(Math.random() * _CODE_PALETTE.length)];
 }
 
-// â”€â”€ Color swatch picker helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Color swatch picker helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 // Builds the HTML for a swatch picker that replaces <input type="color">.
-// inputId      â€” the id placed on the hidden <input>; may be empty for inline pickers
-// initialColor â€” hex string
-// inputClass   â€” extra class(es) added to the hidden <input> (e.g. 'bm-new-code-color')
-// inputData    â€” extra HTML attributes for the hidden <input> (e.g. 'data-bm-id="5"')
+// inputId      — the id placed on the hidden <input>; may be empty for inline pickers
+// initialColor — hex string
+// inputClass   — extra class(es) added to the hidden <input> (e.g. 'bm-new-code-color')
+// inputData    — extra HTML attributes for the hidden <input> (e.g. 'data-bm-id="5"')
 function _colorPickerHtml(inputId, initialColor, inputClass = '', inputData = '') {
   const uid   = inputId || ('cpk' + Math.random().toString(36).slice(2, 7));
   const color = initialColor || _CODE_PALETTE[0];

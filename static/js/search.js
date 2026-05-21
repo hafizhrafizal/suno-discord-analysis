@@ -1,4 +1,4 @@
-﻿// -- SEARCH TABS -----------------------------------------------------------
+// -- SEARCH TABS -----------------------------------------------------------
 
 // Top-level Chat / Users tab switching
 document.querySelectorAll('[data-cat]').forEach(btn => {
@@ -276,7 +276,7 @@ function _appendResultCards(msgs) {
 function _renderNextPage() {
   const page = _pageItems.slice(_pageOffset, _pageOffset + PAGE_SIZE);
   if (!page.length) { _stopPageObserver(); return; }
-  // Disconnect old observer before appending â€” do NOT call _stopPageObserver()
+  // Disconnect old observer before appending — do NOT call _stopPageObserver()
   // here as that would also remove the sentinel we're about to create.
   if (_pageObserver) { _pageObserver.disconnect(); _pageObserver = null; }
   _appendResultCards(page);  // removes previous sentinel, appends new cards
@@ -285,7 +285,7 @@ function _renderNextPage() {
     const sentinel = document.createElement('div');
     sentinel.id = 'scroll-sentinel';
     sentinel.className = 'py-3 text-center text-xs text-gray-400';
-    sentinel.textContent = `Showing ${_pageOffset.toLocaleString()} of ${_pageItems.length.toLocaleString()}â€¦`;
+    sentinel.textContent = `Showing ${_pageOffset.toLocaleString()} of ${_pageItems.length.toLocaleString()}…`;
     document.getElementById('results-container').appendChild(sentinel);
     _pageObserver = new IntersectionObserver(
       entries => { if (entries[0].isIntersecting) _renderNextPage(); },
@@ -417,7 +417,7 @@ function _applyChartRangeFilter(range) {
             d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/>
     </svg>
     <span>Showing <strong>${filtered.length}</strong> of <strong>${currentResults.length}</strong> messages &mdash; <strong>${esc(range.label)}</strong> (${range.from === range.to ? range.from : range.from + ' â†’ ' + range.to})</span>
-    <button id="chart-filter-clear" class="ml-auto text-indigo-600 hover:text-indigo-900 font-semibold">â€¢ Clear</button>
+    <button id="chart-filter-clear" class="ml-auto text-indigo-600 hover:text-indigo-900 font-semibold">"¢ Clear</button>
   `;
   banner.classList.remove('hidden');
   document.getElementById('chart-filter-clear').addEventListener('click', () => {
@@ -455,7 +455,7 @@ function renderTrendChart(results, bucket) {
   const banner = document.getElementById('chart-filter-banner');
   if (banner) banner.classList.add('hidden');
 
-  // section visibility controlled by tab clicks â€” do not auto-show
+  // section visibility controlled by tab clicks — do not auto-show
   if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
 
   _trendChart = new Chart(document.getElementById('trend-chart'), {
@@ -588,15 +588,15 @@ function renderTrendChart(results, bucket) {
 
 // -- SUMMARIZE RESULTS -----------------------------------------------------
 const LOG_ICONS = {
-  filter:      'ðŸ”',
-  retrieval:   'ðŸ“¡',
+  filter:      'ðŸ"',
+  retrieval:   'ðŸ"¡',
   dedup:       'ðŸ§¹',
-  cluster:     'ðŸ”®',
+  cluster:     'ðŸ"®',
   sample:      'ðŸŽ¯',
   llm:         'âœ¨',
   fallback:    'âš ï¸',
-  meta:        'ðŸ“…',
-  instruction: 'ðŸ“',
+  meta:        'ðŸ"…',
+  instruction: 'ðŸ"',
 };
 function _updateSrCountLabel() {
   const el = document.getElementById('sr-count-label');
@@ -607,7 +607,7 @@ function renderSrLogEntry(entry) {
   const logEl = document.getElementById('sr-process-log');
   const div   = document.createElement('div');
   div.className = `log-entry log-step-${entry.step || 'fallback'}`;
-  const icon = LOG_ICONS[entry.step] || 'â€¢';
+  const icon = LOG_ICONS[entry.step] || '"¢';
   div.innerHTML =
     `<span class="log-icon">${icon}</span>` +
     `<span class="log-label">${esc(entry.label || '')}</span>` +
@@ -734,7 +734,7 @@ function _renderSrFuLogEntry(strip, entry) {
   const div = document.createElement('div');
   div.className = `fu-log-entry fu-log-step-${entry.step || 'fallback'}`;
   div.innerHTML =
-    `<span class="fu-log-icon">${LOG_ICONS[entry.step] || 'â€¢'}</span>` +
+    `<span class="fu-log-icon">${LOG_ICONS[entry.step] || '"¢'}</span>` +
     `<span class="fu-log-label">${esc(entry.label || '')}</span>` +
     `<span class="fu-log-msg">${esc(entry.msg || '')}</span>`;
   strip.appendChild(div);
@@ -1150,9 +1150,9 @@ async function _applySemanticFilter(term) {
 
     // Show count with threshold label, and query interpretation if it changed
     const interpreted = query_used && query_used !== term
-      ? `Â· searched: "${query_used}"` : '';
+      ? `· searched: "${query_used}"` : '';
     const countLabel2 = document.getElementById('results-filter-count');
-    countLabel2.textContent = `${hits.length} of ${currentResults.length}Â· similarityâ€°Â¥ ${threshold}${interpreted}`;
+    countLabel2.textContent = `${hits.length} of ${currentResults.length}· similarity"°Â¥ ${threshold}${interpreted}`;
     countLabel2.classList.remove('hidden');
 
     const container = document.getElementById('results-container');
@@ -1276,7 +1276,7 @@ function msgCard(msg) {
     ? highlightTerms(msg.username, activeFilterTokens)
     : esc(msg.username);
   const attachLine = hasContent(msg.attachments)
-    ? `<p class="text-xs text-gray-500 mt-1">ðŸ“Ž ${esc(msg.attachments)}</p>` : '';
+    ? `<p class="text-xs text-gray-500 mt-1">ðŸ"Ž ${esc(msg.attachments)}</p>` : '';
   const reactLine = hasContent(msg.reactions)
     ? `<p class="text-xs text-gray-500 mt-1">ðŸ’¬ ${esc(msg.reactions)}</p>` : '';
 
@@ -1351,7 +1351,7 @@ function ctxMsg(msg) {
   const cls = msg.is_target ? 'ctx-target' : 'ctx-regular';
   const targetBadge = msg.is_target
     ? `<span class="text-xs px-1.5 py-0.5 rounded font-semibold"
-             style="background:#fef08a;color:#78350f">Ã¢Ëœâ€¦ result</span>` : '';
+             style="background:#fef08a;color:#78350f">Ã¢Ëœ… result</span>` : '';
   const teamBadge = truthy(msg.is_suno_team)
     ? `<span class="text-xs px-1.5 py-0.5 rounded" style="background:#fef3c7;color:#92400e">Team</span>` : '';
   return `

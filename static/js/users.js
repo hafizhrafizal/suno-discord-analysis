@@ -1,4 +1,4 @@
-﻿// -- USERS IN RANGE --------------------------------------------------------
+// -- USERS IN RANGE --------------------------------------------------------
 
 let _usersData    = [];
 let _usersSortCol = 'total_messages';
@@ -140,7 +140,7 @@ function _sortAndRenderUsers() {
     const ind = th.querySelector('.sort-ind');
     if (!ind) return;
     if (col === _usersSortCol) {
-      ind.textContent = _usersSortDir === 'asc' ? ' â†’' : ' â†“';
+      ind.textContent = _usersSortDir === 'asc' ? ' â†’' : ' â†"';
       ind.style.color = '#4f46e5';
     } else {
       ind.textContent = ' â†•';
@@ -228,8 +228,8 @@ async function openUserProfile(username, stats) {
     const weeksStr = totalWeeks != null
       ? `${stats.weeks_with_messages} / ${totalWeeks}`
       : String(stats.weeks_with_messages ?? 'Ã¢');
-    const pctStr = stats.pct_weeks_active != null ? `${stats.pct_weeks_active}%` : 'â€”';
-    const avgStr = stats.avg_word_count != null ? Number(stats.avg_word_count).toFixed(1) : 'â€”';
+    const pctStr = stats.pct_weeks_active != null ? `${stats.pct_weeks_active}%` : '—';
+    const avgStr = stats.avg_word_count != null ? Number(stats.avg_word_count).toFixed(1) : '—';
 
     document.getElementById('upo-stats').innerHTML =
       `<div class="flex flex-wrap">` +
@@ -382,10 +382,10 @@ document.getElementById('upo-sum-log-toggle').addEventListener('click', () => {
 });
 
 function _upoSumLog(step, label, msg) {
-  const icons = { input:'ðŸ“‹', context:'ðŸ“¡', llm:'âœ¨', fallback:'âš ï¸' };
+  const icons = { input:'ðŸ"‹', context:'ðŸ"¡', llm:'âœ¨', fallback:'âš ï¸' };
   const div = document.createElement('div');
   div.className = 'text-xs text-gray-600 flex items-start gap-1.5 py-0.5';
-  div.innerHTML = `<span class="shrink-0">${icons[step] || 'â€¢'}</span>
+  div.innerHTML = `<span class="shrink-0">${icons[step] || '"¢'}</span>
     <span><strong>${esc(label)}</strong> ${esc(msg)}</span>`;
   document.getElementById('upo-sum-log').appendChild(div);
 }
@@ -431,7 +431,7 @@ async function doUpoSummarize() {
     _upoSumLog('fallback', 'Context fetch failed', `${e.message} proceeding without context`);
   }
 
-  // Build formatted blocks: context before /Ëœâ€¦ user message / context after
+  // Build formatted blocks: context before /Ëœ… user message / context after
   const blocks = msgs.map(m => {
     const ctx      = contextMap[String(m.id)] || [];
     const targetIdx= ctx.findIndex(r => r.is_target);
@@ -441,7 +441,7 @@ async function doUpoSummarize() {
 
     let block = '';
     if (ctxPre.length)  block += ctxPre.map(fmt).join('\n') + '\n';
-    block += `Ã¢Ëœâ€¦ [${m.username} | ${m.date}]: ${m.content}`;
+    block += `Ã¢Ëœ… [${m.username} | ${m.date}]: ${m.content}`;
     if (ctxPost.length) block += '\n' + ctxPost.map(fmt).join('\n');
     return block;
   });
@@ -450,7 +450,7 @@ async function doUpoSummarize() {
   const n      = msgs.length;
   const header = `USER PROFILE ANALYSIS ${_upoUsername} (${n} messages with context)`;
 
-  const defaultPrompt = `Each block below contains one message from **${_upoUsername}** (markedËœâ€¦) with surrounding conversation context. Concisely identify persona, topics, attitudes, actions, narratives, and identified changes in attitude and stance if present. Use tight bullet points. No padding, no repetition across sections.`;
+  const defaultPrompt = `Each block below contains one message from **${_upoUsername}** (markedËœ…) with surrounding conversation context. Concisely identify persona, topics, attitudes, actions, narratives, and identified changes in attitude and stance if present. Use tight bullet points. No padding, no repetition across sections.`;
 
   const fullPrompt = (prompt || defaultPrompt) + `\n\n${header}:\n${conv}`;
   _upoSumLog('llm', 'LLM generation', `Summarising with ${model}...`);
@@ -543,7 +543,7 @@ function _renderUpoFuLogEntry(strip, entry) {
   const div = document.createElement('div');
   div.className = `fu-log-entry fu-log-step-${entry.step || 'fallback'}`;
   div.innerHTML =
-    `<span class="fu-log-icon">${LOG_ICONS[entry.step] || 'â€¢'}</span>` +
+    `<span class="fu-log-icon">${LOG_ICONS[entry.step] || '"¢'}</span>` +
     `<span class="fu-log-label">${esc(entry.label || '')}</span>` +
     `<span class="fu-log-msg">${esc(entry.msg || '')}</span>`;
   strip.appendChild(div);

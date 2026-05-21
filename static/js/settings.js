@@ -1,4 +1,4 @@
-﻿
+
 // -- DATA PAGE -------------------------------------------------------------
 
 /* -- Upload new CSV -- */
@@ -279,7 +279,7 @@ async function doReembed(uploadId, btn) {
         setProgress(0, checkLabel);
       } else {
         const batchInfo = job.current_batch ? ` (batch ${job.current_batch})` : '';
-        const skipNote  = skipped > 0 ? `Â· ${skipped.toLocaleString()} skipped` : '';
+        const skipNote  = skipped > 0 ? `· ${skipped.toLocaleString()} skipped` : '';
         setProgress(pct, `Embedding... ${pct}% ${embedded.toLocaleString()}/${total.toLocaleString()} new messages${skipNote}${batchInfo}`);
       }
 
@@ -612,7 +612,7 @@ async function renderLabelManager() {
                   style="background:${l.color};color:${tc}">
               ${esc(l.name)}
               <button class="label-delete-btn opacity-70 hover:opacity-100 font-bold leading-none"
-                      data-code-id="${l.id}" data-code-name="${esc(l.name)}" title="Delete code">â€”</button>
+                      data-code-id="${l.id}" data-code-name="${esc(l.name)}" title="Delete code">—</button>
             </span>`;
   }).join('');
 }

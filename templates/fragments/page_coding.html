@@ -1,4 +1,4 @@
-﻿    <!-- â”€â”€ CODING MANAGER PAGE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+    <!-- â”€â”€ CODING MANAGER PAGE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
     <div id="page-coding" class="hidden space-y-4">
 
       <!-- â”€â”€ Page-level tabs â”€â”€ -->
@@ -40,17 +40,17 @@
           <span class="text-xs text-gray-400 shrink-0">Phase:</span>
           <button class="cm-phase-btn text-xs px-2.5 py-1 rounded-full border transition-colors border-blue-300 text-blue-700 hover:bg-blue-50"
                   data-from="2023-04-01" data-to="2023-07-19" data-phase="1">
-            Phase 1 â€” Capability Surfacing
-            <span class="opacity-60 ml-1">Apr â€“ 19 Jul 2023</span>
+            Phase 1 — Capability Surfacing
+            <span class="opacity-60 ml-1">Apr ”“ 19 Jul 2023</span>
           </button>
           <button class="cm-phase-btn text-xs px-2.5 py-1 rounded-full border transition-colors border-amber-300 text-amber-700 hover:bg-amber-50"
                   data-from="2023-07-20" data-to="2023-09-05" data-phase="2">
-            Phase 2 â€” Enclosure &amp; Scrutiny
-            <span class="opacity-60 ml-1">20 Jul â€“ 5 Sep 2023</span>
+            Phase 2 — Enclosure &amp; Scrutiny
+            <span class="opacity-60 ml-1">20 Jul ”“ 5 Sep 2023</span>
           </button>
           <button class="cm-phase-btn text-xs px-2.5 py-1 rounded-full border transition-colors border-emerald-300 text-emerald-700 hover:bg-emerald-50"
                   data-from="2023-09-06" data-to="" data-phase="3">
-            Phase 3 â€” Commercialization
+            Phase 3 — Commercialization
             <span class="opacity-60 ml-1">Sep 2023 onward</span>
           </button>
         </div>
@@ -93,7 +93,7 @@
         <div class="flex flex-wrap gap-3 items-end">
           <div class="flex-1 min-w-[10rem]">
             <label class="text-xs text-gray-600 mb-1 block">Name *</label>
-            <input id="cm-nc-name" type="text" maxlength="80" placeholder="Open coding nameâ€¦"
+            <input id="cm-nc-name" type="text" maxlength="80" placeholder="Open coding name…"
                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
           </div>
           <div>
@@ -103,7 +103,7 @@
           <div class="flex-1 min-w-[10rem]">
             <label class="text-xs text-gray-600 mb-1 block">Higher-Order Coding (optional)</label>
             <select id="cm-nc-category" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
-              <option value="">â€” Uncategorized â€”</option>
+              <option value="">— Uncategorized —</option>
             </select>
           </div>
         </div>
@@ -126,7 +126,7 @@
         <div class="flex flex-wrap gap-3 items-end">
           <div class="flex-1 min-w-[10rem]">
             <label class="text-xs text-gray-600 mb-1 block">Name *</label>
-            <input id="cm-cat-name" type="text" maxlength="60" placeholder="Coding nameâ€¦"
+            <input id="cm-cat-name" type="text" maxlength="60" placeholder="Coding name…"
                    class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
           </div>
           <div>
@@ -136,7 +136,7 @@
           <div class="flex-1 min-w-[10rem]">
             <label class="text-xs text-gray-600 mb-1 block">Parent Coding (optional)</label>
             <select id="cm-cat-parent" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
-              <option value="">â€” Root level (2nd-order) â€”</option>
+              <option value="">— Root level (2nd-order) —</option>
             </select>
           </div>
         </div>
@@ -159,7 +159,7 @@
         <!-- Tree list (left, scrollable) -->
         <section class="flex-1 min-w-0 bg-white rounded-2xl shadow p-4">
           <div id="cm-code-list" class="space-y-1">
-            <p class="text-sm text-gray-400 text-center py-8">Loadingâ€¦</p>
+            <p class="text-sm text-gray-400 text-center py-8">Loading…</p>
           </div>
         </section>
 
@@ -185,23 +185,23 @@
               </div>
               <div>
                 <label class="text-xs text-gray-600 mb-1 block">Description</label>
-                <input id="cm-edit-desc" type="text" maxlength="200" placeholder="Optional descriptionâ€¦"
+                <input id="cm-edit-desc" type="text" maxlength="200" placeholder="Optional description…"
                        class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
               </div>
               <div>
                 <label class="text-xs text-gray-600 mb-1 block">Higher-Order Coding</label>
                 <select id="cm-edit-category"
                         class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
-                  <option value="">â€” Uncategorized â€”</option>
+                  <option value="">— Uncategorized —</option>
                 </select>
               </div>
               <div class="flex gap-6 pt-1">
                 <div class="text-center">
-                  <p id="cm-edit-ground" class="text-2xl font-bold text-indigo-700">â€”</p>
+                  <p id="cm-edit-ground" class="text-2xl font-bold text-indigo-700">—</p>
                   <p class="text-xs text-gray-500 mt-0.5">Groundedness</p>
                 </div>
                 <div class="text-center">
-                  <p id="cm-edit-density" class="text-2xl font-bold text-slate-600">â€”</p>
+                  <p id="cm-edit-density" class="text-2xl font-bold text-slate-600">—</p>
                   <p class="text-xs text-gray-500 mt-0.5">Density</p>
                 </div>
               </div>
@@ -236,7 +236,7 @@
               <label class="text-xs text-gray-600 mb-1 block">Parent Coding (sets order level)</label>
               <select id="cm-cat-edit-parent"
                       class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
-                <option value="">â€” Root level (2nd-order) â€”</option>
+                <option value="">— Root level (2nd-order) —</option>
               </select>
             </div>
             <p id="cm-cat-edit-msg" class="hidden text-xs text-green-600"></p>
@@ -273,7 +273,7 @@
               <label class="text-xs text-gray-600 mb-1 block">Add Open Coding</label>
               <input id="cm-exc-panel-search" type="text" autocomplete="off"
                      class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
-                     placeholder="Type to search or createâ€¦" />
+                     placeholder="Type to search or create…" />
               <div id="cm-exc-panel-suggestions"
                    class="hidden w-full bg-white border border-gray-200 rounded-lg shadow mt-1 max-h-48 overflow-y-auto">
               </div>
@@ -291,7 +291,7 @@
           <div class="flex items-center justify-between mb-3">
             <div>
               <h2 class="text-base font-bold text-gray-900">Coding Structure Table</h2>
-              <p class="text-xs text-gray-400 mt-0.5">Classic QDA coding table â€” hierarchy, open codings, and coded excerpts.</p>
+              <p class="text-xs text-gray-400 mt-0.5">Classic QDA coding table — hierarchy, open codings, and coded excerpts.</p>
             </div>
             <div class="flex gap-2 items-center">
               <button id="cm-table-reload-btn"
