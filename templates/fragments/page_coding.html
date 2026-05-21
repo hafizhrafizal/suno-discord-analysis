@@ -26,12 +26,6 @@
           <input id="cm-filter-month-to" type="date"
                  class="border border-gray-300 rounded-lg px-2 py-1 text-xs text-gray-700 cursor-pointer" />
         </div>
-        <select id="cm-filter-suno"
-                class="border border-gray-300 rounded-lg px-2 py-1 text-xs text-gray-700 cursor-pointer">
-          <option value="all">All authors</option>
-          <option value="only">Suno team only</option>
-          <option value="exclude">Exclude Suno team</option>
-        </select>
         <button id="cm-filter-clear"
                 class="text-xs text-gray-400 hover:text-red-500 transition-colors ml-auto hidden">✕ Clear</button>
 
@@ -53,6 +47,17 @@
             Phase 3 — Commercialization
             <span class="opacity-60 ml-1">Sep 2023 - onward</span>
           </button>
+        </div>
+
+        <!-- Author filter -->
+        <div class="w-full flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
+          <span class="text-xs text-gray-400 shrink-0">Author:</span>
+          <button class="cm-suno-btn cm-suno-active text-xs px-2.5 py-1 rounded-full border transition-colors border-gray-300 text-gray-600 hover:bg-gray-50"
+                  data-suno="all">All authors</button>
+          <button class="cm-suno-btn text-xs px-2.5 py-1 rounded-full border transition-colors border-violet-300 text-violet-700 hover:bg-violet-50"
+                  data-suno="only">Suno team only</button>
+          <button class="cm-suno-btn text-xs px-2.5 py-1 rounded-full border transition-colors border-rose-300 text-rose-700 hover:bg-rose-50"
+                  data-suno="exclude">Exclude Suno team</button>
         </div>
       </div>
 

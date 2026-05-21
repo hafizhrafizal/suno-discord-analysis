@@ -341,6 +341,12 @@ mark {
 .cm-phase-btn[data-phase="2"].cm-phase-active { background: #fffbeb; border-color: #f59e0b; color: #b45309; font-weight: 700; }
 .cm-phase-btn[data-phase="3"].cm-phase-active { background: #ecfdf5; border-color: #10b981; color: #065f46; font-weight: 700; }
 
+/* ── Coding Manager author filter buttons ── */
+.cm-suno-btn { font-weight: 500; }
+.cm-suno-btn[data-suno="all"].cm-suno-active    { background: #374151; border-color: #374151; color: #fff; font-weight: 700; }
+.cm-suno-btn[data-suno="only"].cm-suno-active   { background: #6d28d9; border-color: #6d28d9; color: #fff; font-weight: 700; }
+.cm-suno-btn[data-suno="exclude"].cm-suno-active { background: #be123c; border-color: #be123c; color: #fff; font-weight: 700; }
+
 /* ── Users-in-Range table ── */
 .users-th {
   padding: 0.5rem 0.75rem; font-size: 0.7rem; font-weight: 600;

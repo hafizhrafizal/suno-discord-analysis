@@ -62,6 +62,9 @@ function _cmFilterActive() {
 
 async function loadCodingPage() {
   await _cmRefresh();
+  // Apply sub-tab from URL hash (#coding/table or #coding/manager)
+  const sub = (location.hash.match(/^#coding\/(\w+)/) || [])[1];
+  if (sub === 'table' || sub === 'manager') _cmSwitchTab(sub, { updateHash: false });
 }
 
 async function _cmRefresh() {
@@ -1507,7 +1510,7 @@ document.addEventListener('codebook-updated', () => {
 
 let _cmActiveTab = 'manager'; // 'manager' | 'table'
 
-function _cmSwitchTab(tab) {
+function _cmSwitchTab(tab, { updateHash = true } = {}) {
   _cmActiveTab = tab;
   const isManager = tab === 'manager';
   document.getElementById('cm-section-manager').classList.toggle('hidden', !isManager);
@@ -1521,6 +1524,7 @@ function _cmSwitchTab(tab) {
   tblBtn.className = !isManager ? _tabActive : _tabInactive;
 
   if (!isManager) _cmLoadCodingTable();
+  if (updateHash) history.pushState(null, '', location.pathname + '#coding/' + tab);
 }
 
 document.getElementById('cm-tab-manager').addEventListener('click', () => _cmSwitchTab('manager'));
@@ -1532,7 +1536,7 @@ document.getElementById('cm-table-reload-btn').addEventListener('click', _cmLoad
 async function _cmApplyFilter() {
   _cmFilterDateFrom = document.getElementById('cm-filter-month-from').value || '';
   _cmFilterDateTo   = document.getElementById('cm-filter-month-to').value   || '';
-  _cmFilterSuno     = document.getElementById('cm-filter-suno').value        || 'all';
+  // _cmFilterSuno is set directly by suno button clicks
   const clearBtn = document.getElementById('cm-filter-clear');
   if (clearBtn) clearBtn.classList.toggle('hidden', !_cmFilterActive());
   if (_cmFilterActive()) {
@@ -1543,9 +1547,20 @@ async function _cmApplyFilter() {
   _cmRenderCodingTable();
 }
 
+function _cmSetSunoActive(val) {
+  document.querySelectorAll('.cm-suno-btn').forEach(b => b.classList.toggle('cm-suno-active', b.dataset.suno === val));
+}
+
 document.getElementById('cm-filter-month-from').addEventListener('change', () => { _cmClearPhaseActive(); _cmApplyFilter(); });
 document.getElementById('cm-filter-month-to').addEventListener('change',   () => { _cmClearPhaseActive(); _cmApplyFilter(); });
-document.getElementById('cm-filter-suno').addEventListener('change',        _cmApplyFilter);
+
+document.querySelectorAll('.cm-suno-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _cmFilterSuno = btn.dataset.suno;
+    _cmSetSunoActive(btn.dataset.suno);
+    _cmApplyFilter();
+  });
+});
 
 function _cmClearPhaseActive() {
   document.querySelectorAll('.cm-phase-btn').forEach(b => b.classList.remove('cm-phase-active'));
@@ -1574,7 +1589,7 @@ document.getElementById('cm-filter-clear').addEventListener('click', () => {
   _cmFilterSuno     = 'all';
   document.getElementById('cm-filter-month-from').value = '';
   document.getElementById('cm-filter-month-to').value   = '';
-  document.getElementById('cm-filter-suno').value        = 'all';
+  _cmSetSunoActive('all');
   document.getElementById('cm-filter-clear').classList.add('hidden');
   _cmClearPhaseActive();
   _cmRenderTree();

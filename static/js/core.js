@@ -4,6 +4,13 @@ document.addEventListener('DOMContentLoaded', () => {
     marked.use({ gfm: true, breaks: true });
   }
   _initStaticColorPickers();
+
+  // Navigate to page/sub-tab from URL hash on initial load
+  const raw = location.hash.replace(/^#\/?/, '') || 'search';
+  const [page] = raw.split('/');
+  const target = _NAV_PAGES.includes(page) ? page : 'search';
+  history.replaceState(null, '', location.pathname + '#' + raw);
+  navigateTo(target, { updateHash: false });
 });
 
 /*
@@ -138,13 +145,16 @@ function hasContent(v) { return v && v !== '' && v !== 'nan' && v !== '[]' && v 
 function enc(s) { return encodeURIComponent(s); }
 
 // -- PAGE NAVIGATION -------------------------------------------------------
-function navigateTo(page) {
+const _NAV_PAGES = ['search', 'settings', 'bookmarks', 'coding', 'admin'];
+
+function navigateTo(page, { updateHash = true } = {}) {
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('nav-active', b.dataset.page === page));
   document.getElementById('page-search').classList.toggle('hidden', page !== 'search');
   document.getElementById('page-settings').classList.toggle('hidden', page !== 'settings');
   document.getElementById('page-bookmarks').classList.toggle('hidden', page !== 'bookmarks');
   document.getElementById('page-coding').classList.toggle('hidden', page !== 'coding');
   document.getElementById('page-admin')?.classList.toggle('hidden', page !== 'admin');
+  if (updateHash) history.pushState(null, '', location.pathname + '#' + page);
   if (page === 'settings')  loadSettingsPage();
   if (page === 'bookmarks') loadBookmarksPage();
   if (page === 'coding')    loadCodingPage();
@@ -153,6 +163,13 @@ function navigateTo(page) {
 
 document.querySelectorAll('.nav-tab').forEach(btn => {
   btn.addEventListener('click', () => navigateTo(btn.dataset.page));
+});
+
+// Back/forward button support
+window.addEventListener('popstate', () => {
+  const raw = location.hash.replace(/^#\/?/, '') || 'search';
+  const [page] = raw.split('/');
+  navigateTo(_NAV_PAGES.includes(page) ? page : 'search', { updateHash: false });
 });
 
 // Demo mode: Settings nav tab stays visible but only shows the API key section
