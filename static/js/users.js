@@ -378,7 +378,7 @@ document.getElementById('upo-sum-log-toggle').addEventListener('click', () => {
   const btn   = document.getElementById('upo-sum-log-toggle');
   const hide  = btn.textContent.startsWith('â–²');
   logEl.classList.toggle('hidden', hide);
-  btn.textContent = hide ? 'â–¼ Show' : 'â–² Hide';
+  btn.textContent = hide ? '▼ Show' : 'â–² Hide';
 });
 
 function _upoSumLog(step, label, msg) {

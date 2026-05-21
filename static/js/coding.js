@@ -97,7 +97,7 @@ async function _cmRefresh() {
   }
 }
 
-// â"€â"€ Category select population â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Category select population ────────────────────────────────────────────────
 
 function _cmPopulateCategorySelects() {
   const sorted = [..._cmCategories].sort((a, b) =>
@@ -115,7 +115,7 @@ function _cmPopulateCategorySelects() {
   document.getElementById('cm-cat-edit-parent').innerHTML = parentOpts;
 }
 
-// â"€â"€ Helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 let _cmTreeMaxDepth = 0;
 
@@ -151,7 +151,7 @@ function _cmGetDescendantCatIds(catId) {
   return result;
 }
 
-// â"€â"€ Tree building â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Tree building ─────────────────────────────────────────────────────────────
 
 function _cmBuildTree() {
   const catMap = {};
@@ -212,7 +212,7 @@ function _cmCountVisibleCodes(node, visibleIds) {
   return direct + node.children.reduce((s, ch) => s + _cmCountVisibleCodes(ch, visibleIds), 0);
 }
 
-// â"€â"€ Tree rendering â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Tree rendering ────────────────────────────────────────────────────────────
 
 function _cmRenderTree() {
   _cmComputeMaxDepth();
@@ -260,7 +260,7 @@ function _cmRenderCatNode(node, depth, visibleIds) {
   const pl           = 8 + depth * 18;
   const isOpenCat    = _cmOpenCatId === node.id;
   const headerBg     = isOpenCat ? 'bg-slate-100' : 'hover:bg-gray-50';
-  const toggleIcon   = hasContent ? (isCollapsed ? 'â–¶' : 'â–¼') : '';
+  const toggleIcon   = hasContent ? (isCollapsed ? '▶' : '▼') : '';
 
   const header = `
     <div class="cm-cat-header flex items-center gap-2 py-1.5 rounded-lg cursor-grab group transition-colors ${headerBg}"
@@ -322,7 +322,7 @@ function _cmRenderExcerptRow(r, codeId, accent) {
             <span class="text-gray-400">${meta}</span>
           </p>
         </div>
-        <span class="text-gray-300 shrink-0 mt-0.5 text-[11px] leading-none">â ¿</span>
+        <span class="text-gray-300 shrink-0 mt-0.5 text-[11px] leading-none">⠿</span>
       </div>
     </div>`;
   }
@@ -340,7 +340,7 @@ function _cmRenderExcerptRow(r, codeId, accent) {
         <p class="text-[10px] text-gray-400 mt-0.5">${meta}</p>
         ${r.note ? `<p class="text-[10px] text-indigo-600">${esc(r.note)}</p>` : ''}
       </div>
-      <span class="text-gray-300 shrink-0 mt-0.5 text-[11px] leading-none">â ¿</span>
+      <span class="text-gray-300 shrink-0 mt-0.5 text-[11px] leading-none">⠿</span>
     </div>
   </div>`;
 }
@@ -386,13 +386,13 @@ function _cmRenderCodeCard(code, depth) {
           </div>
           ${code.description ? `<p class="text-xs text-gray-500 mt-0.5 truncate">${esc(code.description)}</p>` : ''}
         </div>
-        <span class="text-[10px] text-gray-400 shrink-0 mt-0.5 select-none">${isExpanded ? 'â–²' : 'â–¼'}</span>
+        <span class="text-[10px] text-gray-400 shrink-0 mt-0.5 select-none">${isExpanded ? 'â–²' : '▼'}</span>
       </div>
       ${excerptsHtml}
     </div>`;
 }
 
-// â"€â"€ Detail panel: Code â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Detail panel: Code ────────────────────────────────────────────────────────
 
 function _cmOpenCodeDetail(code) {
   _cmFlushDetailPanel();
@@ -434,7 +434,7 @@ async function _cmFetchExcerptsFor(codeId) {
   container.innerHTML = visible.map(r => _cmRenderExcerptRow(r, codeId, accent)).join('');
 }
 
-// â"€â"€ Detail panel: Category â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Detail panel: Category ────────────────────────────────────────────────────
 
 function _cmOpenCatDetail(cat) {
   _cmFlushDetailPanel();
@@ -478,7 +478,7 @@ function _cmCloseDetail() {
   document.getElementById('cm-detail-panel').classList.add('hidden');
 }
 
-// â"€â"€ Excerpt coding panel (sidebar) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Excerpt coding panel (sidebar) ───────────────────────────────────────────
 
 async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText = null, changeMode = false) {
   let bm = _cachedBookmarks.find(b => b.bookmark_id === bookmarkId);
@@ -518,7 +518,7 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
   }
 
   if (changeMode) {
-    // â"€â"€ Change-coding mode: show source chip, search for replacement â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    // ── Change-coding mode: show source chip, search for replacement ─────────
     document.getElementById('cm-detail-title').textContent =
       hlId !== null ? 'Change Span Coding' : 'Change Open Coding';
     textEl.innerHTML = hlId !== null
@@ -551,7 +551,7 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
   if (addLbl) addLbl.textContent = 'Add Open Coding';
 
   if (hlId !== null) {
-    // â"€â"€ Span-level coding view â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    // ── Span-level coding view ──────────────────────────────────────────────
     document.getElementById('cm-detail-title').textContent = 'Span Coding';
     textEl.innerHTML = `<strong class="not-italic font-semibold text-gray-800 block mb-1">"${esc(hlText || '')}"</strong>`
       + `<span class="text-gray-400 text-[10px] block mt-1">Full excerpt: ${esc((bm.content || '').substring(0, 200))}${(bm.content || '').length > 200 ? '…' : ''}</span>`;
@@ -559,7 +559,7 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
     _cmExcPanelRenderSpanCode(srcCode, bookmarkId, hlId);
     if (addEl) addEl.classList.add('hidden');
   } else {
-    // â"€â"€ Whole-bookmark coding view â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    // ── Whole-bookmark coding view ──────────────────────────────────────────
     document.getElementById('cm-detail-title').textContent = 'Edit Open Codings';
     textEl.textContent = `"${bm.content || ''}"`;
     if (codesLbl) codesLbl.textContent = 'Open Codings';
@@ -780,7 +780,7 @@ document.getElementById('cm-exc-panel-codes').addEventListener('click', async e 
   }
 });
 
-// â"€â"€ Excerpt row right-click context menu â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Excerpt row right-click context menu ─────────────────────────────────────
 
 document.getElementById('cm-code-list').addEventListener('contextmenu', e => {
   const row = e.target.closest('.cm-excerpt-item');
@@ -846,7 +846,7 @@ document.addEventListener('click', e => {
   }
 });
 
-// â"€â"€ Tree click delegation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Tree click delegation ────────────────────────────────────────────────────
 
 document.getElementById('cm-code-list').addEventListener('click', e => {
   // Checkbox in merge mode
@@ -917,9 +917,9 @@ document.getElementById('cm-code-list').addEventListener('click', e => {
   }
 });
 
-// â"€â"€ Drag & drop â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Drag & drop ───────────────────────────────────────────────────────────────
 
-// â"€â"€ Excerpt item mouse handling: prevent text selection, detect click vs drag â"€â"€
+// ── Excerpt item mouse handling: prevent text selection, detect click vs drag ──
 
 let _cmExcMdEl = null;  // element where mousedown started
 let _cmExcMdX  = 0;
@@ -1036,7 +1036,7 @@ document.getElementById('cm-code-list').addEventListener('dragend', () => {
 });
 
 document.getElementById('cm-code-list').addEventListener('dragover', e => {
-  // â"€â"€ Excerpt drag: only open-coding wrappers are valid targets â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  // ── Excerpt drag: only open-coding wrappers are valid targets ─────────────
   if (_cmDragExcerpt !== null) {
     const outer = e.target.closest('.cm-code-outer');
     if (outer && parseInt(outer.dataset.outerCodeId) !== _cmDragExcerpt.sourceCodeId) {
@@ -1048,7 +1048,7 @@ document.getElementById('cm-code-list').addEventListener('dragover', e => {
     }
     return;
   }
-  // â"€â"€ Code/cat drag: zones and cat headers are valid â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  // ── Code/cat drag: zones and cat headers are valid ────────────────────────
   if (_cmDragCodeId === null && _cmDragCatId === null) return;
   const zone = e.target.closest('.cm-drop-zone');
   if (zone) { e.preventDefault(); zone.classList.add('bg-indigo-100', 'ring-2', 'ring-indigo-400'); return; }
@@ -1079,7 +1079,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
   document.querySelectorAll('.cm-drop-zone').forEach(z => z.classList.remove('bg-indigo-100', 'ring-2', 'ring-indigo-400'));
   document.querySelectorAll('.cm-cat-header').forEach(h => h.classList.remove('bg-indigo-50', 'opacity-50'));
 
-  // â"€â"€ Drop: excerpt → re-assign (move) or copy to another open coding â"€â"€â"€â"€â"€â"€â"€
+  // ── Drop: excerpt → re-assign (move) or copy to another open coding ───────
   if (_cmDragExcerpt !== null) {
     const isCopy = e.ctrlKey;
     const exc    = _cmDragExcerpt;
@@ -1091,7 +1091,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
     if (!targetCodeId || targetCodeId === exc.sourceCodeId) return;
     try {
       if (exc.highlightId !== null) {
-        // â"€â"€ Span highlight drag â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+        // ── Span highlight drag ──────────────────────────────────────────────
         // Create the highlight under the target code
         await apiFetch(`/api/bookmarks/${exc.bookmarkId}/highlights`, {
           method: 'POST',
@@ -1112,7 +1112,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
           }];
         }
       } else {
-        // â"€â"€ Whole-bookmark coding drag â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+        // ── Whole-bookmark coding drag ───────────────────────────────────────
         await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${targetCodeId}`, { method: 'POST' });
         if (!isCopy) {
           await apiFetch(`/api/bookmarks/${exc.bookmarkId}/codes/${exc.sourceCodeId}`, { method: 'DELETE' });
@@ -1144,7 +1144,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
   const rawId       = target.dataset.dropCatId ?? target.dataset.catId;
   const newParentId = rawId ? parseInt(rawId) : null;
 
-  // â"€â"€ Drop: open coding → assign to a coding level â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  // ── Drop: open coding → assign to a coding level ─────────────────────────
   if (_cmDragCodeId !== null) {
     const codeId = _cmDragCodeId;
     _cmDragCodeId = null;
@@ -1163,7 +1163,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
     return;
   }
 
-  // â"€â"€ Drop: coding → re-parent to a higher-order coding â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+  // ── Drop: coding → re-parent to a higher-order coding ────────────────────
   if (_cmDragCatId !== null) {
     const catId = _cmDragCatId;
     _cmDragCatId = null;
@@ -1181,7 +1181,7 @@ document.getElementById('cm-code-list').addEventListener('drop', async e => {
   }
 });
 
-// â"€â"€ Code save / delete â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Code save / delete ────────────────────────────────────────────────────────
 
 document.getElementById('cm-code-edit-section').addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
@@ -1237,7 +1237,7 @@ document.getElementById('cm-edit-delete').addEventListener('click', async () => 
   } catch (err) { showErrorPopup('Failed to delete: ' + err.message); }
 });
 
-// â"€â"€ Category save / delete â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Category save / delete ────────────────────────────────────────────────────
 
 document.getElementById('cm-cat-edit-save').addEventListener('click', async () => {
   if (_cmOpenCatId === null) return;
@@ -1272,14 +1272,14 @@ document.getElementById('cm-cat-edit-delete').addEventListener('click', async ()
   } catch (err) { showErrorPopup('Failed to delete: ' + err.message); }
 });
 
-// â"€â"€ Detail close â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Detail close ──────────────────────────────────────────────────────────────
 
 document.getElementById('cm-detail-close').addEventListener('click', () => {
   _cmCloseDetail();
   _cmRenderTree();
 });
 
-// â"€â"€ Excerpt panel: conversation context popup â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Excerpt panel: conversation context popup ────────────────────────────────
 
 let _cmCtxActiveMsgId  = null;
 let _cmCtxActiveSource = '';
@@ -1327,7 +1327,7 @@ document.getElementById('cm-ctx-modal').addEventListener('click', e => {
   if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden');
 });
 
-// â"€â"€ New Code panel â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── New Code panel ────────────────────────────────────────────────────────────
 
 document.getElementById('cm-new-code-btn').addEventListener('click', () => {
   document.getElementById('cm-new-code-panel').classList.toggle('hidden');
@@ -1366,7 +1366,7 @@ document.getElementById('cm-nc-save').addEventListener('click', async () => {
   }
 });
 
-// â"€â"€ New Theme panel â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── New Theme panel ────────────────────────────────────────────────────────────
 
 document.getElementById('cm-new-cat-btn').addEventListener('click', () => {
   document.getElementById('cm-new-cat-panel').classList.toggle('hidden');
@@ -1401,7 +1401,7 @@ document.getElementById('cm-cat-save').addEventListener('click', async () => {
   }
 });
 
-// â"€â"€ Merge mode â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Merge mode ────────────────────────────────────────────────────────────────
 
 document.getElementById('cm-select-mode-toggle').addEventListener('change', e => {
   _cmMergeMode = e.target.checked;
@@ -1503,7 +1503,7 @@ document.addEventListener('codebook-updated', () => {
   }
 });
 
-// â"€â"€ Coding page tabs â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Coding page tabs ──────────────────────────────────────────────────────────
 
 let _cmActiveTab = 'manager'; // 'manager' | 'table'
 
@@ -1527,7 +1527,7 @@ document.getElementById('cm-tab-manager').addEventListener('click', () => _cmSwi
 document.getElementById('cm-tab-table').addEventListener('click', () => _cmSwitchTab('table'));
 document.getElementById('cm-table-reload-btn').addEventListener('click', _cmLoadCodingTable);
 
-// â"€â"€ Coding filter listeners â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Coding filter listeners ───────────────────────────────────────────────────
 
 async function _cmApplyFilter() {
   _cmFilterDateFrom = document.getElementById('cm-filter-month-from').value || '';
@@ -1581,7 +1581,7 @@ document.getElementById('cm-filter-clear').addEventListener('click', () => {
   _cmRenderCodingTable();
 });
 
-// â"€â"€ Coding Manager: right-click "Add higher-level coding" â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Coding Manager: right-click "Add higher-level coding" ────────────────────
 
 let _cmCtxTargetType  = null; // 'code' | 'cat'
 let _cmCtxTargetId    = null; // int
@@ -1694,7 +1694,7 @@ document.addEventListener('click', e => {
   if (!menu.classList.contains('hidden') && !menu.contains(e.target)) _cmHideCtxMenu();
 });
 
-// â"€â"€ Coding Table: load â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Coding Table: load ────────────────────────────────────────────────────────
 
 async function _cmLoadCodingTable() {
   const container = document.getElementById('cm-coding-table-container');
@@ -1712,7 +1712,7 @@ async function _cmLoadCodingTable() {
   _cmRenderCodingTable();
 }
 
-// â"€â"€ Coding Table: render â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Coding Table: render ──────────────────────────────────────────────────────
 
 function _cmGetCatPath(catId) {
   const path = [];
@@ -2019,7 +2019,7 @@ function _cmRenderHierarchyTable(container, excByCode) {
     </table>`;
 }
 
-// â"€â"€ Coding Table: CSV export â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Coding Table: CSV export ──────────────────────────────────────────────────
 
 document.getElementById('cm-table-export-btn').addEventListener('click', () => {
   const excByCode = {};
@@ -2028,7 +2028,7 @@ document.getElementById('cm-table-export-btn').addEventListener('click', () => {
     if (_cmFilterSuno === 'only'    && !truthy(bm.is_suno_team)) return;
     if (_cmFilterSuno === 'exclude' &&  truthy(bm.is_suno_team)) return;
     if (_cmFilterDateFrom || _cmFilterDateTo) {
-      const d = (bm.date || '').substring(0, 7);
+      const d = (bm.date || '').substring(0, 10);
       if (_cmFilterDateFrom && d < _cmFilterDateFrom) return;
       if (_cmFilterDateTo   && d > _cmFilterDateTo)   return;
     }
@@ -2073,7 +2073,7 @@ document.getElementById('cm-table-export-btn').addEventListener('click', () => {
   uncategorized.forEach(csvCode);
 
   const csv  = rows.map(r => r.map(esc2).join(',')).join('\n');
-  const blob = new Blob(['ï»¿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
   const a    = Object.assign(document.createElement('a'), { href: url, download: 'coding_table.csv' });
   a.click();

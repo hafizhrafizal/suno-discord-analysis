@@ -156,7 +156,7 @@ function _renderBmCodePanel(bookmarkId) {
   requestAnimationFrame(() => panel.querySelector('.bm-new-code-input')?.focus());
 }
 
-// â"€â"€ Annotate excerpt text with colored highlight spans â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Annotate excerpt text with colored highlight spans ────────────────────────
 // Handles overlapping spans: splits content at every span boundary, then renders
 // each segment with all codes that cover it (stacked bottom-border colors).
 // pendingTexts: text strings actively being coded — shown with dashed indigo underline.
@@ -216,7 +216,7 @@ function _annotateExcerpt(content, highlights, pendingTexts = []) {
   return out;
 }
 
-// â"€â"€ Coded-span chips shown below each bookmark card â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Coded-span chips shown below each bookmark card ───────────────────────────
 function _bmHlChipsHtml(bm) {
   const hls = bm.highlights || [];
   if (!hls.length) return '';
@@ -248,7 +248,7 @@ function _bmHlChipsHtml(bm) {
   </div>`;
 }
 
-// â"€â"€ Highlight code picker panel (opened when text is selected) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Highlight code picker panel (opened when text is selected) ────────────────
 function _renderBmHlPanel(bmId, selectedText) {
   const panel = document.getElementById(`bm-hl-panel-${bmId}`);
   const bm    = _cachedBookmarks.find(b => b.bookmark_id === bmId);
@@ -914,7 +914,7 @@ document.getElementById('bm-filter-text').addEventListener('input', () => {
   }, 250);
 });
 
-// â"€â"€ Text selection → open coding popover â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Text selection → open coding popover ─────────────────────────────────────
 
 function _bmCombinedText() {
   return (_bmAccumulatedSegments?.segments || []).join(_BM_SEG_SEP);

@@ -292,7 +292,7 @@ function _randomCodeColor() {
   return _CODE_PALETTE[Math.floor(Math.random() * _CODE_PALETTE.length)];
 }
 
-// â"€â"€ Color swatch picker helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Color swatch picker helpers ───────────────────────────────────────────────
 // Builds the HTML for a swatch picker that replaces <input type="color">.
 // inputId      — the id placed on the hidden <input>; may be empty for inline pickers
 // initialColor — hex string
