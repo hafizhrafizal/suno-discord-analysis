@@ -555,7 +555,7 @@ async function _cmOpenExcerptPanel(bookmarkId, sourceCodeId, hlId = null, hlText
     document.getElementById('cm-detail-title').textContent = 'Span Coding';
     textEl.innerHTML = `<strong class="not-italic font-semibold text-gray-800 block mb-1">"${esc(hlText || '')}"</strong>`
       + `<span class="text-gray-400 text-[10px] block mt-1">Full excerpt: ${esc((bm.content || '').substring(0, 200))}${(bm.content || '').length > 200 ? '…' : ''}</span>`;
-    if (codesLbl) codesLbl.textContent = 'Span coding';
+    if (codesLbl) codesLbl.textContent = 'View Context';
     _cmExcPanelRenderSpanCode(srcCode, bookmarkId, hlId);
     if (addEl) addEl.classList.add('hidden');
   } else {
