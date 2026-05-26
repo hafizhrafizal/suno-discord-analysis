@@ -7,7 +7,31 @@ use axum::{
 use serde_json::{json, Value};
 use std::convert::Infallible;
 use uuid::Uuid;
+use chrono::Datelike;
 use crate::{error::{AppError, Result}, state::AppState};
+
+/// Compute ISO week string (e.g. "2023-02") from a date string.
+fn compute_week(date: &str) -> Option<String> {
+    let date = date.trim();
+    if date.is_empty() {
+        return None;
+    }
+    chrono::NaiveDateTime::parse_from_str(date, "%Y-%m-%d %H:%M:%S%.f")
+        .ok()
+        .or_else(|| chrono::NaiveDateTime::parse_from_str(date, "%Y-%m-%d %H:%M:%S").ok())
+        .map(|dt| {
+            let iw = dt.iso_week();
+            format!("{}-{:02}", iw.year(), iw.week())
+        })
+        .or_else(|| {
+            chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                .ok()
+                .map(|d| {
+                    let iw = d.iso_week();
+                    format!("{}-{:02}", iw.year(), iw.week())
+                })
+        })
+}
 
 pub async fn upload_csv(
     State(state): State<AppState>,
@@ -47,7 +71,6 @@ pub async fn upload_csv(
         .map_err(|e| AppError::BadRequest(format!("CSV parse error: {}", e)))?
         .clone();
 
-    // Normalize header mapping
     fn normalize_header(h: &str) -> &'static str {
         match h.trim().to_lowercase().as_str() {
             "id" | "message id" | "msg_uuid" => "msg_uuid",
@@ -79,16 +102,14 @@ pub async fn upload_csv(
     let upload_id = Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Collect all rows first (to count)
     let records: Vec<csv::StringRecord> = reader
         .records()
         .filter_map(|r| r.ok())
         .collect();
     let total = records.len() as i64;
 
-    // Insert upload record
     sqlx::query(
-        "INSERT INTO uploads (id, filename, row_count, upload_time) VALUES (?, ?, ?, ?)",
+        "INSERT INTO uploads (id, filename, row_count, upload_time) VALUES ($1, $2, $3, $4)",
     )
     .bind(&upload_id)
     .bind(&original_filename)
@@ -97,7 +118,6 @@ pub async fn upload_csv(
     .execute(&state.db)
     .await?;
 
-    // Build SSE stream
     let upload_id_clone = upload_id.clone();
     let db = state.db.clone();
 
@@ -128,12 +148,15 @@ pub async fn upload_csv(
                 let attachments = get_field(record, "attachments");
                 let reactions = get_field(record, "reactions");
                 let row_idx = inserted;
-
                 let word_count = content.split_whitespace().count() as i64;
+                let week = compute_week(&date);
+
                 let _ = sqlx::query(
-                    "INSERT OR IGNORE INTO messages
-                     (msg_uuid, username, date, content, attachments, reactions, upload_id, row_index, week, word_count)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%W', ?), ?)",
+                    "INSERT INTO messages
+                     (msg_uuid, username, date, content, attachments, reactions,
+                      upload_id, row_index, week, word_count)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     ON CONFLICT DO NOTHING",
                 )
                 .bind(&msg_uuid)
                 .bind(&username)
@@ -143,7 +166,7 @@ pub async fn upload_csv(
                 .bind(&reactions)
                 .bind(&upload_id_clone)
                 .bind(row_idx)
-                .bind(&date)
+                .bind(&week)
                 .bind(word_count)
                 .execute(&mut *tx)
                 .await;
@@ -162,10 +185,7 @@ pub async fn upload_csv(
             ));
         }
 
-        // Rebuild FTS index
-        let _ = sqlx::query("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')")
-            .execute(&db)
-            .await;
+        // search_vector is maintained by DB trigger; no rebuild needed
 
         yield Ok(Event::default().data(
             serde_json::to_string(&json!({
@@ -206,15 +226,15 @@ pub async fn delete_upload(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
-    sqlx::query("DELETE FROM messages WHERE upload_id = ?")
+    sqlx::query("DELETE FROM messages WHERE upload_id = $1")
         .bind(&id)
         .execute(&state.db)
         .await?;
-    sqlx::query("DELETE FROM embedded_uploads WHERE upload_id = ?")
+    sqlx::query("DELETE FROM embedded_uploads WHERE upload_id = $1")
         .bind(&id)
         .execute(&state.db)
         .await?;
-    let affected = sqlx::query("DELETE FROM uploads WHERE id = ?")
+    let affected = sqlx::query("DELETE FROM uploads WHERE id = $1")
         .bind(&id)
         .execute(&state.db)
         .await?
@@ -226,23 +246,11 @@ pub async fn delete_upload(
     Ok(Json(json!({ "deleted": id })))
 }
 
-pub async fn delete_upload_sqlite(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Value>> {
-    let affected = sqlx::query("DELETE FROM messages WHERE upload_id = ?")
-        .bind(&id)
-        .execute(&state.db)
-        .await?
-        .rows_affected();
-    Ok(Json(json!({ "deleted_messages": affected })))
-}
-
 pub async fn delete_upload_embeddings(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
-    sqlx::query("DELETE FROM embedded_uploads WHERE upload_id = ?")
+    sqlx::query("DELETE FROM embedded_uploads WHERE upload_id = $1")
         .bind(&id)
         .execute(&state.db)
         .await?;

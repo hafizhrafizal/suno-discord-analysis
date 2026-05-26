@@ -21,12 +21,14 @@ pub async fn get_context(
     let after = params.after.unwrap_or(5).min(200);
 
     let row = sqlx::query(
-        "SELECT upload_id, row_index FROM messages WHERE id = ?",
+        "SELECT upload_id, row_index FROM messages WHERE id = $1",
     )
     .bind(message_id)
     .fetch_optional(&state.db)
     .await?
-    .ok_or_else(|| crate::error::AppError::NotFound(format!("Message {} not found", message_id)))?;
+    .ok_or_else(|| {
+        crate::error::AppError::NotFound(format!("Message {} not found", message_id))
+    })?;
 
     use sqlx::Row;
     let upload_id: Option<String> = row.get("upload_id");
@@ -34,13 +36,17 @@ pub async fn get_context(
 
     let (uid, ri) = match (upload_id, row_index) {
         (Some(u), Some(r)) => (u, r),
-        _ => return Err(crate::error::AppError::NotFound("Message has no upload context".into())),
+        _ => {
+            return Err(crate::error::AppError::NotFound(
+                "Message has no upload context".into(),
+            ))
+        }
     };
 
     let rows = sqlx::query(
         "SELECT id, msg_uuid, username, date, content, row_index
          FROM messages
-         WHERE upload_id = ? AND row_index BETWEEN ? AND ?
+         WHERE upload_id = $1 AND row_index BETWEEN $2 AND $3
          ORDER BY row_index ASC",
     )
     .bind(&uid)
@@ -71,7 +77,6 @@ pub async fn get_context(
 pub async fn filter_semantic(
     Json(req): Json<SemanticFilterRequest>,
 ) -> Json<Value> {
-    // Naive relevance: count query word occurrences in content (no embeddings yet)
     let query_words: Vec<&str> = req.query.split_whitespace().collect();
     let mut scored: Vec<(usize, &crate::models::Message)> = req
         .messages

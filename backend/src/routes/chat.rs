@@ -120,16 +120,14 @@ async fn retrieve_keyword_messages(
     if query.is_empty() {
         return vec![];
     }
-    let fts_query = format!("\"{}\"*", query.replace('"', "\"\""));
     let rows = sqlx::query(
         "SELECT id, msg_uuid, username, date, content
-         FROM messages m
-         JOIN messages_fts fts ON m.id = fts.rowid
-         WHERE messages_fts MATCH ?
-         ORDER BY fts.rank
-         LIMIT ?",
+         FROM messages
+         WHERE search_vector @@ plainto_tsquery('simple', $1)
+         ORDER BY date DESC
+         LIMIT $2",
     )
-    .bind(&fts_query)
+    .bind(query)
     .bind(limit)
     .fetch_all(&state.db)
     .await

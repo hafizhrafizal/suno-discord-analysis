@@ -5,23 +5,36 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
+use sqlx::QueryBuilder;
 use crate::{error::{AppError, Result}, models::{AuthUser, BulkContextRequest}, state::AppState};
 
-/// Build an FTS5 MATCH string from user input. Each word is double-quoted
-/// (to prevent FTS5 operator injection) and suffixed with `*` for prefix matching.
-fn build_fts_match(q: &str, match_type: &str) -> String {
+/// Build a PostgreSQL tsquery string from user input.
+/// Each word is suffix-matched with `:*` (prefix search).
+fn build_pg_tsquery(q: &str, match_type: &str) -> String {
     let tokens: Vec<String> = q
         .split_whitespace()
         .filter(|w| !w.is_empty())
-        .map(|w| format!("\"{}\"*", w.replace('"', "\"\"")))
+        .map(|w| {
+            // Keep only alphanumeric + hyphen/underscore to avoid breaking tsquery syntax
+            let clean: String = w
+                .chars()
+                .filter(|c| c.is_alphanumeric() || matches!(c, '-' | '_'))
+                .collect::<String>()
+                .to_lowercase();
+            clean
+        })
+        .filter(|w| !w.is_empty())
+        .map(|w| format!("{}:*", w))
         .collect();
 
+    if tokens.is_empty() {
+        return String::new();
+    }
+
     match match_type {
-        "exact" => format!("\"{}\"", q.replace('"', "\"\"")),
-        "any_word" => {
-            if tokens.is_empty() { String::new() } else { tokens.join(" OR ") }
-        }
-        _ => tokens.join(" "), // fuzzy: all word-prefixes must be present (implicit AND)
+        "exact" => tokens.join(" <-> "),  // adjacent phrase match
+        "any_word" => tokens.join(" | "),
+        _ => tokens.join(" & "),           // fuzzy: all word-prefixes AND
     }
 }
 
@@ -34,7 +47,7 @@ pub struct KeywordParams {
     pub date_to: Option<String>,
     pub is_suno_team: Option<String>,
     pub min_words: Option<i64>,
-    pub match_type: Option<String>, // "fuzzy" | "exact" | "any_word"
+    pub match_type: Option<String>,
     pub username: Option<String>,
 }
 
@@ -83,80 +96,84 @@ pub async fn keyword_search(
     let match_type = params.match_type.as_deref().unwrap_or("fuzzy");
     let use_fts = state.fts_ready.load(Ordering::Relaxed);
 
-    let mut sql: String;
-    let mut args: Vec<String> = Vec::new();
+    let select = "SELECT m.id, m.msg_uuid, m.author_id, m.username, m.date, m.content,
+                         m.attachments, m.reactions, m.is_suno_team, m.week, m.month,
+                         m.upload_id, m.row_index
+                  FROM messages m";
+
+    let mut qb: QueryBuilder<sqlx::Postgres>;
 
     if use_fts {
-        // FTS5 path — uses the inverted index, orders of magnitude faster than LIKE.
-        let fts_match = build_fts_match(&q, match_type);
-        sql = String::from(
-            "SELECT m.id, m.msg_uuid, m.author_id, m.username, m.date, m.content,
-                    m.attachments, m.reactions, m.is_suno_team, m.week, m.month,
-                    m.upload_id, m.row_index
-             FROM messages_fts
-             JOIN messages m ON m.id = messages_fts.rowid
-             WHERE messages_fts MATCH ?",
-        );
-        args.push(fts_match);
+        let tsquery = build_pg_tsquery(&q, match_type);
+        if tsquery.is_empty() {
+            return Ok(Json(json!([])));
+        }
+        qb = QueryBuilder::new(format!(
+            "{} WHERE m.search_vector @@ to_tsquery('simple', ",
+            select
+        ));
+        qb.push_bind(tsquery);
+        qb.push(")");
     } else {
-        // LIKE fallback — used only while the background FTS rebuild is still running.
-        let words: Vec<String> = q.split_whitespace()
+        // LIKE fallback while search_vector backfill is in progress
+        let words: Vec<String> = q
+            .split_whitespace()
             .filter(|w| !w.is_empty())
             .map(|w| w.to_string())
             .collect();
 
-        sql = String::from(
-            "SELECT m.id, m.msg_uuid, m.author_id, m.username, m.date, m.content,
-                    m.attachments, m.reactions, m.is_suno_team, m.week, m.month,
-                    m.upload_id, m.row_index
-             FROM messages m
-             WHERE 1=1",
-        );
+        qb = QueryBuilder::new(format!("{} WHERE 1=1", select));
 
         match match_type {
             "exact" => {
-                sql.push_str(" AND m.content LIKE ? ESCAPE '\\'");
-                args.push(format!("%{}%", q.replace('%', "\\%").replace('_', "\\_")));
+                qb.push(" AND m.content ILIKE ");
+                qb.push_bind(format!("%{}%", q));
             }
             "any_word" => {
                 if !words.is_empty() {
-                    let clauses: Vec<String> = words.iter()
-                        .map(|_| "m.content LIKE ? ESCAPE '\\'".to_string())
-                        .collect();
-                    sql.push_str(&format!(" AND ({})", clauses.join(" OR ")));
-                    for w in &words {
-                        args.push(format!("%{}%", w.replace('%', "\\%").replace('_', "\\_")));
+                    qb.push(" AND (");
+                    for (i, w) in words.iter().enumerate() {
+                        if i > 0 {
+                            qb.push(" OR ");
+                        }
+                        qb.push("m.content ILIKE ");
+                        qb.push_bind(format!("%{}%", w));
                     }
+                    qb.push(")");
                 }
             }
             _ => {
                 for w in &words {
-                    sql.push_str(" AND m.content LIKE ? ESCAPE '\\'");
-                    args.push(format!("%{}%", w.replace('%', "\\%").replace('_', "\\_")));
+                    qb.push(" AND m.content ILIKE ");
+                    qb.push_bind(format!("%{}%", w));
                 }
             }
         }
     }
 
-    // Common filters — same column references work in both FTS5 JOIN and plain messages paths.
+    // Common filters
     if let Some(ref df) = params.date_from {
-        sql.push_str(" AND m.date >= ?");
-        args.push(df.clone());
+        qb.push(" AND m.date >= ");
+        qb.push_bind(df.clone());
     }
     if let Some(ref dt) = params.date_to {
-        sql.push_str(" AND m.date <= ?");
-        args.push(dt.clone());
+        qb.push(" AND m.date <= ");
+        qb.push_bind(dt.clone());
     }
     if let Some(ref st) = params.is_suno_team {
         match st.as_str() {
-            "true" | "1" | "only"     => sql.push_str(" AND m.is_suno_team IN ('true','1')"),
-            "exclude" | "false" | "0" => sql.push_str(" AND (m.is_suno_team IS NULL OR m.is_suno_team NOT IN ('true','1'))"),
+            "true" | "1" | "only" => {
+                qb.push(" AND m.is_suno_team IN ('true','1')");
+            }
+            "exclude" | "false" | "0" => {
+                qb.push(" AND (m.is_suno_team IS NULL OR m.is_suno_team NOT IN ('true','1'))");
+            }
             _ => {}
         }
     }
     if let Some(mw) = params.min_words {
         if mw > 0 {
-            sql.push_str(&format!(
+            qb.push(format!(
                 " AND (length(m.content) - length(replace(m.content,' ','')) + 1) >= {}",
                 mw
             ));
@@ -164,30 +181,30 @@ pub async fn keyword_search(
     }
     if let Some(ref un) = params.username {
         if !un.is_empty() {
-            sql.push_str(" AND m.username LIKE ?");
-            args.push(format!("%{}%", un));
+            qb.push(" AND m.username ILIKE ");
+            qb.push_bind(format!("%{}%", un));
         }
     }
     if let Some(ref uid_str) = params.upload_ids {
-        let ids: Vec<&str> = uid_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let ids: Vec<&str> = uid_str
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
         if !ids.is_empty() {
-            let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            sql.push_str(&format!(" AND m.upload_id IN ({})", placeholders));
-            for id in ids {
-                args.push(id.to_string());
+            qb.push(" AND m.upload_id IN (");
+            let mut sep = qb.separated(", ");
+            for id in &ids {
+                sep.push_bind(id.to_string());
             }
+            qb.push(")");
         }
     }
 
-    sql.push_str(" ORDER BY m.date DESC LIMIT ?");
-    args.push(limit.to_string());
+    qb.push(" ORDER BY m.date DESC LIMIT ");
+    qb.push_bind(limit);
 
-    let mut q_builder = sqlx::query(&sql);
-    for arg in &args {
-        q_builder = q_builder.bind(arg);
-    }
-
-    let rows = q_builder.fetch_all(&state.db).await?;
+    let rows = qb.build().fetch_all(&state.db).await?;
 
     use sqlx::Row;
     let messages: Vec<Value> = rows
@@ -212,10 +229,11 @@ pub async fn keyword_search(
     Ok(Json(json!(messages)))
 }
 
-/// Returns true when the query reads like a question or open-ended request.
 fn is_question_query(q: &str) -> bool {
     let lower = q.trim().to_lowercase();
-    if lower.ends_with('?') { return true; }
+    if lower.ends_with('?') {
+        return true;
+    }
     let starters = [
         "what ", "how ", "why ", "when ", "who ", "which ", "where ",
         "is ", "are ", "do ", "does ", "can ", "could ", "should ", "would ",
@@ -227,20 +245,21 @@ fn is_question_query(q: &str) -> bool {
 
 fn normalize_embedding(v: Vec<f64>) -> Vec<f64> {
     let norm = v.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if norm == 0.0 { return v; }
+    if norm == 0.0 {
+        return v;
+    }
     v.into_iter().map(|x| x / norm).collect()
 }
 
-/// Blend two unit-normalised embeddings with weight `w` on `b` (0.5 = equal weight).
 fn blend_embeddings(a: &[f64], b: &[f64], w: f64) -> Vec<f64> {
-    let blended: Vec<f64> = a.iter().zip(b.iter())
+    let blended: Vec<f64> = a
+        .iter()
+        .zip(b.iter())
         .map(|(x, y)| x * (1.0 - w) + y * w)
         .collect();
     normalize_embedding(blended)
 }
 
-/// HyDE: ask GPT-4o-mini to write a hypothetical Discord reply, then embed it.
-/// Returns None on any failure so the caller falls back to the raw query embedding.
 async fn hyde_embed(api_key: &str, query: &str, embed_model: &str) -> Option<Vec<f64>> {
     let client = reqwest::Client::new();
 
@@ -262,8 +281,12 @@ async fn hyde_embed(api_key: &str, query: &str, embed_model: &str) -> Option<Vec
             "max_tokens": 200,
             "temperature": 0.2,
         }))
-        .send().await.ok()?
-        .json().await.ok()?;
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
 
     let hypo_doc = chat["choices"][0]["message"]["content"].as_str()?.to_string();
     tracing::debug!("HyDE document: {}", &hypo_doc[..hypo_doc.len().min(120)]);
@@ -272,8 +295,12 @@ async fn hyde_embed(api_key: &str, query: &str, embed_model: &str) -> Option<Vec
         .post("https://api.openai.com/v1/embeddings")
         .bearer_auth(api_key)
         .json(&json!({ "model": embed_model, "input": hypo_doc }))
-        .send().await.ok()?
-        .json().await.ok()?;
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
 
     let vec: Vec<f64> = embed["data"][0]["embedding"]
         .as_array()?
@@ -299,7 +326,9 @@ async fn embed_query(api_key: &str, text: &str, model: &str) -> Result<Vec<f64>>
         return Err(AppError::Internal(format!("OpenAI embed error: {}", err)));
     }
 
-    let data: Value = resp.json().await
+    let data: Value = resp
+        .json()
+        .await
         .map_err(|e| AppError::Internal(format!("OpenAI embed parse error: {}", e)))?;
 
     let embedding = data["data"][0]["embedding"]
@@ -322,7 +351,7 @@ pub struct SemanticParams {
     pub is_suno_team: Option<String>,
     pub min_words: Option<i64>,
     pub username: Option<String>,
-    pub sort_by: Option<String>, // "similarity" | "date"
+    pub sort_by: Option<String>,
 }
 
 pub async fn semantic_search(
@@ -343,7 +372,6 @@ pub async fn semantic_search(
 
     let embed_model = state.get_embedding_model();
 
-    // For question/open-ended queries, run HyDE concurrently with the raw embed and blend results.
     let is_question = is_question_query(&q);
     let embedding = if is_question {
         tracing::debug!("HyDE: question query detected — generating hypothetical document");
@@ -370,8 +398,8 @@ pub async fn semantic_search(
 
     let client = reqwest::Client::new();
 
-    // Step 1: resolve collection name → UUID (v2 requires UUID in query path)
-    let collection_info_url = format!("{}/collections/{}", chroma_base, state.config.chroma_collection);
+    let collection_info_url =
+        format!("{}/collections/{}", chroma_base, state.config.chroma_collection);
     let collection_resp = client.get(&collection_info_url).send().await;
     let collection_id = match collection_resp {
         Err(e) => {
@@ -381,27 +409,32 @@ pub async fn semantic_search(
         Ok(r) if !r.status().is_success() => {
             let err = r.text().await.unwrap_or_default();
             eprintln!("ChromaDB collection lookup error: {}", err);
-            return Ok(Json(json!({ "error": format!("ChromaDB error: {}", err), "results": [] })));
+            return Ok(Json(
+                json!({ "error": format!("ChromaDB error: {}", err), "results": [] }),
+            ));
         }
         Ok(r) => {
             let info: Value = match r.json().await {
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("ChromaDB collection parse error: {}", e);
-                    return Ok(Json(json!({ "error": "ChromaDB response parse error", "results": [] })));
+                    return Ok(Json(
+                        json!({ "error": "ChromaDB response parse error", "results": [] }),
+                    ));
                 }
             };
             match info["id"].as_str().map(String::from) {
                 Some(id) => id,
                 None => {
                     eprintln!("ChromaDB collection missing id field");
-                    return Ok(Json(json!({ "error": "ChromaDB collection id missing", "results": [] })));
+                    return Ok(Json(
+                        json!({ "error": "ChromaDB collection id missing", "results": [] }),
+                    ));
                 }
             }
         }
     };
 
-    // Step 2: overcollect (5× limit) so post-filtering still yields enough results
     let n_results = (limit * 5).min(500);
     let chroma_url = format!("{}/collections/{}/query", chroma_base, collection_id);
     let chroma_send = client
@@ -425,14 +458,18 @@ pub async fn semantic_search(
     if !chroma_resp.status().is_success() {
         let err = chroma_resp.text().await.unwrap_or_default();
         eprintln!("ChromaDB error response: {}", err);
-        return Ok(Json(json!({ "error": format!("ChromaDB error: {}", err), "results": [] })));
+        return Ok(Json(
+            json!({ "error": format!("ChromaDB error: {}", err), "results": [] }),
+        ));
     }
 
     let chroma_data: Value = match chroma_resp.json().await {
         Ok(v) => v,
         Err(e) => {
             eprintln!("ChromaDB parse error: {}", e);
-            return Ok(Json(json!({ "error": "ChromaDB response parse error", "results": [] })));
+            return Ok(Json(
+                json!({ "error": "ChromaDB response parse error", "results": [] }),
+            ));
         }
     };
 
@@ -442,39 +479,46 @@ pub async fn semantic_search(
         return Ok(Json(json!([])));
     }
 
-    // ids are msg_uuid values — fetch full messages from SQLite preserving similarity order
-    let msg_uuids: Vec<String> = ids.iter()
+    let msg_uuids: Vec<String> = ids
+        .iter()
         .filter_map(|v| v.as_str().map(String::from))
         .collect();
 
-    // ChromaDB cosine space: distance = 1 − cosine_similarity → similarity = 1 − distance
     let empty_dists = vec![];
     let distances = chroma_data["distances"][0].as_array().unwrap_or(&empty_dists);
-    let uuid_to_similarity: std::collections::HashMap<String, f64> = msg_uuids.iter()
+    let uuid_to_similarity: std::collections::HashMap<String, f64> = msg_uuids
+        .iter()
         .zip(distances.iter())
         .filter_map(|(uuid, dist)| {
-            dist.as_f64().map(|d| (uuid.clone(), (1.0 - d).clamp(0.0, 1.0)))
+            dist.as_f64()
+                .map(|d| (uuid.clone(), (1.0 - d).clamp(0.0, 1.0)))
         })
         .collect();
 
-    // Adaptive threshold: floor at 0.30, but tighten relative to the best result quality.
-    // This keeps high-quality sets focused while preserving recall on low-signal queries.
-    let best_sim = uuid_to_similarity.values().cloned().fold(0.0_f64, f64::max);
+    let best_sim = uuid_to_similarity
+        .values()
+        .cloned()
+        .fold(0.0_f64, f64::max);
     let min_similarity = 0.30_f64.max(best_sim * 0.65);
-    tracing::debug!("Semantic: best_sim={:.3}, threshold={:.3}, hyde={}", best_sim, min_similarity, is_question);
+    tracing::debug!(
+        "Semantic: best_sim={:.3}, threshold={:.3}, hyde={}",
+        best_sim,
+        min_similarity,
+        is_question
+    );
 
-    let placeholders = msg_uuids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let sql = format!(
+    // Build IN clause with positional params
+    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
         "SELECT id, msg_uuid, author_id, username, date, content,
                 attachments, reactions, is_suno_team, upload_id, row_index
-         FROM messages WHERE msg_uuid IN ({})",
-        placeholders
+         FROM messages WHERE msg_uuid IN (",
     );
-    let mut q_builder = sqlx::query(&sql);
+    let mut sep = qb.separated(", ");
     for uuid in &msg_uuids {
-        q_builder = q_builder.bind(uuid);
+        sep.push_bind(uuid.clone());
     }
-    let rows = q_builder.fetch_all(&state.db).await?;
+    qb.push(")");
+    let rows = qb.build().fetch_all(&state.db).await?;
 
     use sqlx::Row;
     use std::collections::HashMap;
@@ -501,45 +545,73 @@ pub async fn semantic_search(
         })
         .collect();
 
-    // Filter by threshold + user params, then truncate to the requested limit
     let mut messages: Vec<Value> = msg_uuids
         .iter()
         .filter_map(|uuid| row_map.remove(uuid))
         .filter(|m| {
             if let Some(sim) = m["similarity"].as_f64() {
-                if sim < min_similarity { return false; }
+                if sim < min_similarity {
+                    return false;
+                }
             }
             if let Some(ref df) = params.date_from {
-                if m["date"].as_str().unwrap_or("") < df.as_str() { return false; }
+                if m["date"].as_str().unwrap_or("") < df.as_str() {
+                    return false;
+                }
             }
             if let Some(ref dt) = params.date_to {
-                if m["date"].as_str().unwrap_or("") > dt.as_str() { return false; }
+                if m["date"].as_str().unwrap_or("") > dt.as_str() {
+                    return false;
+                }
             }
             if let Some(ref un) = params.username {
                 if !un.is_empty() {
                     let uname = m["username"].as_str().unwrap_or("").to_lowercase();
-                    if !uname.contains(&un.to_lowercase()) { return false; }
+                    if !uname.contains(&un.to_lowercase()) {
+                        return false;
+                    }
                 }
             }
             if let Some(ref st) = params.is_suno_team {
-                let is_team = matches!(m["is_suno_team"].as_str().unwrap_or(""), "true" | "1");
+                let is_team =
+                    matches!(m["is_suno_team"].as_str().unwrap_or(""), "true" | "1");
                 match st.as_str() {
-                    "true" | "1" | "only"     => { if !is_team { return false; } }
-                    "exclude" | "false" | "0" => { if is_team  { return false; } }
+                    "true" | "1" | "only" => {
+                        if !is_team {
+                            return false;
+                        }
+                    }
+                    "exclude" | "false" | "0" => {
+                        if is_team {
+                            return false;
+                        }
+                    }
                     _ => {}
                 }
             }
             if let Some(mw) = params.min_words {
                 if mw > 0 {
-                    let word_count = m["content"].as_str().unwrap_or("").split_whitespace().count() as i64;
-                    if word_count < mw { return false; }
+                    let word_count = m["content"]
+                        .as_str()
+                        .unwrap_or("")
+                        .split_whitespace()
+                        .count() as i64;
+                    if word_count < mw {
+                        return false;
+                    }
                 }
             }
             if let Some(ref uid_str) = params.upload_ids {
-                let allowed: Vec<&str> = uid_str.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+                let allowed: Vec<&str> = uid_str
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 if !allowed.is_empty() {
                     let upload_id = m["upload_id"].as_str().unwrap_or("");
-                    if !allowed.contains(&upload_id) { return false; }
+                    if !allowed.contains(&upload_id) {
+                        return false;
+                    }
                 }
             }
             true
@@ -547,13 +619,18 @@ pub async fn semantic_search(
         .take(limit)
         .collect();
 
-    // Sort by date if requested; default keeps ChromaDB's similarity-descending order
     match params.sort_by.as_deref() {
         Some("date_asc") => messages.sort_by(|a, b| {
-            a["date"].as_str().unwrap_or("").cmp(b["date"].as_str().unwrap_or(""))
+            a["date"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["date"].as_str().unwrap_or(""))
         }),
         Some("date_desc") => messages.sort_by(|a, b| {
-            b["date"].as_str().unwrap_or("").cmp(a["date"].as_str().unwrap_or(""))
+            b["date"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(a["date"].as_str().unwrap_or(""))
         }),
         _ => {}
     }
@@ -567,52 +644,61 @@ pub async fn username_search(
 ) -> Result<Json<Value>> {
     let q = params.q.unwrap_or_default();
     let limit = params.limit.unwrap_or(200).min(10_000);
-    let pattern = format!("%{}%", q);
 
-    let mut sql = String::from(
+    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
         "SELECT id, msg_uuid, author_id, username, date, content,
                 attachments, reactions, is_suno_team, upload_id, row_index
-         FROM messages WHERE username LIKE ?",
+         FROM messages WHERE username ILIKE ",
     );
-    let mut args: Vec<String> = vec![pattern];
+    qb.push_bind(format!("%{}%", q));
 
     if let Some(ref df) = params.date_from {
-        sql.push_str(" AND date >= ?");
-        args.push(df.clone());
+        qb.push(" AND date >= ");
+        qb.push_bind(df.clone());
     }
     if let Some(ref dt) = params.date_to {
-        sql.push_str(" AND date <= ?");
-        args.push(dt.clone());
+        qb.push(" AND date <= ");
+        qb.push_bind(dt.clone());
     }
     if let Some(ref st) = params.is_suno_team {
         match st.as_str() {
-            "true" | "1" | "only"     => sql.push_str(" AND is_suno_team IN ('true','1')"),
-            "exclude" | "false" | "0" => sql.push_str(" AND (is_suno_team IS NULL OR is_suno_team NOT IN ('true','1'))"),
+            "true" | "1" | "only" => {
+                qb.push(" AND is_suno_team IN ('true','1')");
+            }
+            "exclude" | "false" | "0" => {
+                qb.push(" AND (is_suno_team IS NULL OR is_suno_team NOT IN ('true','1'))");
+            }
             _ => {}
         }
     }
     if let Some(mw) = params.min_words {
         if mw > 0 {
-            sql.push_str(&format!(
+            qb.push(format!(
                 " AND (length(content) - length(replace(content,' ','')) + 1) >= {}",
                 mw
             ));
         }
     }
     if let Some(ref uid_str) = params.upload_ids {
-        let ids: Vec<&str> = uid_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let ids: Vec<&str> = uid_str
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
         if !ids.is_empty() {
-            let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            sql.push_str(&format!(" AND upload_id IN ({})", placeholders));
-            for id in ids { args.push(id.to_string()); }
+            qb.push(" AND upload_id IN (");
+            let mut sep = qb.separated(", ");
+            for id in &ids {
+                sep.push_bind(id.to_string());
+            }
+            qb.push(")");
         }
     }
-    sql.push_str(" ORDER BY date ASC LIMIT ?");
-    args.push(limit.to_string());
 
-    let mut q_builder = sqlx::query(&sql);
-    for arg in &args { q_builder = q_builder.bind(arg); }
-    let rows = q_builder.fetch_all(&state.db).await?;
+    qb.push(" ORDER BY date ASC LIMIT ");
+    qb.push_bind(limit);
+
+    let rows = qb.build().fetch_all(&state.db).await?;
 
     let messages: Vec<Value> = rows
         .into_iter()
@@ -637,46 +723,47 @@ pub async fn range_search(
     State(state): State<AppState>,
     Query(params): Query<RangeParams>,
 ) -> Result<Json<Value>> {
-    let limit = params.limit.map(|l| l.min(10_000)); // None = no limit
     let offset = params.offset.unwrap_or(0);
 
-    let mut sql = String::from(
+    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
         "SELECT id, msg_uuid, author_id, username, date, content,
                 attachments, reactions, is_suno_team, upload_id, row_index
          FROM messages WHERE 1=1",
     );
-    let mut args: Vec<String> = Vec::new();
 
     if let Some(ref df) = params.date_from {
-        sql.push_str(" AND date >= ?");
-        args.push(df.clone());
+        qb.push(" AND date >= ");
+        qb.push_bind(df.clone());
     }
     if let Some(ref dt) = params.date_to {
-        sql.push_str(" AND date <= ?");
-        args.push(dt.clone());
+        qb.push(" AND date <= ");
+        qb.push_bind(dt.clone());
     }
     if let Some(ref uid_str) = params.upload_ids {
-        let ids: Vec<&str> = uid_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let ids: Vec<&str> = uid_str
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
         if !ids.is_empty() {
-            let ph = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            sql.push_str(&format!(" AND upload_id IN ({})", ph));
-            for id in ids {
-                args.push(id.to_string());
+            qb.push(" AND upload_id IN (");
+            let mut sep = qb.separated(", ");
+            for id in &ids {
+                sep.push_bind(id.to_string());
             }
+            qb.push(")");
         }
     }
 
-    // LIMIT -1 in SQLite means no limit; use it when the caller omits the limit param.
-    sql.push_str(" ORDER BY date ASC LIMIT ? OFFSET ?");
-    args.push(limit.unwrap_or(-1).to_string());
-    args.push(offset.to_string());
-
-    let mut q_builder = sqlx::query(&sql);
-    for arg in &args {
-        q_builder = q_builder.bind(arg);
+    qb.push(" ORDER BY date ASC");
+    if let Some(lim) = params.limit {
+        qb.push(" LIMIT ");
+        qb.push_bind(lim.min(10_000));
     }
+    qb.push(" OFFSET ");
+    qb.push_bind(offset);
 
-    let rows = q_builder.fetch_all(&state.db).await?;
+    let rows = qb.build().fetch_all(&state.db).await?;
 
     let messages: Vec<Value> = rows
         .into_iter()
@@ -701,44 +788,49 @@ pub async fn users_in_range(
     State(state): State<AppState>,
     Query(params): Query<UserRangeParams>,
 ) -> Result<Json<Value>> {
-    let mut date_filters = String::new();
+    // Build the date filter string with $N placeholders.
+    // The same $N indices are shared by the subquery and the outer WHERE,
+    // so we bind each parameter exactly once.
+    let mut filters = String::new();
     let mut args: Vec<String> = Vec::new();
 
     if let Some(ref df) = params.date_from {
-        date_filters.push_str(" AND date >= ?");
+        let n = args.len() + 1;
+        filters.push_str(&format!(" AND date >= ${}", n));
         args.push(df.clone());
     }
     if let Some(ref dt) = params.date_to {
-        date_filters.push_str(" AND date <= ?");
+        let n = args.len() + 1;
+        filters.push_str(&format!(" AND date <= ${}", n));
         args.push(dt.clone());
     }
 
-    // Single round-trip: CTE computes total_weeks, cross-joined into the per-user aggregation
     let sql = format!(
-        "WITH tw AS (
-             SELECT COUNT(DISTINCT COALESCE(week, strftime('%Y-%W', date))) AS total_weeks
-             FROM messages WHERE 1=1{df}
-         )
-         SELECT m.username,
+        "SELECT m.username,
                 COUNT(*) AS message_count,
                 MIN(m.date) AS first_date,
                 MAX(m.date) AS last_date,
-                ROUND(AVG(COALESCE(CAST(m.word_count AS REAL),
-                    CAST(length(m.content) - length(replace(m.content, ' ', '')) + 1 AS REAL))), 1) AS avg_words,
-                COUNT(DISTINCT COALESCE(m.week, strftime('%Y-%W', m.date))) AS weeks_active,
-                MAX(CASE WHEN m.is_suno_team IN ('true', '1', 'True') THEN 1 ELSE 0 END) AS is_team,
-                tw.total_weeks
-         FROM messages m, tw
+                ROUND(AVG(COALESCE(
+                    m.word_count::float8,
+                    (length(m.content) - length(replace(m.content, ' ', '')) + 1)::float8
+                ))::numeric, 1)::float8 AS avg_words,
+                COUNT(DISTINCT COALESCE(m.week,
+                    TO_CHAR(NULLIF(m.date,'')::timestamp, 'IYYY-IW'))) AS weeks_active,
+                MAX(CASE WHEN m.is_suno_team IN ('true', '1', 'True') THEN 1 ELSE 0 END)::bigint AS is_team,
+                (SELECT COUNT(DISTINCT COALESCE(week,
+                     TO_CHAR(NULLIF(date,'')::timestamp, 'IYYY-IW')))
+                 FROM messages WHERE 1=1{df}) AS total_weeks
+         FROM messages m
          WHERE 1=1{df}
-         GROUP BY m.username, tw.total_weeks
+         GROUP BY m.username
          ORDER BY message_count DESC",
-        df = date_filters,
+        df = filters,
     );
 
     let mut q = sqlx::query(&sql);
-    // Bind args twice: once for the CTE WHERE clause, once for the outer WHERE clause
-    for a in &args { q = q.bind(a); }
-    for a in &args { q = q.bind(a); }
+    for a in &args {
+        q = q.bind(a);
+    }
     let rows = q.fetch_all(&state.db).await?;
 
     use sqlx::Row;
@@ -747,7 +839,8 @@ pub async fn users_in_range(
         .map(|r| {
             let weeks_active: i64 = r.get("weeks_active");
             let total_weeks: i64 = r.get::<i64, _>("total_weeks").max(1);
-            let pct_weeks = (weeks_active as f64 / total_weeks as f64 * 1000.0).round() / 10.0;
+            let pct_weeks =
+                (weeks_active as f64 / total_weeks as f64 * 1000.0).round() / 10.0;
             json!({
                 "username": r.get::<String, _>("username"),
                 "total_messages": r.get::<i64, _>("message_count"),
@@ -776,7 +869,7 @@ pub async fn user_messages(
     let rows = sqlx::query(
         "SELECT id, msg_uuid, author_id, username, date, content,
                 attachments, reactions, is_suno_team, upload_id, row_index
-         FROM messages WHERE username = ? ORDER BY date ASC LIMIT ? OFFSET ?",
+         FROM messages WHERE username = $1 ORDER BY date ASC LIMIT $2 OFFSET $3",
     )
     .bind(&username)
     .bind(limit)
@@ -812,7 +905,7 @@ pub async fn bulk_context(
 
     for msg_id in &req.message_ids {
         let row = sqlx::query(
-            "SELECT upload_id, row_index FROM messages WHERE id = ?",
+            "SELECT upload_id, row_index FROM messages WHERE id = $1",
         )
         .bind(msg_id)
         .fetch_optional(&state.db)
@@ -827,7 +920,7 @@ pub async fn bulk_context(
                 let context_rows = sqlx::query(
                     "SELECT id, msg_uuid, username, date, content, row_index
                      FROM messages
-                     WHERE upload_id = ? AND row_index BETWEEN ? AND ?
+                     WHERE upload_id = $1 AND row_index BETWEEN $2 AND $3
                      ORDER BY row_index ASC",
                 )
                 .bind(&uid)
@@ -839,6 +932,7 @@ pub async fn bulk_context(
                 let context_msgs: Vec<Value> = context_rows
                     .into_iter()
                     .map(|cr| {
+                        use sqlx::Row as R;
                         json!({
                             "id": cr.get::<i64, _>("id"),
                             "msg_uuid": cr.get::<String, _>("msg_uuid"),

@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tokio::sync::RwLock;
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use crate::config::Config;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: SqlitePool,
+    pub db: PgPool,
     pub config: Arc<Config>,
     pub openai_key: Arc<RwLock<Option<String>>>,
     pub user_openai_keys: Arc<RwLock<HashMap<i64, String>>>,
@@ -21,7 +21,7 @@ impl AsRef<AppState> for AppState {
 }
 
 impl AppState {
-    pub fn new(db: SqlitePool, config: Config, fts_ready: Arc<AtomicBool>) -> Self {
+    pub fn new(db: PgPool, config: Config, fts_ready: Arc<AtomicBool>) -> Self {
         let openai_key = config.openai_api_key.clone();
         Self {
             db,
@@ -33,7 +33,6 @@ impl AppState {
     }
 
     pub async fn get_app_mode(&self) -> Option<String> {
-        // Config (env var) takes precedence over DB setting
         if self.config.app_mode.is_some() {
             return self.config.app_mode.clone();
         }

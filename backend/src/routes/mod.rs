@@ -56,8 +56,7 @@ pub fn all_routes(state: AppState) -> Router {
         .route("/upload", post(uploads::upload_csv))
         .route("/uploads", get(uploads::list_uploads))
         .route("/uploads/:id", delete(uploads::delete_upload))
-        .route("/uploads/:id/sqlite", delete(uploads::delete_upload_sqlite))
-        .route("/uploads/:id/embeddings", delete(uploads::delete_upload_embeddings))
+.route("/uploads/:id/embeddings", delete(uploads::delete_upload_embeddings))
         .route("/uploads/:id/reembed", post(uploads::reembed))
         .route("/jobs/:job_id", get(uploads::get_job))
         // Bookmarks

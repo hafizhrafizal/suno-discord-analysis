@@ -8,6 +8,7 @@ use crate::{
     models::{AuthUser, CreateBookmarkRequest},
     state::AppState,
 };
+
 pub async fn create_bookmark(
     State(state): State<AppState>,
     user: AuthUser,
@@ -24,8 +25,8 @@ pub async fn create_bookmark(
     let ctx_after = req.ctx_after.unwrap_or(5);
 
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO bookmarks (msg_id, ctx_before, ctx_after, note, user_id, created_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now')) RETURNING id",
+        "INSERT INTO bookmarks (msg_id, ctx_before, ctx_after, note, user_id)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(req.msg_id)
     .bind(ctx_before)
@@ -49,7 +50,7 @@ pub async fn list_bookmarks(
                     m.content, m.username, m.date, m.is_suno_team
              FROM bookmarks b
              JOIN messages m ON m.id = b.msg_id
-             WHERE b.user_id = ?
+             WHERE b.user_id = $1
              ORDER BY b.created_at DESC",
         )
         .bind(user.id)
@@ -74,11 +75,14 @@ pub async fn list_bookmarks(
         return Ok(Json(json!([])));
     }
 
-    // Collect IDs for batch sub-queries (these are our own DB integers — safe for interpolation)
+    // Collect IDs for batch sub-queries (our own DB integers — safe for interpolation)
     let bookmark_ids: Vec<i64> = bookmark_rows.iter().map(|r| r.get::<i64, _>("id")).collect();
-    let id_list = bookmark_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+    let id_list = bookmark_ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
 
-    // Batch-fetch codes for ALL bookmarks in 1 query instead of N queries
     let codes_sql = format!(
         "SELECT bc.bookmark_id, c.id, c.name, c.color
          FROM bookmark_codes bc JOIN codes c ON c.id = bc.code_id
@@ -105,7 +109,6 @@ pub async fn list_bookmarks(
         }
     }
 
-    // Batch-fetch highlights for ALL bookmarks in 1 query instead of N queries
     let hl_sql = format!(
         "SELECT bch.id, bch.bookmark_id, bch.code_id,
                 c.name as code_name, c.color as code_color, bch.highlighted_text
@@ -128,7 +131,6 @@ pub async fn list_bookmarks(
         }));
     }
 
-    // Assemble final response — 3 queries total regardless of bookmark count
     let bookmarks: Vec<Value> = bookmark_rows
         .iter()
         .map(|row| {
@@ -154,7 +156,6 @@ pub async fn list_bookmarks(
 }
 
 /// Lightweight bookmark list — only message metadata, no codes or highlights sub-queries.
-/// Used by the Coding page which fetches codes/highlights separately via /bookmark-codes.
 pub async fn list_bookmarks_meta(
     State(state): State<AppState>,
     user: AuthUser,
@@ -166,7 +167,7 @@ pub async fn list_bookmarks_meta(
                     m.content, m.username, m.date, m.is_suno_team
              FROM bookmarks b
              JOIN messages m ON m.id = b.msg_id
-             WHERE b.user_id = ?
+             WHERE b.user_id = $1
              ORDER BY b.created_at DESC",
         )
         .bind(user.id)
@@ -208,7 +209,7 @@ pub async fn list_bookmark_ids(
 ) -> Result<Json<Value>> {
     let mode = state.get_app_mode().await;
     let ids: Vec<i64> = if mode.as_deref() == Some("multi") {
-        sqlx::query_scalar("SELECT msg_id FROM bookmarks WHERE user_id = ?")
+        sqlx::query_scalar("SELECT msg_id FROM bookmarks WHERE user_id = $1")
             .bind(user.id)
             .fetch_all(&state.db)
             .await?
@@ -225,7 +226,7 @@ pub async fn delete_bookmark(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let affected = sqlx::query("DELETE FROM bookmarks WHERE id = ?")
+    let affected = sqlx::query("DELETE FROM bookmarks WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await?
@@ -241,7 +242,7 @@ pub async fn delete_bookmark_by_msg(
     State(state): State<AppState>,
     Path(msg_id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let affected = sqlx::query("DELETE FROM bookmarks WHERE msg_id = ?")
+    let affected = sqlx::query("DELETE FROM bookmarks WHERE msg_id = $1")
         .bind(msg_id)
         .execute(&state.db)
         .await?
@@ -255,7 +256,8 @@ pub async fn add_label(
     Path((bookmark_id, label_id)): Path<(i64, i64)>,
 ) -> Result<Json<Value>> {
     sqlx::query(
-        "INSERT OR IGNORE INTO bookmark_labels (bookmark_id, label_id) VALUES (?, ?)",
+        "INSERT INTO bookmark_labels (bookmark_id, label_id) VALUES ($1, $2)
+         ON CONFLICT DO NOTHING",
     )
     .bind(bookmark_id)
     .bind(label_id)
@@ -270,7 +272,7 @@ pub async fn remove_label(
     Path((bookmark_id, label_id)): Path<(i64, i64)>,
 ) -> Result<Json<Value>> {
     sqlx::query(
-        "DELETE FROM bookmark_labels WHERE bookmark_id = ? AND label_id = ?",
+        "DELETE FROM bookmark_labels WHERE bookmark_id = $1 AND label_id = $2",
     )
     .bind(bookmark_id)
     .bind(label_id)
@@ -286,8 +288,9 @@ pub async fn add_highlight(
     Json(req): Json<crate::models::AddHighlightRequest>,
 ) -> Result<Json<Value>> {
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO bookmark_code_highlights (bookmark_id, code_id, highlighted_text, created_at)
-         VALUES (?, ?, ?, datetime('now')) RETURNING id",
+        "INSERT INTO bookmark_code_highlights
+         (bookmark_id, code_id, highlighted_text)
+         VALUES ($1, $2, $3) RETURNING id",
     )
     .bind(bookmark_id)
     .bind(req.code_id)
@@ -308,7 +311,7 @@ pub async fn remove_highlight(
     Path((bookmark_id, hl_id)): Path<(i64, i64)>,
 ) -> Result<Json<Value>> {
     sqlx::query(
-        "DELETE FROM bookmark_code_highlights WHERE id = ? AND bookmark_id = ?",
+        "DELETE FROM bookmark_code_highlights WHERE id = $1 AND bookmark_id = $2",
     )
     .bind(hl_id)
     .bind(bookmark_id)

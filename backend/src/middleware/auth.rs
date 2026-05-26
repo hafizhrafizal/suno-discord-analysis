@@ -25,11 +25,12 @@ where
             .await
             .map_err(|_| AppError::Unauthorized)?;
 
-        let user_id: Option<i64> = session.get("user_id").await.map_err(|_| AppError::Unauthorized)?;
+        let user_id: Option<i64> =
+            session.get("user_id").await.map_err(|_| AppError::Unauthorized)?;
         let user_id = user_id.ok_or(AppError::Unauthorized)?;
 
         let row = sqlx::query(
-            "SELECT id, username, is_admin FROM users WHERE id = ?",
+            "SELECT id, username, is_admin FROM users WHERE id = $1",
         )
         .bind(user_id)
         .fetch_optional(&app_state.db)
@@ -41,7 +42,7 @@ where
         Ok(AuthUser {
             id: row.get::<i64, _>("id"),
             username: row.get::<String, _>("username"),
-            is_admin: row.get::<i64, _>("is_admin") != 0,
+            is_admin: row.get::<bool, _>("is_admin"),
         })
     }
 }

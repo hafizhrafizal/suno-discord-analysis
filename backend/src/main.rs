@@ -22,13 +22,13 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tower_sessions::{Expiry, SessionManagerLayer};
-use tower_sessions_sqlx_store::SqliteStore;
+use tower_sessions_sqlx_store::PostgresStore;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::Config;
 use database::{
-    backfill_precomputed_columns, create_pool, init_db, needs_fts_rebuild, needs_word_count_backfill,
-    rebuild_fts, seed_demo_user,
+    backfill_precomputed_columns, create_pool, init_db, needs_fts_rebuild,
+    needs_word_count_backfill, rebuild_fts, seed_demo_user,
 };
 use state::AppState;
 
@@ -47,15 +47,15 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = Config::from_env();
-    tracing::info!("Starting retrieval-backend — DB: {}", cfg.db_path);
+    tracing::info!("Starting retrieval-backend — DB: {}", cfg.database_url);
 
     // Create DB pool
-    let pool = create_pool(&cfg.db_path).await?;
+    let pool = create_pool(&cfg.database_url).await?;
     init_db(&pool).await?;
     tracing::info!("Database initialized");
 
-    // FTS5 readiness flag — set true immediately if index is already in sync,
-    // or after the background rebuild completes.
+    // FTS readiness flag — set true immediately if all search_vectors are populated,
+    // or after the background backfill completes.
     let fts_ready = Arc::new(AtomicBool::new(false));
     if needs_fts_rebuild(&pool).await {
         let pool_fts = pool.clone();
@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move { rebuild_fts(&pool_fts, flag).await });
     } else {
         fts_ready.store(true, Ordering::Relaxed);
-        tracing::info!("FTS5 index is current — fast keyword search active from startup");
+        tracing::info!("search_vector index is current — fast keyword search active from startup");
     }
 
     // Backfill precomputed columns (word_count, week) for existing rows if needed
@@ -79,13 +79,15 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Mode={}: auto-login enabled", mode);
     }
 
-    // Session store (uses same SQLite DB)
-    let session_store = SqliteStore::new(pool.clone());
+    // Session store (uses same PostgreSQL DB)
+    let session_store = PostgresStore::new(pool.clone());
     session_store.migrate().await?;
 
     let session_layer = SessionManagerLayer::new(session_store)
         .with_secure(false)
-        .with_expiry(Expiry::OnInactivity(Duration::from_secs(30 * 24 * 3600).try_into().unwrap()));
+        .with_expiry(Expiry::OnInactivity(
+            Duration::from_secs(30 * 24 * 3600).try_into().unwrap(),
+        ));
 
     // App state
     let state = AppState::new(pool, cfg, fts_ready);
@@ -102,9 +104,10 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Frontend dist (served if built)
-    let frontend_service = get_service(ServeDir::new("../frontend/dist")).handle_error(|_| async move {
-        (StatusCode::NOT_FOUND, "frontend not built")
-    });
+    let frontend_service =
+        get_service(ServeDir::new("../frontend/dist")).handle_error(|_| async move {
+            (StatusCode::NOT_FOUND, "frontend not built")
+        });
 
     let app = Router::new()
         .nest("/api", routes::all_routes(state))

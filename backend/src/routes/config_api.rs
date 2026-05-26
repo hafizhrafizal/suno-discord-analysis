@@ -30,9 +30,9 @@ pub async fn set_embedding_model(
     _user: AuthUser,
     _req: Json<SetEmbeddingModelRequest>,
 ) -> Result<Json<Value>> {
-    // Only one model is supported; persist it unconditionally.
     sqlx::query(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES ('embedding_model', ?)",
+        "INSERT INTO settings (key, value) VALUES ('embedding_model', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
     )
     .bind(EMBEDDING_MODEL_ID)
     .execute(&state.db)
@@ -42,7 +42,7 @@ pub async fn set_embedding_model(
 
 pub async fn list_embedding_models(State(state): State<AppState>) -> Result<Json<Value>> {
     let vector_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM embedded_uploads WHERE model_id = ?",
+        "SELECT COUNT(*) FROM embedded_uploads WHERE model_id = $1",
     )
     .bind(EMBEDDING_MODEL_ID)
     .fetch_one(&state.db)

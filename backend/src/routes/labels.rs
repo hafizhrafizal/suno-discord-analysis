@@ -15,7 +15,7 @@ pub async fn create_label(
 ) -> Result<Json<Value>> {
     let color = req.color.unwrap_or_else(|| "#6366f1".to_string());
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO labels (name, color) VALUES (?, ?) RETURNING id",
+        "INSERT INTO labels (name, color) VALUES ($1, $2) RETURNING id",
     )
     .bind(&req.name)
     .bind(&color)
@@ -26,9 +26,11 @@ pub async fn create_label(
 }
 
 pub async fn list_labels(State(state): State<AppState>) -> Result<Json<Value>> {
-    let rows = sqlx::query("SELECT id, name, color, created_at FROM labels ORDER BY name ASC")
-        .fetch_all(&state.db)
-        .await?;
+    let rows = sqlx::query(
+        "SELECT id, name, color, created_at FROM labels ORDER BY name ASC",
+    )
+    .fetch_all(&state.db)
+    .await?;
 
     let labels: Vec<Value> = rows
         .into_iter()
@@ -52,21 +54,21 @@ pub async fn update_label(
     Json(req): Json<UpdateLabelRequest>,
 ) -> Result<Json<Value>> {
     if let Some(ref name) = req.name {
-        sqlx::query("UPDATE labels SET name = ? WHERE id = ?")
+        sqlx::query("UPDATE labels SET name = $1 WHERE id = $2")
             .bind(name)
             .bind(id)
             .execute(&state.db)
             .await?;
     }
     if let Some(ref color) = req.color {
-        sqlx::query("UPDATE labels SET color = ? WHERE id = ?")
+        sqlx::query("UPDATE labels SET color = $1 WHERE id = $2")
             .bind(color)
             .bind(id)
             .execute(&state.db)
             .await?;
     }
 
-    let row = sqlx::query("SELECT id, name, color FROM labels WHERE id = ?")
+    let row = sqlx::query("SELECT id, name, color FROM labels WHERE id = $1")
         .bind(id)
         .fetch_optional(&state.db)
         .await?
@@ -84,7 +86,7 @@ pub async fn delete_label(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let affected = sqlx::query("DELETE FROM labels WHERE id = ?")
+    let affected = sqlx::query("DELETE FROM labels WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await?

@@ -22,7 +22,7 @@ pub async fn create_code(
     let color = req.color.unwrap_or_else(|| "#6366f1".to_string());
     let description = req.description.unwrap_or_default();
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO codes (name, color, description, category_id) VALUES (?, ?, ?, ?) RETURNING id",
+        "INSERT INTO codes (name, color, description, category_id) VALUES ($1, $2, $3, $4) RETURNING id",
     )
     .bind(&req.name)
     .bind(&color)
@@ -71,29 +71,30 @@ pub async fn update_code(
     Json(req): Json<UpdateCodeRequest>,
 ) -> Result<Json<Value>> {
     if let Some(ref name) = req.name {
-        sqlx::query("UPDATE codes SET name = ? WHERE id = ?")
+        sqlx::query("UPDATE codes SET name = $1 WHERE id = $2")
             .bind(name)
             .bind(id)
             .execute(&state.db)
             .await?;
     }
     if let Some(ref color) = req.color {
-        sqlx::query("UPDATE codes SET color = ? WHERE id = ?")
+        sqlx::query("UPDATE codes SET color = $1 WHERE id = $2")
             .bind(color)
             .bind(id)
             .execute(&state.db)
             .await?;
     }
     if let Some(ref description) = req.description {
-        sqlx::query("UPDATE codes SET description = ? WHERE id = ?")
+        sqlx::query("UPDATE codes SET description = $1 WHERE id = $2")
             .bind(description)
             .bind(id)
             .execute(&state.db)
             .await?;
     }
-    // category_id can be explicitly set to null to uncategorize
-    if req.category_id.is_some() || (req.name.is_none() && req.color.is_none() && req.description.is_none()) {
-        sqlx::query("UPDATE codes SET category_id = ? WHERE id = ?")
+    if req.category_id.is_some()
+        || (req.name.is_none() && req.color.is_none() && req.description.is_none())
+    {
+        sqlx::query("UPDATE codes SET category_id = $1 WHERE id = $2")
             .bind(req.category_id)
             .bind(id)
             .execute(&state.db)
@@ -101,7 +102,7 @@ pub async fn update_code(
     }
 
     let row = sqlx::query(
-        "SELECT id, name, color, description, category_id FROM codes WHERE id = ?",
+        "SELECT id, name, color, description, category_id FROM codes WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -122,7 +123,7 @@ pub async fn delete_code(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let affected = sqlx::query("DELETE FROM codes WHERE id = ?")
+    let affected = sqlx::query("DELETE FROM codes WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await?
@@ -142,7 +143,7 @@ pub async fn create_category(
 ) -> Result<Json<Value>> {
     let color = req.color.unwrap_or_else(|| "#94a3b8".to_string());
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO code_categories (name, color, parent_id) VALUES (?, ?, ?) RETURNING id",
+        "INSERT INTO code_categories (name, color, parent_id) VALUES ($1, $2, $3) RETURNING id",
     )
     .bind(&req.name)
     .bind(&color)
@@ -188,22 +189,21 @@ pub async fn update_category(
     Json(req): Json<UpdateCodeCategoryRequest>,
 ) -> Result<Json<Value>> {
     if let Some(ref name) = req.name {
-        sqlx::query("UPDATE code_categories SET name = ? WHERE id = ?")
+        sqlx::query("UPDATE code_categories SET name = $1 WHERE id = $2")
             .bind(name)
             .bind(id)
             .execute(&state.db)
             .await?;
     }
     if let Some(ref color) = req.color {
-        sqlx::query("UPDATE code_categories SET color = ? WHERE id = ?")
+        sqlx::query("UPDATE code_categories SET color = $1 WHERE id = $2")
             .bind(color)
             .bind(id)
             .execute(&state.db)
             .await?;
     }
-    // parent_id can be explicitly null (root level); only update if field was sent
     if req.parent_id.is_some() || (req.name.is_none() && req.color.is_none()) {
-        sqlx::query("UPDATE code_categories SET parent_id = ? WHERE id = ?")
+        sqlx::query("UPDATE code_categories SET parent_id = $1 WHERE id = $2")
             .bind(req.parent_id)
             .bind(id)
             .execute(&state.db)
@@ -211,7 +211,7 @@ pub async fn update_category(
     }
 
     let row = sqlx::query(
-        "SELECT id, name, color, parent_id FROM code_categories WHERE id = ?",
+        "SELECT id, name, color, parent_id FROM code_categories WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -231,7 +231,7 @@ pub async fn delete_category(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let affected = sqlx::query("DELETE FROM code_categories WHERE id = ?")
+    let affected = sqlx::query("DELETE FROM code_categories WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await?
@@ -250,8 +250,9 @@ pub async fn assign_code(
     Json(req): Json<AssignCodeRequest>,
 ) -> Result<Json<Value>> {
     sqlx::query(
-        "INSERT OR REPLACE INTO bookmark_codes (bookmark_id, code_id, highlighted_text)
-         VALUES (?, ?, ?)",
+        "INSERT INTO bookmark_codes (bookmark_id, code_id, highlighted_text)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (bookmark_id, code_id) DO UPDATE SET highlighted_text = EXCLUDED.highlighted_text",
     )
     .bind(req.bookmark_id)
     .bind(req.code_id)
@@ -281,15 +282,14 @@ pub async fn list_all_bookmark_codes(
                     bc.highlighted_text,
                     c.name as code_name, c.color, 'excerpt' as type
              FROM bookmark_codes bc JOIN codes c ON c.id = bc.code_id
-             WHERE bc.bookmark_id = ?
+             WHERE bc.bookmark_id = $1
              UNION ALL
              SELECT bch.bookmark_id, bch.code_id,
                     bch.highlighted_text,
                     c.name as code_name, c.color, 'highlight' as type
              FROM bookmark_code_highlights bch JOIN codes c ON c.id = bch.code_id
-             WHERE bch.bookmark_id = ?",
+             WHERE bch.bookmark_id = $1",
         )
-        .bind(bid)
         .bind(bid)
         .fetch_all(&state.db)
         .await?
@@ -336,15 +336,14 @@ pub async fn list_codes_for_bookmark(
                 bc.highlighted_text,
                 c.name as code_name, c.color, 'excerpt' as type
          FROM bookmark_codes bc JOIN codes c ON c.id = bc.code_id
-         WHERE bc.bookmark_id = ?
+         WHERE bc.bookmark_id = $1
          UNION ALL
          SELECT bch.code_id,
                 bch.highlighted_text,
                 c.name as code_name, c.color, 'highlight' as type
          FROM bookmark_code_highlights bch JOIN codes c ON c.id = bch.code_id
-         WHERE bch.bookmark_id = ?",
+         WHERE bch.bookmark_id = $1",
     )
-    .bind(bookmark_id)
     .bind(bookmark_id)
     .fetch_all(&state.db)
     .await?;
@@ -371,7 +370,7 @@ pub async fn remove_code_assignment(
     Path((bookmark_id, code_id)): Path<(i64, i64)>,
 ) -> Result<Json<Value>> {
     sqlx::query(
-        "DELETE FROM bookmark_codes WHERE bookmark_id = ? AND code_id = ?",
+        "DELETE FROM bookmark_codes WHERE bookmark_id = $1 AND code_id = $2",
     )
     .bind(bookmark_id)
     .bind(code_id)

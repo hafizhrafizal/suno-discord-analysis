@@ -19,10 +19,12 @@ pub async fn register(
         return Err(AppError::BadRequest("Password must be at least 8 characters".into()));
     }
 
-    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-        .bind(&req.username)
-        .fetch_optional(&state.db)
-        .await?;
+    // Case-insensitive uniqueness check (matches the LOWER() unique index)
+    let exists: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM users WHERE LOWER(username) = LOWER($1)")
+            .bind(&req.username)
+            .fetch_optional(&state.db)
+            .await?;
     if exists.is_some() {
         return Err(AppError::BadRequest("Username already taken".into()));
     }
@@ -35,7 +37,7 @@ pub async fn register(
         .to_string();
 
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO users (username, password_hash, password_salt) VALUES (?, ?, ?) RETURNING id",
+        "INSERT INTO users (username, password_hash, password_salt) VALUES ($1, $2, $3) RETURNING id",
     )
     .bind(&req.username)
     .bind(&hash)
@@ -43,11 +45,10 @@ pub async fn register(
     .fetch_one(&state.db)
     .await?;
 
-    let is_admin: bool = sqlx::query_scalar("SELECT is_admin FROM users WHERE id = ?")
+    let is_admin: bool = sqlx::query_scalar("SELECT is_admin FROM users WHERE id = $1")
         .bind(id)
         .fetch_one(&state.db)
         .await
-        .map(|v: i64| v != 0)
         .unwrap_or(false);
 
     session.insert("user_id", id).await.map_err(|e| AppError::Internal(e.to_string()))?;
@@ -61,7 +62,7 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<Value>> {
     let row = sqlx::query(
-        "SELECT id, username, password_hash, is_admin FROM users WHERE username = ? COLLATE NOCASE",
+        "SELECT id, username, password_hash, is_admin FROM users WHERE LOWER(username) = LOWER($1)",
     )
     .bind(&req.username)
     .fetch_optional(&state.db)
@@ -78,13 +79,13 @@ pub async fn login(
 
     let id: i64 = row.get("id");
     let username: String = row.get("username");
-    let is_admin: i64 = row.get("is_admin");
+    let is_admin: bool = row.get("is_admin");
     session.insert("user_id", id).await.map_err(|e| AppError::Internal(e.to_string()))?;
 
     Ok(Json(json!({
         "id": id,
         "username": username,
-        "is_admin": is_admin != 0
+        "is_admin": is_admin
     })))
 }
 
@@ -109,9 +110,12 @@ pub async fn set_mode(
     if req.mode != "single" && req.mode != "multi" {
         return Err(AppError::BadRequest("Mode must be 'single' or 'multi'".into()));
     }
-    sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('app_mode', ?)")
-        .bind(&req.mode)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO settings (key, value) VALUES ('app_mode', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+    )
+    .bind(&req.mode)
+    .execute(&state.db)
+    .await?;
     Ok(Json(json!({ "mode": req.mode })))
 }

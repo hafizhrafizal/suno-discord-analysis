@@ -32,7 +32,7 @@ pub async fn remove_suno_team(
     Path(username): Path<String>,
 ) -> Result<Json<Value>> {
     let affected = sqlx::query(
-        "UPDATE messages SET is_suno_team='false' WHERE username = ?",
+        "UPDATE messages SET is_suno_team='false' WHERE username = $1",
     )
     .bind(&username)
     .execute(&state.db)
