@@ -1,0 +1,16 @@
+import { create } from 'zustand'
+import type { User } from '../types'
+
+interface AuthState {
+  user: User | null
+  appMode: string        // 'single' | 'multi' | 'demo'
+  setUser: (user: User | null) => void
+  setAppMode: (mode: string) => void
+}
+
+export const useAuthStore = create<AuthState>((set) => ({
+  user: null,
+  appMode: 'single',
+  setUser: (user) => set({ user }),
+  setAppMode: (appMode) => set({ appMode }),
+}))
