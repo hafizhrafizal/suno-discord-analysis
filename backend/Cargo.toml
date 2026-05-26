@@ -1,0 +1,36 @@
+[package]
+name = "retrieval-backend"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "retrieval-backend"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["multipart", "macros"] }
+axum-extra = { version = "0.9", features = ["typed-header"] }
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "compression-br", "fs"] }
+tower-sessions = "0.12"
+tower-sessions-sqlx-store = { version = "0.12", features = ["sqlite"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls", "chrono", "uuid"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+argon2 = "0.5"
+dotenvy = "0.15"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
+tokio-stream = "0.1"
+rand = "0.8"
+async-stream = "0.3"
+bytes = "1"
+thiserror = "1"
+anyhow = "1"
+password-hash = "0.5"
+csv = "1"
