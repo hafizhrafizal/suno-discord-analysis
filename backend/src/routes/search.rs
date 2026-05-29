@@ -75,6 +75,7 @@ pub struct RangeParams {
 pub struct UserRangeParams {
     pub date_from: Option<String>,
     pub date_to: Option<String>,
+    pub upload_ids: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +83,7 @@ pub struct UserMessagesParams {
     pub username: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub upload_ids: Option<String>,
 }
 
 pub async fn keyword_search(
@@ -834,6 +836,23 @@ pub async fn users_in_range(
         args.push(dt.clone());
     }
 
+    let upload_ids: Vec<String> = params.upload_ids.as_deref()
+        .map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect())
+        .unwrap_or_default();
+
+    let mut upload_filter = String::new();
+    if !upload_ids.is_empty() {
+        let placeholders: Vec<String> = upload_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", args.len() + i + 1))
+            .collect();
+        upload_filter = format!(" AND upload_id IN ({})", placeholders.join(", "));
+        args.extend(upload_ids.iter().cloned());
+    }
+
+    let combined_filters = format!("{}{}", filters, upload_filter);
+
     let sql = format!(
         "SELECT m.username,
                 COUNT(*) AS message_count,
@@ -848,12 +867,12 @@ pub async fn users_in_range(
                 MAX(CASE WHEN LOWER(m.is_suno_team) IN ('true', '1') THEN 1 ELSE 0 END)::bigint AS is_team,
                 (SELECT COUNT(DISTINCT COALESCE(week,
                      TO_CHAR(NULLIF(date,'')::timestamp, 'IYYY-IW')))
-                 FROM messages WHERE 1=1{df}) AS total_weeks
+                 FROM messages WHERE 1=1{cf}) AS total_weeks
          FROM messages m
-         WHERE 1=1{df}
+         WHERE 1=1{cf}
          GROUP BY m.username
          ORDER BY message_count DESC",
-        df = filters,
+        cf = combined_filters,
     );
 
     let mut q = sqlx::query(&sql);
@@ -895,16 +914,35 @@ pub async fn user_messages(
     let limit = params.limit.unwrap_or(100).min(10_000);
     let offset = params.offset.unwrap_or(0);
 
-    let rows = sqlx::query(
+    let mut qb: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
         "SELECT id, msg_uuid, author_id, username, date, content,
                 attachments, reactions, is_suno_team, upload_id, row_index
-         FROM messages WHERE username = $1 ORDER BY date ASC LIMIT $2 OFFSET $3",
-    )
-    .bind(&username)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.db)
-    .await?;
+         FROM messages WHERE username = ",
+    );
+    qb.push_bind(username);
+
+    if let Some(ref uid_str) = params.upload_ids {
+        let ids: Vec<&str> = uid_str
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !ids.is_empty() {
+            qb.push(" AND upload_id IN (");
+            let mut sep = qb.separated(", ");
+            for id in &ids {
+                sep.push_bind(id.to_string());
+            }
+            qb.push(")");
+        }
+    }
+
+    qb.push(" ORDER BY date ASC LIMIT ");
+    qb.push_bind(limit);
+    qb.push(" OFFSET ");
+    qb.push_bind(offset);
+
+    let rows = qb.build().fetch_all(&state.db).await?;
 
     let messages: Vec<Value> = rows
         .into_iter()

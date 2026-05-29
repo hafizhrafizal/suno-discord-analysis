@@ -70,6 +70,7 @@ export interface Stats {
   embedded_messages: number
   api_key_set: boolean
   current_model?: string
+  vector_db_label?: string
 }
 
 export interface EmbeddingModel {

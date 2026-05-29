@@ -28,5 +28,6 @@ pub async fn get_stats(State(state): State<AppState>) -> Result<Json<Value>> {
         "embedded_messages": embedded_messages,
         "api_key_set": api_key_set,
         "current_model": current_model,
+        "vector_db_label": state.config.vector_db_label(),
     })))
 }

@@ -15,10 +15,12 @@ interface DeleteProgress {
 function UploadCard({
   upload,
   isAdmin,
+  vdbName,
   onRefresh,
 }: {
   upload: Upload
   isAdmin: boolean
+  vdbName: string
   onRefresh: () => void
 }) {
   const [reembedProgress, setReembedProgress] = useState<{ pct: number; label: string; error?: string } | null>(null)
@@ -30,7 +32,7 @@ function UploadCard({
   const doReembed = async () => {
     if (reembedLoading) return
     setReembedLoading(true)
-    setReembedProgress({ pct: 15, label: 'Re-embedding — checking ChromaDB for existing vectors…' })
+    setReembedProgress({ pct: 15, label: `Re-embedding — checking ${vdbName} for existing vectors…` })
 
     try {
       const res = await apiFetch<{ upload_id: string; total: number; embedded: number; skipped: number; model: string }>(
@@ -39,7 +41,7 @@ function UploadCard({
       )
       const newlyEmbedded = res.embedded || 0
       const skippedCount = res.skipped || 0
-      const skipNote = skippedCount > 0 ? ` · ${skippedCount.toLocaleString()} already in ChromaDB` : ''
+      const skipNote = skippedCount > 0 ? ` · ${skippedCount.toLocaleString()} already in ${vdbName}` : ''
       setReembedProgress({ pct: 100, label: `Done — ${newlyEmbedded.toLocaleString()} vectors embedded${skipNote}` })
       onRefresh()
       setTimeout(() => setReembedProgress(null), 4000)
@@ -56,16 +58,16 @@ function UploadCard({
     setDeleteMsg(null)
     const suffix = type === 'full' ? '' : `/${type}`
     try {
-      const res = await apiFetch<{ deleted_messages?: number; deleted_embeddings?: number }>(
+      const res = await apiFetch<{ deleted_messages?: number; deleted_vectors?: number }>(
         `/uploads/${encodeURIComponent(upload.id)}${suffix}`,
         { method: 'DELETE' },
       )
       setDeleteProgress({ pct: 100, label: 'Done', type: 'success' })
       const msg = type === 'sqlite'
-        ? `Removed ${res.deleted_messages} messages from the database. Embeddings untouched.`
+        ? `Removed ${(res.deleted_messages ?? 0).toLocaleString()} messages from the database. ${vdbName} vectors untouched.`
         : type === 'embeddings'
-          ? `Removed ${res.deleted_embeddings} embeddings from the vector store. Database untouched.`
-          : `Removed ${res.deleted_messages} messages and all embeddings.`
+          ? `Removed ${(res.deleted_vectors ?? 0).toLocaleString()} vectors from ${vdbName}. Database rows untouched.`
+          : `Removed ${(res.deleted_messages ?? 0).toLocaleString()} messages and ${(res.deleted_vectors ?? 0).toLocaleString()} vectors.`
       setDeleteMsg({ text: msg, type: 'success' })
       setTimeout(() => onRefresh(), 1500)
     } catch (e) {
@@ -245,7 +247,7 @@ export default function SettingsPage() {
             } else if (event.type === 'embed_start') {
               // Embedding phase begins: 50%
               const alreadyEmb = Number(event.already_embedded ?? 0)
-              const skipNote = alreadyEmb > 0 ? ` · ${alreadyEmb.toLocaleString()} already in ChromaDB` : ''
+              const skipNote = alreadyEmb > 0 ? ` · ${alreadyEmb.toLocaleString()} already in ${vdbName}` : ''
               setUploadProgress({ pct: 50, label: `Embedding ${Number(event.total).toLocaleString()} new messages${skipNote} with ${event.model ?? 'text-embedding-3-small'}…`, type: 'info' })
             } else if (event.type === 'embed_progress') {
               // Embedding phase: 50% → 97%
@@ -253,9 +255,9 @@ export default function SettingsPage() {
               setUploadProgress({ pct, label: `Embedding: ${Number(event.embedded).toLocaleString()} / ${Number(event.total).toLocaleString()} vectors…`, type: 'info' })
             } else if (event.type === 'embed_skip') {
               if (event.reason === 'all_already_embedded') {
-                setUploadProgress({ pct: 97, label: `All ${Number(event.count).toLocaleString()} vectors already in ChromaDB — nothing to embed`, type: 'info' })
+                setUploadProgress({ pct: 97, label: `All ${Number(event.count).toLocaleString()} vectors already in ${vdbName} — nothing to embed`, type: 'info' })
               } else {
-                setUploadProgress({ pct: 50, label: event.reason === 'no_api_key' ? 'No OpenAI API key — embedding skipped' : 'ChromaDB unavailable — embedding skipped', type: 'info' })
+                setUploadProgress({ pct: 50, label: event.reason === 'no_api_key' ? 'No OpenAI API key — embedding skipped' : `${vdbName} unavailable — embedding skipped`, type: 'info' })
               }
             } else if (event.type === 'done') {
               const rowsNew = Number(event.total_inserted)
@@ -269,7 +271,7 @@ export default function SettingsPage() {
               } else if (vecsNew > 0) {
                 embedMsg = ` · ${vecsNew.toLocaleString()} vectors embedded (${event.embed_model})`
               } else if (vecsOld > 0) {
-                embedMsg = ` · ${vecsOld.toLocaleString()} vectors already in ChromaDB`
+                embedMsg = ` · ${vecsOld.toLocaleString()} vectors already in ${vdbName}`
               } else {
                 embedMsg = ' · No vectors embedded'
               }
@@ -287,6 +289,73 @@ export default function SettingsPage() {
       setUploadProgress(null)
     } finally {
       setUploadBtnLoading(false)
+    }
+  }
+
+  const [syncChromaLoading, setSyncChromaLoading] = useState(false)
+  const [syncChromaProgress, setSyncChromaProgress] = useState<{ label: string; pct: number } | null>(null)
+  const [syncChromaResult, setSyncChromaResult] = useState<{
+    total_postgres: number
+    total_chroma: number
+    orphans_deleted: number
+    un_embedded: number
+  } | null>(null)
+  const [syncChromaError, setSyncChromaError] = useState('')
+
+  const handleSyncChroma = async () => {
+    setSyncChromaLoading(true)
+    setSyncChromaProgress({ label: `Connecting to ${vdbName}…`, pct: 5 })
+    setSyncChromaResult(null)
+    setSyncChromaError('')
+    try {
+      const response = await fetch('/api/uploads/sync-chroma', { method: 'POST', credentials: 'include' })
+      if (!response.ok) {
+        let msg = `HTTP ${response.status}`
+        try { const d = await response.json(); msg = d.error ?? d.message ?? msg } catch {}
+        throw new Error(msg)
+      }
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const event = JSON.parse(line.slice(6).trim())
+            if (event.type === 'pg_done') {
+              setSyncChromaProgress({ label: `${Number(event.count).toLocaleString()} embeddable messages found. Scanning ${vdbName}…`, pct: 15 })
+            } else if (event.type === 'chroma_page') {
+              const fetched = Number(event.fetched)
+              setSyncChromaProgress({ label: `Scanning ${vdbName}: ${fetched.toLocaleString()} vectors read…`, pct: Math.min(75, 15 + Math.round(fetched / 500)) })
+            } else if (event.type === 'delete_progress') {
+              const deleted = Number(event.deleted)
+              const total = Number(event.total_orphans)
+              setSyncChromaProgress({ label: `Removing orphans: ${deleted.toLocaleString()} / ${total.toLocaleString()}…`, pct: Math.min(95, 75 + Math.round((deleted / Math.max(total, 1)) * 20)) })
+            } else if (event.type === 'done') {
+              setSyncChromaResult({
+                total_postgres: event.total_postgres,
+                total_chroma: event.total_chroma,
+                orphans_deleted: event.orphans_deleted,
+                un_embedded: event.un_embedded,
+              })
+              setSyncChromaProgress(null)
+              queryClient.invalidateQueries({ queryKey: ['stats'] })
+            } else if (event.type === 'error') {
+              throw new Error(event.message)
+            }
+          } catch { /* skip malformed lines */ }
+        }
+      }
+    } catch (e) {
+      setSyncChromaError(e instanceof Error ? e.message : String(e))
+      setSyncChromaProgress(null)
+    } finally {
+      setSyncChromaLoading(false)
     }
   }
 
@@ -319,6 +388,8 @@ export default function SettingsPage() {
       alert(`Failed to remove: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
+
+  const vdbName = stats?.vector_db_label ?? 'ChromaDB'
 
   const apiKeyStatus = stats?.api_key_set
     ? 'API key is set and active.'
@@ -435,23 +506,88 @@ export default function SettingsPage() {
 
       {/* Active dataset — hidden in demo mode */}
       {appMode !== 'demo' && <section className="bg-white rounded-2xl shadow p-5">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide">Active Dataset</h2>
-          <button onClick={() => refetchUploads()} className="text-xs font-semibold text-indigo-700 hover:underline">Refresh</button>
+          <button onClick={() => { refetchUploads(); queryClient.invalidateQueries({ queryKey: ['stats'] }) }} className="text-xs font-semibold text-indigo-700 hover:underline">Refresh</button>
         </div>
+        {stats && (
+          <div className="flex gap-4 mb-4 p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs">
+            <div className="flex-1 text-center">
+              <p className="text-gray-500">Total messages</p>
+              <p className="font-bold text-gray-900 text-base mt-0.5">{Number(stats.total_messages).toLocaleString()}</p>
+            </div>
+            <div className="w-px bg-gray-200" />
+            <div className="flex-1 text-center">
+              <p className="text-gray-500">Vectors in {vdbName}</p>
+              <p className="font-bold text-indigo-700 text-base mt-0.5">{Number(stats.embedded_messages).toLocaleString()}</p>
+            </div>
+            <div className="w-px bg-gray-200" />
+            <div className="flex-1 text-center">
+              <p className="text-gray-500">Not embedded</p>
+              {(() => {
+                const missing = Number(stats.total_messages) - Number(stats.embedded_messages)
+                return <p className={`font-bold text-base mt-0.5 ${missing > 0 ? 'text-amber-600' : 'text-green-600'}`}>{missing.toLocaleString()}</p>
+              })()}
+            </div>
+          </div>
+        )}
         <div className="space-y-3" aria-live="polite">
           {uploads.length === 0 ? (
             <p className="text-sm text-gray-600 text-center py-6">No dataset uploads yet.</p>
           ) : (
             uploads.map((u) => (
-              <UploadCard key={u.id} upload={u} isAdmin={isAdmin} onRefresh={() => { refetchUploads(); queryClient.invalidateQueries({ queryKey: ['stats'] }) }} />
+              <UploadCard key={u.id} upload={u} isAdmin={isAdmin} vdbName={vdbName} onRefresh={() => { refetchUploads(); queryClient.invalidateQueries({ queryKey: ['stats'] }) }} />
             ))
           )}
         </div>
       </section>}
 
-      {/* Suno Team management (admin only, hidden in demo mode) */}
-      {isAdmin && appMode !== 'demo' && (
+      {/* Vector DB Maintenance (multi-mode admins only) */}
+      {appMode === 'multi' && user?.is_admin === true && (
+        <section className="bg-white rounded-2xl shadow p-5">
+          <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-1">Vector DB Maintenance</h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Scans Vector DB and removes any vectors that have no matching message in the database.
+            Run this after deleting uploads to reclaim vector storage.
+          </p>
+          <button
+            onClick={handleSyncChroma}
+            disabled={syncChromaLoading}
+            className="px-4 py-2 text-sm font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {syncChromaLoading ? 'Scanning…' : `Sync & Clean ${vdbName}`}
+          </button>
+          {syncChromaProgress && (
+            <div className="mt-3">
+              <div className="progress-track">
+                <div className="progress-fill" style={{ width: `${syncChromaProgress.pct}%` }} />
+              </div>
+              <p className="mt-1 text-xs text-gray-600">{syncChromaProgress.label}</p>
+            </div>
+          )}
+          {syncChromaResult && (
+            <div className="mt-3 space-y-2">
+              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-800 space-y-1">
+                <div className="flex justify-between"><span>Embeddable messages (PostgreSQL)</span><span className="font-semibold">{syncChromaResult.total_postgres.toLocaleString()}</span></div>
+                <div className="flex justify-between"><span>Vectors scanned ({vdbName})</span><span className="font-semibold">{syncChromaResult.total_chroma.toLocaleString()}</span></div>
+                <div className="flex justify-between"><span>Orphan vectors removed</span><span className="font-semibold">{syncChromaResult.orphans_deleted.toLocaleString()}</span></div>
+                <div className="flex justify-between"><span>Messages without a vector</span><span className={`font-semibold ${syncChromaResult.un_embedded > 0 ? 'text-amber-700' : 'text-green-700'}`}>{syncChromaResult.un_embedded.toLocaleString()}</span></div>
+              </div>
+              {syncChromaResult.un_embedded === 0 && syncChromaResult.orphans_deleted === 0
+                ? <p className="text-xs font-semibold text-green-700">{vdbName} is fully in sync.</p>
+                : syncChromaResult.un_embedded > 0
+                  ? <p className="text-xs text-amber-700"><span className="font-semibold">{syncChromaResult.un_embedded.toLocaleString()} messages have no vector.</span> Use Re-embed on each upload to fix this.</p>
+                  : <p className="text-xs font-semibold text-green-700">Orphan cleanup complete. {vdbName} is in sync.</p>}
+            </div>
+          )}
+          {syncChromaError && (
+            <p className="mt-2 text-xs text-red-600">{syncChromaError}</p>
+          )}
+        </section>
+      )}
+
+      {/* Suno Team management (multi-mode admins only) */}
+      {appMode === 'multi' && user?.is_admin === true && (
         <section className="bg-white rounded-2xl shadow p-5">
           <div className="flex items-center justify-between mb-1">
             <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide">Suno Team Members</h2>

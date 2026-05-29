@@ -27,6 +27,7 @@ pub fn all_routes(state: AppState) -> Router {
         .route("/admin/users", get(admin::list_users))
         .route("/admin/users/:user_id", delete(admin::delete_user))
         .route("/admin/users/:user_id/toggle-admin", post(admin::toggle_admin))
+        .route("/admin/users/:user_id/password", post(admin::set_user_password))
         // Stats
         .route("/stats", get(stats::get_stats))
         // Config
@@ -59,6 +60,7 @@ pub fn all_routes(state: AppState) -> Router {
         .route("/uploads/:id/sqlite", delete(uploads::delete_upload_sqlite))
         .route("/uploads/:id/embeddings", delete(uploads::delete_upload_embeddings))
         .route("/uploads/:id/reembed", post(uploads::reembed))
+        .route("/uploads/sync-chroma", post(uploads::sync_chroma))
         .route("/jobs/:job_id", get(uploads::get_job))
         // Bookmarks
         .route("/bookmarks", post(bookmarks::create_bookmark).get(bookmarks::list_bookmarks))

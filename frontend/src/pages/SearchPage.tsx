@@ -7,7 +7,7 @@ import ReactMarkdown from 'react-markdown'
 import { apiFetch, streamEvents } from '../api/client'
 import { useSearchStore } from '../store/searchStore'
 import { getUserStyle, getUserColor, highlightText, highlightTerms } from '../utils/colors'
-import type { Message, Upload, UserInRange } from '../types'
+import type { Message, Upload, UserInRange, Stats } from '../types'
 
 type SearchTab = 'keyword' | 'semantic' | 'username' | 'range' | 'browse'
 type MatchType = 'fuzzy' | 'exact' | 'any'
@@ -512,9 +512,12 @@ export default function SearchPage() {
   const [browseDateTo, setBrowseDateTo] = useState('')
   const browseDateFromRef = useRef('')
   const browseDateToRef = useRef('')
+  const browseScopeRef = useRef('')
 
   const { data: _uploads } = useQuery<Upload[]>({ queryKey: ['uploads'], queryFn: () => apiFetch('/uploads') })
   const { data: _bookmarkIds } = useQuery<number[]>({ queryKey: ['bookmark-ids'], queryFn: () => apiFetch('/bookmarks/ids') })
+  const { data: _stats } = useQuery<Stats>({ queryKey: ['stats'], queryFn: () => apiFetch('/stats') })
+  const vdbName = _stats?.vector_db_label ?? 'ChromaDB'
   useEffect(() => { if (_uploads) setUploads(_uploads) }, [_uploads])
   useEffect(() => { if (_bookmarkIds) setBookmarkedIds(_bookmarkIds) }, [_bookmarkIds])
 
@@ -632,6 +635,7 @@ export default function SearchPage() {
       const p = new URLSearchParams({ limit: '50', offset: String(offset) })
       if (browseDateFromRef.current) p.set('date_from', browseDateFromRef.current)
       if (browseDateToRef.current) p.set('date_to', browseDateToRef.current)
+      if (browseScopeRef.current) p.set('upload_ids', browseScopeRef.current)
       const data = await apiFetch<Message[]>(`/search/range?${p}`)
       setBrowseMessages((prev) => (offset === 0 ? data : [...prev, ...data]))
       browseOffsetRef.current = offset + data.length
@@ -651,11 +655,12 @@ export default function SearchPage() {
     }
   }, [activeTab, fetchBrowsePage])
 
-  // Re-fetch from scratch when browse date filters change
+  // Re-fetch from scratch when browse date filters or scope changes
   useEffect(() => {
     if (activeTab !== 'browse') return
     browseDateFromRef.current = browseDateFrom
     browseDateToRef.current = browseDateTo
+    browseScopeRef.current = scopeParam
     browseOffsetRef.current = 0
     browseHasMoreRef.current = true
     browseIsFetchingRef.current = false
@@ -665,7 +670,7 @@ export default function SearchPage() {
     fetchBrowsePage()
   // fetchBrowsePage is stable; we intentionally skip it from deps to avoid double-fire on tab switch
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [browseDateFrom, browseDateTo])
+  }, [browseDateFrom, browseDateTo, scopeParam])
 
   // IntersectionObserver for Browse All infinite scroll
   useEffect(() => {
@@ -852,7 +857,7 @@ export default function SearchPage() {
         if (Array.isArray(raw)) {
           data = raw
         } else {
-          setError((raw as { error: string }).error || 'Semantic search unavailable (ChromaDB may not be running)')
+          setError((raw as { error: string }).error || `Semantic search unavailable (${vdbName} may not be running)`)
           data = []
         }
         kw = query
@@ -946,6 +951,7 @@ export default function SearchPage() {
       browseIsFetchingRef.current = false
       browseDateFromRef.current = ''
       browseDateToRef.current = ''
+      browseScopeRef.current = scopeParam
       setBrowseMessages([])
       setBrowseFetching(false)
       setBrowseHasMore(true)
@@ -1208,7 +1214,9 @@ export default function SearchPage() {
     setUserSumFollowUp([])
     setUserDetailVisible(50)
     try {
-      const data = await apiFetch<Message[]>(`/search/user-messages?username=${encodeURIComponent(u.username)}&limit=10000`)
+      const userMsgParams = new URLSearchParams({ username: u.username, limit: '10000' })
+      if (scopeParam) userMsgParams.set('upload_ids', scopeParam)
+      const data = await apiFetch<Message[]>(`/search/user-messages?${userMsgParams}`)
       setUserMsgs(data)
     } finally {
       setUserMsgsLoading(false)

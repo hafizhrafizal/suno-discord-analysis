@@ -173,6 +173,47 @@ async fn embed_batch(client: reqwest::Client, api_key: &str, texts: &[String]) -
     vec![None; texts.len()]
 }
 
+/// Build the ChromaDB base URL and a shared reqwest client.
+fn chroma_setup(state: &AppState) -> (String, reqwest::Client) {
+    let base = format!(
+        "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
+        state.config.chroma_host, state.config.chroma_port
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    (base, client)
+}
+
+/// Delete all ChromaDB vectors whose metadata `upload_id` matches.
+/// Returns count of deleted vectors (best-effort; 0 on any failure).
+async fn delete_chroma_by_upload_id(
+    client: &reqwest::Client,
+    base: &str,
+    collection_id: &str,
+    upload_id: &str,
+) -> i64 {
+    match client
+        .post(format!("{}/collections/{}/delete", base, collection_id))
+        .json(&json!({ "where": { "upload_id": { "$eq": upload_id } } }))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r
+            .json::<Value>().await.ok()
+            .and_then(|v| v["ids"].as_array().map(|a| a.len() as i64))
+            .unwrap_or(0),
+        Ok(r) => {
+            let s = r.status();
+            let b = r.text().await.unwrap_or_default();
+            tracing::warn!("ChromaDB delete by upload_id HTTP {}: {}", s, &b[..b.len().min(200)]);
+            0
+        }
+        Err(e) => { tracing::warn!("ChromaDB delete by upload_id failed: {}", e); 0 }
+    }
+}
+
 /// Get existing ChromaDB collection UUID by name, or create it with cosine distance.
 async fn get_or_create_chroma_collection(
     client: &reqwest::Client,
@@ -370,6 +411,7 @@ pub async fn upload_csv(
         // ── Phase 1: insert rows ──────────────────────────────────────────────
         let mut processed: i64 = 0; // rows seen (used for row_index ordering)
         let mut inserted: i64 = 0;  // rows actually inserted (not duplicate-skipped)
+        let mut all_csv_uuids: Vec<String> = Vec::new(); // every UUID from the CSV (inserted + skipped)
         let batch_size = 500usize;
 
         for chunk in records.chunks(batch_size) {
@@ -386,6 +428,7 @@ pub async fn upload_csv(
             for record in chunk {
                 let msg_uuid = get_field(record, "msg_uuid")
                     .unwrap_or_else(|| Uuid::new_v4().to_string());
+                all_csv_uuids.push(msg_uuid.clone()); // track before conflict check
                 let username = get_field(record, "username")
                     .unwrap_or_else(|| "unknown".to_string());
                 let content = match get_field(record, "content") {
@@ -468,13 +511,15 @@ pub async fn upload_csv(
                 ));
             }
             Some(api_key) => {
-                // Fetch all msg_uuid + content for this upload
+                // Fetch msg_uuid + content for all rows in the CSV (both newly inserted and
+                // pre-existing ones that were skipped by ON CONFLICT). This handles re-uploads
+                // of the same file correctly: even if 0 rows were inserted, the messages still
+                // exist in the DB under their original upload_id and need to be embedded.
                 let msgs: Vec<(String, String)> = match sqlx::query(
                     "SELECT msg_uuid, content FROM messages
-                     WHERE upload_id = $1 AND content IS NOT NULL
-                     ORDER BY row_index",
+                     WHERE msg_uuid = ANY($1) AND content IS NOT NULL",
                 )
-                .bind(&upload_id_clone)
+                .bind(&all_csv_uuids)
                 .fetch_all(&db)
                 .await
                 {
@@ -695,7 +740,6 @@ pub async fn delete_upload(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
-    // Count messages before deletion so we can report it
     let deleted_messages: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE upload_id = $1")
             .bind(&id)
@@ -713,7 +757,21 @@ pub async fn delete_upload(
     if affected == 0 {
         return Err(AppError::NotFound(format!("Upload {} not found", id)));
     }
-    Ok(Json(json!({ "deleted": id, "deleted_messages": deleted_messages })))
+
+    // Delete ChromaDB vectors for this upload (best-effort — DB deletion already succeeded)
+    let (chroma_base, chroma_client) = chroma_setup(&state);
+    let deleted_vectors = match get_or_create_chroma_collection(
+        &chroma_client, &chroma_base, &state.config.chroma_collection,
+    ).await {
+        Some(cid) => delete_chroma_by_upload_id(&chroma_client, &chroma_base, &cid, &id).await,
+        None => 0,
+    };
+
+    Ok(Json(json!({
+        "deleted": id,
+        "deleted_messages": deleted_messages,
+        "deleted_vectors": deleted_vectors,
+    })))
 }
 
 /// Delete only the relational-DB rows (messages + upload record) while leaving
@@ -746,15 +804,22 @@ pub async fn delete_upload_embeddings(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
-    let affected = sqlx::query("DELETE FROM embedded_uploads WHERE upload_id = $1")
+    // Remove the tracking record so re-embed can run again
+    sqlx::query("DELETE FROM embedded_uploads WHERE upload_id = $1")
         .bind(&id)
         .execute(&state.db)
-        .await?
-        .rows_affected();
-    Ok(Json(json!({
-        "deleted_embeddings": affected,
-        "note": "ChromaDB vectors for this upload remain; re-embed to regenerate.",
-    })))
+        .await?;
+
+    // Delete actual ChromaDB vectors for this upload
+    let (chroma_base, chroma_client) = chroma_setup(&state);
+    let deleted_vectors = match get_or_create_chroma_collection(
+        &chroma_client, &chroma_base, &state.config.chroma_collection,
+    ).await {
+        Some(cid) => delete_chroma_by_upload_id(&chroma_client, &chroma_base, &cid, &id).await,
+        None => 0,
+    };
+
+    Ok(Json(json!({ "deleted_vectors": deleted_vectors })))
 }
 
 pub async fn reembed(
@@ -879,6 +944,149 @@ pub async fn reembed(
         "skipped": skipped,
         "model": EMBED_MODEL,
     })))
+}
+
+/// Purge ChromaDB vectors that have no corresponding row in the messages table.
+/// Streams progress as SSE events so the browser doesn't time out on large collections.
+pub async fn sync_chroma(State(state): State<AppState>) -> Result<impl IntoResponse> {
+    let db = state.db.clone();
+    let (chroma_base, chroma_client) = chroma_setup(&state);
+    let chroma_collection = state.config.chroma_collection.clone();
+
+    let event_stream = async_stream::stream! {
+        // ── Step 1: resolve ChromaDB collection ───────────────────────────────
+        let collection_id = match get_or_create_chroma_collection(
+            &chroma_client, &chroma_base, &chroma_collection,
+        ).await {
+            Some(id) => id,
+            None => {
+                yield Ok::<Event, Infallible>(Event::default().data(
+                    serde_json::to_string(&json!({ "type": "error", "message": "ChromaDB unavailable" })).unwrap()
+                ));
+                return;
+            }
+        };
+
+        // ── Step 2: load embeddable PostgreSQL msg_uuids into a HashSet ─────────
+        // Only messages with non-empty content are candidates for embedding.
+        yield Ok(Event::default().data(
+            serde_json::to_string(&json!({ "type": "pg_fetch" })).unwrap()
+        ));
+        let pg_uuids: std::collections::HashSet<String> = match sqlx::query_scalar(
+            "SELECT msg_uuid FROM messages
+             WHERE msg_uuid IS NOT NULL AND msg_uuid != ''
+               AND content IS NOT NULL AND content != ''",
+        )
+        .fetch_all(&db)
+        .await
+        {
+            Ok(v) => v.into_iter().collect(),
+            Err(e) => {
+                yield Ok(Event::default().data(
+                    serde_json::to_string(&json!({ "type": "error", "message": e.to_string() })).unwrap()
+                ));
+                return;
+            }
+        };
+        let total_postgres = pg_uuids.len() as i64;
+        yield Ok(Event::default().data(
+            serde_json::to_string(&json!({ "type": "pg_done", "count": total_postgres })).unwrap()
+        ));
+
+        // ── Step 3: collect ALL ChromaDB IDs without deleting yet ────────────
+        // Deleting while paginating with offset corrupts the scan: every deleted
+        // item shifts remaining items left, causing the next page fetch (at the
+        // same offset) to skip items that moved into the previous page range.
+        // Solution: full scan first, delete in a separate pass.
+        let page_size = 10_000usize;
+        let mut offset = 0usize;
+        let mut all_chroma_ids: Vec<String> = Vec::new();
+
+        loop {
+            let page_resp = chroma_client
+                .post(format!("{}/collections/{}/get", chroma_base, collection_id))
+                .json(&json!({ "limit": page_size, "offset": offset, "include": [] }))
+                .send()
+                .await;
+
+            let page_ids: Vec<String> = match page_resp {
+                Ok(r) if r.status().is_success() => r
+                    .json::<Value>().await.ok()
+                    .and_then(|v| v["ids"].as_array().map(|arr| {
+                        arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
+                    }))
+                    .unwrap_or_default(),
+                _ => break,
+            };
+
+            let count = page_ids.len();
+            all_chroma_ids.extend(page_ids);
+
+            yield Ok(Event::default().data(
+                serde_json::to_string(&json!({
+                    "type": "chroma_page",
+                    "fetched": all_chroma_ids.len(),
+                })).unwrap()
+            ));
+
+            if count < page_size { break; }
+            offset += page_size;
+        }
+
+        let total_chroma = all_chroma_ids.len() as i64;
+
+        // Build a HashSet of all ChromaDB IDs for O(1) reverse lookup
+        let chroma_set: std::collections::HashSet<String> =
+            all_chroma_ids.iter().cloned().collect();
+
+        // Orphans: in ChromaDB but not in PostgreSQL (embeddable messages)
+        let orphans: Vec<String> = all_chroma_ids.into_iter()
+            .filter(|id| !pg_uuids.contains(id))
+            .collect();
+        let orphan_count = orphans.len() as i64;
+
+        // Un-embedded: embeddable PostgreSQL messages with no ChromaDB vector
+        let un_embedded: i64 = pg_uuids.iter()
+            .filter(|id| !chroma_set.contains(*id))
+            .count() as i64;
+
+        // ── Step 4: delete orphans in a clean second pass ────────────────────
+        let mut orphans_deleted: i64 = 0;
+        for chunk in orphans.chunks(500) {
+            if let Ok(r) = chroma_client
+                .post(format!("{}/collections/{}/delete", chroma_base, collection_id))
+                .json(&json!({ "ids": chunk }))
+                .send().await
+            {
+                if r.status().is_success() {
+                    orphans_deleted += chunk.len() as i64;
+                }
+            }
+            yield Ok(Event::default().data(
+                serde_json::to_string(&json!({
+                    "type": "delete_progress",
+                    "deleted": orphans_deleted,
+                    "total_orphans": orphan_count,
+                })).unwrap()
+            ));
+        }
+
+        yield Ok(Event::default().data(
+            serde_json::to_string(&json!({
+                "type": "done",
+                "total_postgres": total_postgres,
+                "total_chroma": total_chroma,
+                "orphans_deleted": orphans_deleted,
+                "un_embedded": un_embedded,
+            })).unwrap()
+        ));
+    };
+
+    Ok(Sse::new(event_stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("ping"),
+    ))
 }
 
 pub async fn get_job(Path(job_id): Path<String>) -> (StatusCode, Json<Value>) {
