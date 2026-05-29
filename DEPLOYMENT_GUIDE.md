@@ -301,7 +301,7 @@ Open in browser: `https://yourdomain.com`
 
 ### 10.1 Dump the local database
 
-On your **LOCAL machine**:
+**macOS / Linux:**
 
 ```bash
 pg_dump -h localhost -U postgres -d discord_db \
@@ -309,8 +309,24 @@ pg_dump -h localhost -U postgres -d discord_db \
   -f discord_db_export.sql
 ```
 
-> **Windows (PowerShell)**: if `pg_dump` is not found, use the full path:
-> `& "C:\Program Files\PostgreSQL\16\bin\pg_dump.exe" -h localhost -U postgres -d discord_db --no-owner --no-acl -f discord_db_export.sql`
+**Windows (PowerShell):**
+
+First, find which PostgreSQL version you have installed:
+
+```powershell
+Get-ChildItem "C:\Program Files\PostgreSQL\"
+```
+
+Then run pg_dump using the matching version number (example below uses version 18 — replace with yours):
+
+```powershell
+& "C:\Program Files\PostgreSQL\18\bin\pg_dump.exe" `
+  -h localhost -U postgres -d discord_db `
+  --no-owner --no-acl `
+  -f discord_db_export.sql
+```
+
+Enter your PostgreSQL password when prompted. If you are unsure of the password, check pgAdmin or the password you set during PostgreSQL installation.
 
 ### 10.2 Transfer to VPS
 
@@ -323,18 +339,44 @@ scp discord_db_export.sql user@your-vps-ip:~/app/
 On the **VPS**:
 
 ```bash
-cd ~/app
+cd ~/suno-analysis/app
 
 # Copy dump file into the postgres container
 docker compose cp discord_db_export.sql postgres:/tmp/discord_db_export.sql
+```
 
-# Restore (some notices about existing objects are normal — not errors)
-docker compose exec postgres \
-  psql -U retrieval -d retrieval -f /tmp/discord_db_export.sql
+The backend runs migrations automatically on first startup, so the schema already exists.
+You must drop and recreate the database before restoring to avoid "already exists" errors.
 
-# Clean up
-docker compose exec postgres rm /tmp/discord_db_export.sql
-rm ~/app/discord_db_export.sql
+> **Note**: The container is initialized with `POSTGRES_USER=retrieval` (not `postgres`).
+> Always connect to `template1` when dropping/recreating the `retrieval` database.
+
+```bash
+# Stop backend to release its database connection
+docker compose stop backend
+
+# Drop and recreate the database (connect via template1, not retrieval)
+docker compose exec postgres psql -U retrieval -d template1 -c "DROP DATABASE retrieval;"
+docker compose exec postgres psql -U retrieval -d template1 -c "CREATE DATABASE retrieval OWNER retrieval;"
+
+# Restore
+docker compose exec postgres psql -U retrieval -d retrieval -f /tmp/discord_db_export.sql
+
+# Restart backend
+docker compose start backend
+```
+
+> **Expected warnings during restore (non-fatal):**
+> - `unrecognized configuration parameter "transaction_timeout"` — your local PostgreSQL 18
+>   uses a setting that the VPS PostgreSQL 16 does not support. Harmless, data still imports.
+> - A small number of FK violation rows may be skipped if your local database has orphaned
+>   records (e.g. bookmarks referencing deleted messages). This is normal.
+
+```bash
+# Clean up temp files
+docker compose exec postgres psql -U retrieval -d retrieval -c "SELECT 1;" > /dev/null \
+  && docker compose exec postgres rm /tmp/discord_db_export.sql
+rm ~/suno-analysis/app/discord_db_export.sql
 ```
 
 ### 10.4 Verify row counts match
@@ -349,8 +391,15 @@ docker compose exec postgres \
 Compare against local:
 
 ```bash
-# On LOCAL machine
+# macOS / Linux
 psql -h localhost -U postgres -d discord_db \
+  -c "SELECT COUNT(*) FROM messages;"
+```
+
+```powershell
+# Windows (PowerShell) — replace 18 with your installed version
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" `
+  -h localhost -U postgres -d discord_db `
   -c "SELECT COUNT(*) FROM messages;"
 ```
 
