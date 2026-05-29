@@ -214,6 +214,46 @@ async fn delete_chroma_by_upload_id(
     }
 }
 
+/// Delete all Qdrant vectors whose payload `upload_id` matches.
+/// Returns an approximate count of deleted vectors (best-effort; 0 on failure).
+async fn delete_qdrant_by_upload_id(
+    client: &reqwest::Client,
+    qdrant_url: &str,
+    collection: &str,
+    api_key: Option<&str>,
+    upload_id: &str,
+) -> i64 {
+    let filter = json!({
+        "filter": {
+            "must": [{"key": "upload_id", "match": {"value": upload_id}}]
+        }
+    });
+    // Count first for best-effort reporting
+    let count_url = format!("{}/collections/{}/points/count", qdrant_url, collection);
+    let mut count_req = client.post(&count_url).json(&filter);
+    if let Some(key) = api_key { count_req = count_req.header("api-key", key); }
+    let approx_count: i64 = match count_req.send().await {
+        Ok(r) if r.status().is_success() => r.json::<Value>().await.ok()
+            .and_then(|v| v["result"]["count"].as_i64())
+            .unwrap_or(0),
+        _ => 0,
+    };
+
+    let delete_url = format!("{}/collections/{}/points/delete", qdrant_url, collection);
+    let mut del_req = client.post(&delete_url).json(&filter);
+    if let Some(key) = api_key { del_req = del_req.header("api-key", key); }
+    match del_req.send().await {
+        Ok(r) if r.status().is_success() => approx_count,
+        Ok(r) => {
+            let s = r.status();
+            let b = r.text().await.unwrap_or_default();
+            tracing::warn!("Qdrant delete by upload_id HTTP {}: {}", s, &b[..b.len().min(200)]);
+            0
+        }
+        Err(e) => { tracing::warn!("Qdrant delete by upload_id failed: {}", e); 0 }
+    }
+}
+
 /// Get existing ChromaDB collection UUID by name, or create it with cosine distance.
 async fn get_or_create_chroma_collection(
     client: &reqwest::Client,
@@ -494,6 +534,10 @@ pub async fn upload_csv(
     let chroma_host = state.config.chroma_host.clone();
     let chroma_port = state.config.chroma_port;
     let chroma_collection = state.config.chroma_collection.clone();
+    let vector_db_cfg = state.config.vector_db.clone();
+    let qdrant_url_cfg = state.config.qdrant_url.clone();
+    let qdrant_collection_cfg = state.config.qdrant_collection.clone();
+    let qdrant_api_key_cfg = state.config.qdrant_api_key.clone();
 
     let event_stream = async_stream::stream! {
         // ── Phase 1: insert rows ──────────────────────────────────────────────
@@ -624,40 +668,60 @@ pub async fn upload_csv(
                 };
 
                 if !msgs.is_empty() {
-                    let chroma_base = format!(
-                        "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
-                        chroma_host, chroma_port
-                    );
-                    // One client shared across all ChromaDB and OpenAI calls — TLS connections are reused
-                    let chroma_client = reqwest::Client::builder()
+                    let is_qdrant = vector_db_cfg.to_lowercase() == "qdrant";
+                    let http_client = reqwest::Client::builder()
                         .timeout(std::time::Duration::from_secs(120))
                         .build()
                         .unwrap_or_else(|_| reqwest::Client::new());
-                    let embed_client = chroma_client.clone();
+                    let embed_client = http_client.clone();
 
-                    let collection_id_opt = get_or_create_chroma_collection(
-                        &chroma_client, &chroma_base, &chroma_collection,
-                    ).await;
+                    let (chroma_base, collection_id_opt) = if is_qdrant {
+                        let ok = ensure_qdrant_collection(
+                            &http_client,
+                            &qdrant_url_cfg,
+                            &qdrant_collection_cfg,
+                            qdrant_api_key_cfg.as_deref(),
+                            1536,
+                        ).await;
+                        (String::new(), if ok { Some(String::new()) } else { None })
+                    } else {
+                        let base = format!(
+                            "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
+                            chroma_host, chroma_port
+                        );
+                        let cid = get_or_create_chroma_collection(
+                            &http_client, &base, &chroma_collection,
+                        ).await;
+                        (base, cid)
+                    };
 
                     match collection_id_opt {
                         None => {
-                            tracing::warn!("ChromaDB unavailable — embedding skipped");
+                            tracing::warn!("Vector store unavailable — embedding skipped");
                             yield Ok(Event::default().data(
                                 serde_json::to_string(&json!({
                                     "type": "embed_skip",
-                                    "reason": "chroma_unavailable",
+                                    "reason": "vector_db_unavailable",
                                 })).unwrap()
                             ));
                         }
                         Some(collection_id) => {
-                            // Check which IDs already have vectors — enables resumability
                             let all_ids: Vec<String> = msgs.iter().map(|(id, _)| id.clone()).collect();
-                            let existing_ids = get_existing_chroma_ids(
-                                &chroma_client, &chroma_base, &collection_id, &all_ids,
-                            ).await;
+                            let existing_ids = if is_qdrant {
+                                get_existing_qdrant_ids(
+                                    &http_client,
+                                    &qdrant_url_cfg,
+                                    &qdrant_collection_cfg,
+                                    qdrant_api_key_cfg.as_deref(),
+                                    &all_ids,
+                                ).await
+                            } else {
+                                get_existing_chroma_ids(
+                                    &http_client, &chroma_base, &collection_id, &all_ids,
+                                ).await
+                            };
                             already_in_chroma = existing_ids.len() as i64;
 
-                            // Only embed messages that are not yet in ChromaDB
                             let msgs_to_embed: Vec<(String, String)> = msgs
                                 .into_iter()
                                 .filter(|(id, _)| !existing_ids.contains(id))
@@ -666,7 +730,7 @@ pub async fn upload_csv(
 
                             if total_to_embed == 0 {
                                 tracing::info!(
-                                    "All {} vectors already in ChromaDB — embedding skipped",
+                                    "All {} vectors already in vector store — embedding skipped",
                                     already_in_chroma
                                 );
                                 yield Ok(Event::default().data(
@@ -686,7 +750,6 @@ pub async fn upload_csv(
                                     })).unwrap()
                                 ));
 
-                                // Pre-build all batches so we can window over them
                                 let all_batches: Vec<(Vec<String>, Vec<String>)> = msgs_to_embed
                                     .chunks(EMBED_BATCH_SIZE)
                                     .map(|chunk| (
@@ -696,7 +759,6 @@ pub async fn upload_csv(
                                     .collect();
 
                                 for window in all_batches.chunks(EMBED_CONCURRENCY) {
-                                    // Embed EMBED_CONCURRENCY batches in parallel, sharing one HTTP client
                                     let embed_futs = window.iter().map(|(ids, texts)| {
                                         let embed_client = embed_client.clone();
                                         let api_key = api_key.clone();
@@ -715,19 +777,32 @@ pub async fn upload_csv(
                                     });
                                     let window_results = futures::future::join_all(embed_futs).await;
 
-                                    // Upsert each batch's results in parallel
                                     let upsert_futs = window_results.iter().map(|valid| {
-                                        let chroma_client = chroma_client.clone();
+                                        let http_client = http_client.clone();
                                         let chroma_base = chroma_base.clone();
                                         let collection_id = collection_id.clone();
                                         let upload_id_inner = upload_id_clone.clone();
                                         let valid = valid.clone();
+                                        let qdrant_url = qdrant_url_cfg.clone();
+                                        let qdrant_col = qdrant_collection_cfg.clone();
+                                        let qdrant_key = qdrant_api_key_cfg.clone();
                                         async move {
                                             if valid.is_empty() { return 0i64; }
                                             let v_ids: Vec<String> = valid.iter().map(|(id, _, _)| id.clone()).collect();
                                             let v_embs: Vec<Vec<f64>> = valid.iter().map(|(_, emb, _)| emb.clone()).collect();
                                             let v_docs: Vec<String> = valid.iter().map(|(_, _, doc)| doc.clone()).collect();
-                                            upsert_chroma_batch(&chroma_client, &chroma_base, &collection_id, &v_ids, &v_embs, &v_docs, &upload_id_inner).await;
+                                            if is_qdrant {
+                                                upsert_qdrant_batch(
+                                                    &http_client, &qdrant_url, &qdrant_col,
+                                                    qdrant_key.as_deref(),
+                                                    &v_ids, &v_embs, &v_docs, &upload_id_inner,
+                                                ).await;
+                                            } else {
+                                                upsert_chroma_batch(
+                                                    &http_client, &chroma_base, &collection_id,
+                                                    &v_ids, &v_embs, &v_docs, &upload_id_inner,
+                                                ).await;
+                                            }
                                             valid.len() as i64
                                         }
                                     });
@@ -744,7 +819,6 @@ pub async fn upload_csv(
                                 }
                             }
 
-                            // Record in embedded_uploads if any vectors exist (new or pre-existing)
                             if embedded_count > 0 || already_in_chroma > 0 {
                                 let _ = sqlx::query(
                                     "INSERT INTO embedded_uploads (upload_id, model_id)
@@ -846,13 +920,24 @@ pub async fn delete_upload(
         return Err(AppError::NotFound(format!("Upload {} not found", id)));
     }
 
-    // Delete ChromaDB vectors for this upload (best-effort — DB deletion already succeeded)
-    let (chroma_base, chroma_client) = chroma_setup(&state);
-    let deleted_vectors = match get_or_create_chroma_collection(
-        &chroma_client, &chroma_base, &state.config.chroma_collection,
-    ).await {
-        Some(cid) => delete_chroma_by_upload_id(&chroma_client, &chroma_base, &cid, &id).await,
-        None => 0,
+    // Delete vectors for this upload from the configured vector store (best-effort)
+    let deleted_vectors = if state.config.vector_db.to_lowercase() == "qdrant" {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        delete_qdrant_by_upload_id(
+            &client, &state.config.qdrant_url, &state.config.qdrant_collection,
+            state.config.qdrant_api_key.as_deref(), &id,
+        ).await
+    } else {
+        let (chroma_base, chroma_client) = chroma_setup(&state);
+        match get_or_create_chroma_collection(
+            &chroma_client, &chroma_base, &state.config.chroma_collection,
+        ).await {
+            Some(cid) => delete_chroma_by_upload_id(&chroma_client, &chroma_base, &cid, &id).await,
+            None => 0,
+        }
     };
 
     Ok(Json(json!({
@@ -898,13 +983,24 @@ pub async fn delete_upload_embeddings(
         .execute(&state.db)
         .await?;
 
-    // Delete actual ChromaDB vectors for this upload
-    let (chroma_base, chroma_client) = chroma_setup(&state);
-    let deleted_vectors = match get_or_create_chroma_collection(
-        &chroma_client, &chroma_base, &state.config.chroma_collection,
-    ).await {
-        Some(cid) => delete_chroma_by_upload_id(&chroma_client, &chroma_base, &cid, &id).await,
-        None => 0,
+    // Delete actual vectors for this upload from the configured vector store
+    let deleted_vectors = if state.config.vector_db.to_lowercase() == "qdrant" {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        delete_qdrant_by_upload_id(
+            &client, &state.config.qdrant_url, &state.config.qdrant_collection,
+            state.config.qdrant_api_key.as_deref(), &id,
+        ).await
+    } else {
+        let (chroma_base, chroma_client) = chroma_setup(&state);
+        match get_or_create_chroma_collection(
+            &chroma_client, &chroma_base, &state.config.chroma_collection,
+        ).await {
+            Some(cid) => delete_chroma_by_upload_id(&chroma_client, &chroma_base, &cid, &id).await,
+            None => 0,
+        }
     };
 
     Ok(Json(json!({ "deleted_vectors": deleted_vectors })))
@@ -1076,29 +1172,45 @@ pub async fn reembed(
     })))
 }
 
-/// Purge ChromaDB vectors that have no corresponding row in the messages table.
+/// Purge orphaned vectors (in vector store but not in PostgreSQL messages table).
+/// Dispatches to ChromaDB or Qdrant based on VECTOR_DB config.
 /// Streams progress as SSE events so the browser doesn't time out on large collections.
 pub async fn sync_chroma(State(state): State<AppState>) -> Result<impl IntoResponse> {
     let db = state.db.clone();
+    let is_qdrant = state.config.vector_db.to_lowercase() == "qdrant";
+    let qdrant_url = state.config.qdrant_url.clone();
+    let qdrant_collection = state.config.qdrant_collection.clone();
+    let qdrant_api_key = state.config.qdrant_api_key.clone();
     let (chroma_base, chroma_client) = chroma_setup(&state);
     let chroma_collection = state.config.chroma_collection.clone();
 
     let event_stream = async_stream::stream! {
-        // ── Step 1: resolve ChromaDB collection ───────────────────────────────
-        let collection_id = match get_or_create_chroma_collection(
-            &chroma_client, &chroma_base, &chroma_collection,
-        ).await {
-            Some(id) => id,
-            None => {
+        // ── Step 1: verify/resolve vector store collection ────────────────────
+        // For Qdrant: check collection exists. For ChromaDB: resolve collection UUID.
+        let (qdrant_delete_url, chroma_collection_id): (String, String) = if is_qdrant {
+            let collection_url = format!("{}/collections/{}", qdrant_url, qdrant_collection);
+            let mut check_req = reqwest::Client::new().get(&collection_url);
+            if let Some(key) = &qdrant_api_key { check_req = check_req.header("api-key", key); }
+            if !check_req.send().await.map(|r| r.status().is_success()).unwrap_or(false) {
                 yield Ok::<Event, Infallible>(Event::default().data(
-                    serde_json::to_string(&json!({ "type": "error", "message": "ChromaDB unavailable" })).unwrap()
+                    serde_json::to_string(&json!({ "type": "error", "message": "Qdrant collection unavailable" })).unwrap()
                 ));
                 return;
             }
+            (format!("{}/collections/{}/points/delete", qdrant_url, qdrant_collection), String::new())
+        } else {
+            match get_or_create_chroma_collection(&chroma_client, &chroma_base, &chroma_collection).await {
+                Some(id) => (String::new(), id),
+                None => {
+                    yield Ok::<Event, Infallible>(Event::default().data(
+                        serde_json::to_string(&json!({ "type": "error", "message": "ChromaDB unavailable" })).unwrap()
+                    ));
+                    return;
+                }
+            }
         };
 
-        // ── Step 2: load embeddable PostgreSQL msg_uuids into a HashSet ─────────
-        // Only messages with non-empty content are candidates for embedding.
+        // ── Step 2: load embeddable PostgreSQL msg_uuids ──────────────────────
         yield Ok(Event::default().data(
             serde_json::to_string(&json!({ "type": "pg_fetch" })).unwrap()
         ));
@@ -1123,75 +1235,99 @@ pub async fn sync_chroma(State(state): State<AppState>) -> Result<impl IntoRespo
             serde_json::to_string(&json!({ "type": "pg_done", "count": total_postgres })).unwrap()
         ));
 
-        // ── Step 3: collect ALL ChromaDB IDs without deleting yet ────────────
-        // Deleting while paginating with offset corrupts the scan: every deleted
-        // item shifts remaining items left, causing the next page fetch (at the
-        // same offset) to skip items that moved into the previous page range.
-        // Solution: full scan first, delete in a separate pass.
-        let page_size = 10_000usize;
-        let mut offset = 0usize;
-        let mut all_chroma_ids: Vec<String> = Vec::new();
-
-        loop {
-            let page_resp = chroma_client
-                .post(format!("{}/collections/{}/get", chroma_base, collection_id))
-                .json(&json!({ "limit": page_size, "offset": offset, "include": [] }))
-                .send()
-                .await;
-
-            let page_ids: Vec<String> = match page_resp {
-                Ok(r) if r.status().is_success() => r
-                    .json::<Value>().await.ok()
-                    .and_then(|v| v["ids"].as_array().map(|arr| {
-                        arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
-                    }))
-                    .unwrap_or_default(),
-                _ => break,
-            };
-
-            let count = page_ids.len();
-            all_chroma_ids.extend(page_ids);
-
-            yield Ok(Event::default().data(
-                serde_json::to_string(&json!({
-                    "type": "chroma_page",
-                    "fetched": all_chroma_ids.len(),
-                })).unwrap()
-            ));
-
-            if count < page_size { break; }
-            offset += page_size;
+        // ── Step 3: collect all vector store IDs ──────────────────────────────
+        let mut all_vec_ids: Vec<String> = Vec::new();
+        if is_qdrant {
+            let scroll_url = format!("{}/collections/{}/points/scroll", qdrant_url, qdrant_collection);
+            let qdrant_client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+            let mut next_offset = serde_json::Value::Null;
+            loop {
+                let body = json!({
+                    "limit": 10000,
+                    "offset": next_offset,
+                    "with_payload": false,
+                    "with_vectors": false,
+                });
+                let mut scroll_req = qdrant_client.post(&scroll_url).json(&body);
+                if let Some(key) = &qdrant_api_key { scroll_req = scroll_req.header("api-key", key); }
+                let resp: Value = match scroll_req.send().await {
+                    Ok(r) if r.status().is_success() => match r.json().await {
+                        Ok(v) => v,
+                        Err(_) => break,
+                    },
+                    _ => break,
+                };
+                let points = resp["result"]["points"].as_array().map(|a| a.to_vec()).unwrap_or_default();
+                let count = points.len();
+                for p in &points {
+                    if let Some(id) = p["id"].as_str() {
+                        all_vec_ids.push(id.to_string());
+                    }
+                }
+                yield Ok(Event::default().data(
+                    serde_json::to_string(&json!({ "type": "chroma_page", "fetched": all_vec_ids.len() })).unwrap()
+                ));
+                next_offset = resp["result"]["next_page_offset"].clone();
+                if next_offset.is_null() || count == 0 { break; }
+            }
+        } else {
+            let page_size = 10_000usize;
+            let mut offset = 0usize;
+            loop {
+                let page_resp = chroma_client
+                    .post(format!("{}/collections/{}/get", chroma_base, chroma_collection_id))
+                    .json(&json!({ "limit": page_size, "offset": offset, "include": [] }))
+                    .send()
+                    .await;
+                let page_ids: Vec<String> = match page_resp {
+                    Ok(r) if r.status().is_success() => r
+                        .json::<Value>().await.ok()
+                        .and_then(|v| v["ids"].as_array().map(|arr| {
+                            arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
+                        }))
+                        .unwrap_or_default(),
+                    _ => break,
+                };
+                let count = page_ids.len();
+                all_vec_ids.extend(page_ids);
+                yield Ok(Event::default().data(
+                    serde_json::to_string(&json!({ "type": "chroma_page", "fetched": all_vec_ids.len() })).unwrap()
+                ));
+                if count < page_size { break; }
+                offset += page_size;
+            }
         }
 
-        let total_chroma = all_chroma_ids.len() as i64;
-
-        // Build a HashSet of all ChromaDB IDs for O(1) reverse lookup
-        let chroma_set: std::collections::HashSet<String> =
-            all_chroma_ids.iter().cloned().collect();
-
-        // Orphans: in ChromaDB but not in PostgreSQL (embeddable messages)
-        let orphans: Vec<String> = all_chroma_ids.into_iter()
-            .filter(|id| !pg_uuids.contains(id))
-            .collect();
+        let total_vec = all_vec_ids.len() as i64;
+        let vec_set: std::collections::HashSet<String> = all_vec_ids.iter().cloned().collect();
+        let orphans: Vec<String> = all_vec_ids.into_iter().filter(|id| !pg_uuids.contains(id)).collect();
         let orphan_count = orphans.len() as i64;
+        let un_embedded: i64 = pg_uuids.iter().filter(|id| !vec_set.contains(*id)).count() as i64;
 
-        // Un-embedded: embeddable PostgreSQL messages with no ChromaDB vector
-        let un_embedded: i64 = pg_uuids.iter()
-            .filter(|id| !chroma_set.contains(*id))
-            .count() as i64;
-
-        // ── Step 4: delete orphans in a clean second pass ────────────────────
+        // ── Step 4: delete orphans ─────────────────────────────────────────────
+        let qdrant_client2 = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         let mut orphans_deleted: i64 = 0;
         for chunk in orphans.chunks(500) {
-            if let Ok(r) = chroma_client
-                .post(format!("{}/collections/{}/delete", chroma_base, collection_id))
-                .json(&json!({ "ids": chunk }))
-                .send().await
-            {
-                if r.status().is_success() {
-                    orphans_deleted += chunk.len() as i64;
-                }
-            }
+            let deleted = if is_qdrant {
+                let mut del_req = qdrant_client2.post(&qdrant_delete_url)
+                    .json(&json!({ "points": chunk }));
+                if let Some(key) = &qdrant_api_key { del_req = del_req.header("api-key", key); }
+                del_req.send().await.map(|r| r.status().is_success()).unwrap_or(false)
+            } else {
+                chroma_client
+                    .post(format!("{}/collections/{}/delete", chroma_base, chroma_collection_id))
+                    .json(&json!({ "ids": chunk }))
+                    .send().await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false)
+            };
+            if deleted { orphans_deleted += chunk.len() as i64; }
             yield Ok(Event::default().data(
                 serde_json::to_string(&json!({
                     "type": "delete_progress",
@@ -1205,7 +1341,7 @@ pub async fn sync_chroma(State(state): State<AppState>) -> Result<impl IntoRespo
             serde_json::to_string(&json!({
                 "type": "done",
                 "total_postgres": total_postgres,
-                "total_chroma": total_chroma,
+                "total_chroma": total_vec,
                 "orphans_deleted": orphans_deleted,
                 "un_embedded": un_embedded,
             })).unwrap()
