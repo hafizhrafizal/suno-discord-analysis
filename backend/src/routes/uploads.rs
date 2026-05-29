@@ -366,6 +366,63 @@ async fn ensure_qdrant_collection(
     put_req.send().await.map(|r| r.status().is_success()).unwrap_or(false)
 }
 
+/// Return the set of original msg_uuid values already stored in Qdrant for a specific upload.
+/// Uses scroll + upload_id filter so results come from the payload field we write on every
+/// upsert — far more reliable than batch /points/get for large collections.
+async fn get_existing_qdrant_ids_for_upload(
+    client: &reqwest::Client,
+    qdrant_url: &str,
+    collection: &str,
+    api_key: Option<&str>,
+    upload_id: &str,
+) -> std::collections::HashSet<String> {
+    let scroll_url = format!("{}/collections/{}/points/scroll", qdrant_url, collection);
+    let mut existing = std::collections::HashSet::new();
+    let mut next_offset = serde_json::Value::Null;
+
+    loop {
+        let mut body = json!({
+            "filter": {
+                "must": [{"key": "upload_id", "match": {"value": upload_id}}]
+            },
+            "limit": 10000,
+            "with_payload": ["msg_uuid"],
+            "with_vectors": false,
+        });
+        if !next_offset.is_null() {
+            body["offset"] = next_offset.clone();
+        }
+        let mut req = client.post(&scroll_url).json(&body);
+        if let Some(key) = api_key { req = req.header("api-key", key); }
+
+        match req.send().await {
+            Ok(r) if r.status().is_success() => {
+                match r.json::<Value>().await {
+                    Ok(data) => {
+                        let points = data["result"]["points"].as_array()
+                            .map(|a| a.to_vec())
+                            .unwrap_or_default();
+                        let count = points.len();
+                        for p in &points {
+                            // Prefer payload.msg_uuid (original Discord/DB ID) over point ID
+                            if let Some(orig) = p["payload"]["msg_uuid"].as_str() {
+                                existing.insert(orig.to_string());
+                            } else if let Some(qid) = p["id"].as_str() {
+                                existing.insert(qid.to_string());
+                            }
+                        }
+                        next_offset = data["result"]["next_page_offset"].clone();
+                        if next_offset.is_null() || count == 0 { break; }
+                    }
+                    Err(_) => break,
+                }
+            }
+            _ => break,
+        }
+    }
+    existing
+}
+
 /// Return the set of ORIGINAL IDs (msg_uuid) already present in a Qdrant collection.
 /// Converts each ID to its Qdrant UUID form for the lookup, then maps results back
 /// to original IDs so the caller can compare directly with database msg_uuid values.
@@ -1145,19 +1202,23 @@ pub async fn reembed(
         };
 
         let total = msgs.len() as i64;
-        let all_ids: Vec<String> = msgs.iter().map(|(mid, _)| mid.clone()).collect();
 
         // ── Step 3: check which IDs already have vectors ──────────────────────
         yield Ok(Event::default().data(
             serde_json::to_string(&json!({"type":"checking","total":total})).unwrap()
         ));
 
+        // For Qdrant: scroll by upload_id filter + read msg_uuid from payload.
+        // This is resumable — it reflects actual Qdrant state rather than a
+        // batch /points/get that can silently return empty on partial failures.
+        // For ChromaDB: batch /get by ID is still correct and fast.
         let existing_ids = if is_qdrant {
-            get_existing_qdrant_ids(
+            get_existing_qdrant_ids_for_upload(
                 &http_client, &qdrant_url, &qdrant_collection,
-                qdrant_api_key.as_deref(), &all_ids,
+                qdrant_api_key.as_deref(), &id,
             ).await
         } else {
+            let all_ids: Vec<String> = msgs.iter().map(|(mid, _)| mid.clone()).collect();
             get_existing_chroma_ids(&http_client, &chroma_base, &collection_id, &all_ids).await
         };
 
