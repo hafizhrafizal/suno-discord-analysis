@@ -1044,7 +1044,7 @@ pub async fn delete_upload_embeddings(
 pub async fn reembed(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Value>> {
+) -> Result<impl IntoResponse> {
     let exists: Option<String> = sqlx::query_scalar("SELECT id FROM uploads WHERE id = $1")
         .bind(&id)
         .fetch_optional(&state.db)
@@ -1059,152 +1059,209 @@ pub async fn reembed(
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 
     let is_qdrant = state.config.vector_db.to_lowercase() == "qdrant";
+    let db = state.db.clone();
+    let qdrant_url = state.config.qdrant_url.clone();
+    let qdrant_collection = state.config.qdrant_collection.clone();
+    let qdrant_api_key = state.config.qdrant_api_key.clone();
+    let chroma_host = state.config.chroma_host.clone();
+    let chroma_port = state.config.chroma_port;
+    let chroma_collection_name = state.config.chroma_collection.clone();
 
-    let chroma_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let embed_client = chroma_client.clone();
+    let event_stream = async_stream::stream! {
+        // ── Step 1: connect to vector store ───────────────────────────────────
+        let http_client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                yield Ok::<Event, Infallible>(Event::default().data(
+                    serde_json::to_string(&json!({"type":"error","message":e.to_string()})).unwrap()
+                ));
+                return;
+            }
+        };
+        let embed_client = http_client.clone();
 
-    // Connect to the configured vector store
-    let (chroma_base, collection_id) = if is_qdrant {
-        let ok = ensure_qdrant_collection(
-            &chroma_client,
-            &state.config.qdrant_url,
-            &state.config.qdrant_collection,
-            state.config.qdrant_api_key.as_deref(),
-            1536,
-        ).await;
-        if !ok {
-            return Err(AppError::Internal("Qdrant unavailable".into()));
-        }
-        (String::new(), String::new())
-    } else {
-        let base = format!(
-            "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
-            state.config.chroma_host, state.config.chroma_port
-        );
-        let cid = get_or_create_chroma_collection(
-            &chroma_client, &base, &state.config.chroma_collection,
-        )
-        .await
-        .ok_or_else(|| AppError::Internal("ChromaDB unavailable".into()))?;
-        (base, cid)
-    };
+        let (chroma_base, collection_id) = if is_qdrant {
+            let ok = ensure_qdrant_collection(
+                &http_client, &qdrant_url, &qdrant_collection,
+                qdrant_api_key.as_deref(), 1536,
+            ).await;
+            if !ok {
+                yield Ok(Event::default().data(
+                    serde_json::to_string(&json!({"type":"error","message":"Qdrant unavailable"})).unwrap()
+                ));
+                return;
+            }
+            (String::new(), String::new())
+        } else {
+            let base = format!(
+                "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
+                chroma_host, chroma_port
+            );
+            match get_or_create_chroma_collection(&http_client, &base, &chroma_collection_name).await {
+                Some(cid) => (base, cid),
+                None => {
+                    yield Ok(Event::default().data(
+                        serde_json::to_string(&json!({"type":"error","message":"ChromaDB unavailable"})).unwrap()
+                    ));
+                    return;
+                }
+            }
+        };
 
-    let msgs: Vec<(String, String)> = {
-        use sqlx::Row;
-        sqlx::query(
+        // ── Step 2: load messages ──────────────────────────────────────────────
+        let msgs: Vec<(String, String)> = match sqlx::query(
             "SELECT msg_uuid, content FROM messages
              WHERE upload_id = $1 AND content IS NOT NULL
              ORDER BY row_index",
         )
         .bind(&id)
-        .fetch_all(&state.db)
-        .await?
-        .into_iter()
-        .map(|r| (r.get("msg_uuid"), r.get("content")))
-        .collect()
-    };
-
-    let total = msgs.len() as i64;
-    let all_ids: Vec<String> = msgs.iter().map(|(mid, _)| mid.clone()).collect();
-
-    // Skip already-embedded vectors so re-embed is resumable
-    let existing_ids = if is_qdrant {
-        get_existing_qdrant_ids(
-            &chroma_client,
-            &state.config.qdrant_url,
-            &state.config.qdrant_collection,
-            state.config.qdrant_api_key.as_deref(),
-            &all_ids,
-        ).await
-    } else {
-        get_existing_chroma_ids(&chroma_client, &chroma_base, &collection_id, &all_ids).await
-    };
-
-    let skipped = existing_ids.len() as i64;
-    let msgs_to_embed: Vec<(String, String)> = msgs
-        .into_iter()
-        .filter(|(mid, _)| !existing_ids.contains(mid))
-        .collect();
-
-    let all_batches: Vec<(Vec<String>, Vec<String>)> = msgs_to_embed
-        .chunks(EMBED_BATCH_SIZE)
-        .map(|chunk| (
-            chunk.iter().map(|(mid, _)| mid.clone()).collect::<Vec<_>>(),
-            chunk.iter().map(|(_, c)| c.clone()).collect::<Vec<_>>(),
-        ))
-        .collect();
-
-    let mut embedded: i64 = 0;
-
-    for window in all_batches.chunks(EMBED_CONCURRENCY) {
-        let embed_futs = window.iter().map(|(ids, texts)| {
-            let embed_client = embed_client.clone();
-            let api_key = api_key.clone();
-            let ids = ids.clone();
-            let texts = texts.clone();
-            async move {
-                let embeddings = embed_batch(embed_client, &api_key, &texts).await;
-                ids.into_iter()
-                    .zip(embeddings)
-                    .zip(texts)
-                    .filter_map(|((mid, emb_opt), text)| emb_opt.map(|emb| (mid, emb, text)))
-                    .collect::<Vec<_>>()
+        .fetch_all(&db)
+        .await
+        {
+            Ok(rows) => {
+                use sqlx::Row;
+                rows.into_iter().map(|r| (r.get("msg_uuid"), r.get("content"))).collect()
             }
-        });
-        let window_results = futures::future::join_all(embed_futs).await;
+            Err(e) => {
+                yield Ok(Event::default().data(
+                    serde_json::to_string(&json!({"type":"error","message":e.to_string()})).unwrap()
+                ));
+                return;
+            }
+        };
 
-        let upsert_futs = window_results.iter().map(|valid| {
-            let chroma_client = chroma_client.clone();
-            let chroma_base = chroma_base.clone();
-            let collection_id = collection_id.clone();
-            let upload_id_inner = id.clone();
-            let valid = valid.clone();
-            let qdrant_url = state.config.qdrant_url.clone();
-            let qdrant_collection = state.config.qdrant_collection.clone();
-            let qdrant_api_key = state.config.qdrant_api_key.clone();
-            async move {
-                if valid.is_empty() { return 0i64; }
-                let v_ids: Vec<String> = valid.iter().map(|(vid, _, _)| vid.clone()).collect();
-                let v_embs: Vec<Vec<f64>> = valid.iter().map(|(_, emb, _)| emb.clone()).collect();
-                let v_docs: Vec<String> = valid.iter().map(|(_, _, doc)| doc.clone()).collect();
-                if is_qdrant {
-                    upsert_qdrant_batch(
-                        &chroma_client, &qdrant_url, &qdrant_collection,
-                        qdrant_api_key.as_deref(),
-                        &v_ids, &v_embs, &v_docs, &upload_id_inner,
-                    ).await;
-                } else {
-                    upsert_chroma_batch(
-                        &chroma_client, &chroma_base, &collection_id,
-                        &v_ids, &v_embs, &v_docs, &upload_id_inner,
-                    ).await;
+        let total = msgs.len() as i64;
+        let all_ids: Vec<String> = msgs.iter().map(|(mid, _)| mid.clone()).collect();
+
+        // ── Step 3: check which IDs already have vectors ──────────────────────
+        yield Ok(Event::default().data(
+            serde_json::to_string(&json!({"type":"checking","total":total})).unwrap()
+        ));
+
+        let existing_ids = if is_qdrant {
+            get_existing_qdrant_ids(
+                &http_client, &qdrant_url, &qdrant_collection,
+                qdrant_api_key.as_deref(), &all_ids,
+            ).await
+        } else {
+            get_existing_chroma_ids(&http_client, &chroma_base, &collection_id, &all_ids).await
+        };
+
+        let skipped = existing_ids.len() as i64;
+        let msgs_to_embed: Vec<(String, String)> = msgs
+            .into_iter()
+            .filter(|(mid, _)| !existing_ids.contains(mid))
+            .collect();
+        let total_to_embed = msgs_to_embed.len() as i64;
+
+        if total_to_embed == 0 {
+            yield Ok(Event::default().data(
+                serde_json::to_string(&json!({
+                    "type":"done","upload_id":id,"total":total,
+                    "embedded":0,"skipped":skipped,"model":EMBED_MODEL,
+                })).unwrap()
+            ));
+            return;
+        }
+
+        yield Ok(Event::default().data(
+            serde_json::to_string(&json!({
+                "type":"embed_start","total":total_to_embed,"skipped":skipped,"model":EMBED_MODEL,
+            })).unwrap()
+        ));
+
+        // ── Step 4: embed + upsert in windows ─────────────────────────────────
+        let all_batches: Vec<(Vec<String>, Vec<String>)> = msgs_to_embed
+            .chunks(EMBED_BATCH_SIZE)
+            .map(|chunk| (
+                chunk.iter().map(|(mid, _)| mid.clone()).collect(),
+                chunk.iter().map(|(_, c)| c.clone()).collect(),
+            ))
+            .collect();
+
+        let mut embedded: i64 = 0;
+
+        for window in all_batches.chunks(EMBED_CONCURRENCY) {
+            let embed_futs = window.iter().map(|(ids, texts)| {
+                let embed_client = embed_client.clone();
+                let api_key = api_key.clone();
+                let ids = ids.clone();
+                let texts = texts.clone();
+                async move {
+                    let embeddings = embed_batch(embed_client, &api_key, &texts).await;
+                    ids.into_iter()
+                        .zip(embeddings)
+                        .zip(texts)
+                        .filter_map(|((mid, emb_opt), text)| emb_opt.map(|emb| (mid, emb, text)))
+                        .collect::<Vec<_>>()
                 }
-                valid.len() as i64
-            }
-        });
-        let counts = futures::future::join_all(upsert_futs).await;
-        embedded += counts.iter().sum::<i64>();
-    }
+            });
+            let window_results = futures::future::join_all(embed_futs).await;
 
-    sqlx::query(
-        "INSERT INTO embedded_uploads (upload_id, model_id) VALUES ($1, $2)
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(&id)
-    .bind(EMBED_MODEL)
-    .execute(&state.db)
-    .await?;
+            let upsert_futs = window_results.iter().map(|valid| {
+                let http_client = http_client.clone();
+                let chroma_base = chroma_base.clone();
+                let collection_id = collection_id.clone();
+                let upload_id_inner = id.clone();
+                let valid = valid.clone();
+                let qu = qdrant_url.clone();
+                let qc = qdrant_collection.clone();
+                let qk = qdrant_api_key.clone();
+                async move {
+                    if valid.is_empty() { return 0i64; }
+                    let v_ids: Vec<String> = valid.iter().map(|(vid, _, _)| vid.clone()).collect();
+                    let v_embs: Vec<Vec<f64>> = valid.iter().map(|(_, emb, _)| emb.clone()).collect();
+                    let v_docs: Vec<String> = valid.iter().map(|(_, _, doc)| doc.clone()).collect();
+                    if is_qdrant {
+                        upsert_qdrant_batch(
+                            &http_client, &qu, &qc, qk.as_deref(),
+                            &v_ids, &v_embs, &v_docs, &upload_id_inner,
+                        ).await;
+                    } else {
+                        upsert_chroma_batch(
+                            &http_client, &chroma_base, &collection_id,
+                            &v_ids, &v_embs, &v_docs, &upload_id_inner,
+                        ).await;
+                    }
+                    valid.len() as i64
+                }
+            });
+            let counts = futures::future::join_all(upsert_futs).await;
+            embedded += counts.iter().sum::<i64>();
 
-    Ok(Json(json!({
-        "upload_id": id,
-        "total": total,
-        "embedded": embedded,
-        "skipped": skipped,
-        "model": EMBED_MODEL,
-    })))
+            yield Ok(Event::default().data(
+                serde_json::to_string(&json!({
+                    "type":"embed_progress","embedded":embedded,"total":total_to_embed,
+                })).unwrap()
+            ));
+        }
+
+        // ── Step 5: mark as embedded ───────────────────────────────────────────
+        let _ = sqlx::query(
+            "INSERT INTO embedded_uploads (upload_id, model_id) VALUES ($1, $2)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(&id)
+        .bind(EMBED_MODEL)
+        .execute(&db)
+        .await;
+
+        yield Ok(Event::default().data(
+            serde_json::to_string(&json!({
+                "type":"done","upload_id":id,"total":total,
+                "embedded":embedded,"skipped":skipped,"model":EMBED_MODEL,
+            })).unwrap()
+        ));
+    };
+
+    Ok(Sse::new(event_stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("ping"),
+    ))
 }
 
 /// Purge orphaned vectors (in vector store but not in PostgreSQL messages table).

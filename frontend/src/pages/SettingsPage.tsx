@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -25,6 +25,9 @@ function UploadCard({
 }) {
   const [reembedProgress, setReembedProgress] = useState<{ pct: number; label: string; error?: string } | null>(null)
   const [reembedLoading, setReembedLoading] = useState(false)
+  const [reembedPaused, setReembedPaused] = useState(false)
+  const reembedPausedRef = useRef(false)
+  const reembedAbortRef = useRef<AbortController | null>(null)
   const [confirmType, setConfirmType] = useState<'full' | 'sqlite' | 'embeddings' | null>(null)
   const [deleteProgress, setDeleteProgress] = useState<DeleteProgress | null>(null)
   const [deleteMsg, setDeleteMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
@@ -32,25 +35,80 @@ function UploadCard({
   const doReembed = async () => {
     if (reembedLoading) return
     setReembedLoading(true)
-    setReembedProgress({ pct: 15, label: `Re-embedding — checking ${vdbName} for existing vectors…` })
+    setReembedPaused(false)
+    reembedPausedRef.current = false
+    setReembedProgress({ pct: 5, label: `Connecting to ${vdbName}…` })
+
+    const controller = new AbortController()
+    reembedAbortRef.current = controller
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
 
     try {
-      const res = await apiFetch<{ upload_id: string; total: number; embedded: number; skipped: number; model: string }>(
-        `/uploads/${encodeURIComponent(upload.id)}/reembed`,
-        { method: 'POST' },
-      )
-      const newlyEmbedded = res.embedded || 0
-      const skippedCount = res.skipped || 0
-      const skipNote = skippedCount > 0 ? ` · ${skippedCount.toLocaleString()} already in ${vdbName}` : ''
-      setReembedProgress({ pct: 100, label: `Done — ${newlyEmbedded.toLocaleString()} vectors embedded${skipNote}` })
-      onRefresh()
-      setTimeout(() => setReembedProgress(null), 4000)
+      const response = await fetch(`/api/uploads/${encodeURIComponent(upload.id)}/reembed`, {
+        method: 'POST',
+        credentials: 'include',
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        let msg = `HTTP ${response.status}`
+        try { const d = await response.json(); msg = d.error ?? d.message ?? msg } catch {}
+        throw new Error(msg)
+      }
+      reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        while (reembedPausedRef.current && !controller.signal.aborted) {
+          await new Promise(r => setTimeout(r, 100))
+        }
+        if (controller.signal.aborted) break
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let event: any
+          try { event = JSON.parse(line.slice(6).trim()) } catch { continue }
+          if (event.type === 'checking') {
+            setReembedProgress({ pct: 15, label: `Checking ${vdbName} for existing vectors (${Number(event.total).toLocaleString()} messages)…` })
+          } else if (event.type === 'embed_start') {
+            const skipNote = event.skipped > 0 ? ` · ${Number(event.skipped).toLocaleString()} already in ${vdbName}` : ''
+            setReembedProgress({ pct: 25, label: `Embedding ${Number(event.total).toLocaleString()} messages with ${event.model}…${skipNote}` })
+          } else if (event.type === 'embed_progress') {
+            const pct = 25 + (event.total > 0 ? Math.round((event.embedded / event.total) * 70) : 0)
+            setReembedProgress({ pct, label: `Embedding: ${Number(event.embedded).toLocaleString()} / ${Number(event.total).toLocaleString()} vectors…` })
+          } else if (event.type === 'done') {
+            const skipNote = event.skipped > 0 ? ` · ${Number(event.skipped).toLocaleString()} already in ${vdbName}` : ''
+            setReembedProgress({ pct: 100, label: `Done — ${Number(event.embedded).toLocaleString()} vectors embedded${skipNote}` })
+            onRefresh()
+            setTimeout(() => setReembedProgress(null), 4000)
+          } else if (event.type === 'error') {
+            throw new Error(String(event.message))
+          }
+        }
+      }
     } catch (e) {
-      setReembedProgress({ pct: 0, label: 'Failed', error: e instanceof Error ? e.message : String(e) })
+      if (e instanceof Error && e.name === 'AbortError') {
+        setReembedProgress({ pct: 0, label: 'Stopped' })
+        setTimeout(() => setReembedProgress(null), 3000)
+      } else {
+        setReembedProgress({ pct: 0, label: 'Failed', error: e instanceof Error ? e.message : String(e) })
+      }
     } finally {
+      try { reader?.cancel() } catch {}
+      reembedAbortRef.current = null
       setReembedLoading(false)
+      setReembedPaused(false)
+      reembedPausedRef.current = false
     }
   }
+
+  const pauseReembed = () => { reembedPausedRef.current = true; setReembedPaused(true) }
+  const resumeReembed = () => { reembedPausedRef.current = false; setReembedPaused(false) }
+  const stopReembed = () => { reembedAbortRef.current?.abort() }
 
   const doDelete = async (type: 'full' | 'sqlite' | 'embeddings') => {
     setConfirmType(null)
@@ -115,7 +173,15 @@ function UploadCard({
             <button onClick={doReembed} disabled={reembedLoading} className="action-btn-primary">
               {reembedLoading ? 'Embedding…' : 'Re-embed'}
             </button>
-            <button onClick={() => setConfirmType('embeddings')} className="action-btn-warning">Delete Embedding</button>
+            {reembedLoading && (
+              <button onClick={reembedPaused ? resumeReembed : pauseReembed} className="action-btn-warning">
+                {reembedPaused ? 'Resume' : 'Pause'}
+              </button>
+            )}
+            {reembedLoading && (
+              <button onClick={stopReembed} className="action-btn-danger">Stop</button>
+            )}
+            <button onClick={() => setConfirmType('embeddings')} disabled={reembedLoading} className="action-btn-warning">Delete Embedding</button>
             <button onClick={() => setConfirmType('sqlite')} className="action-btn-danger">Delete DB</button>
             <button onClick={() => setConfirmType('full')} className="action-btn-danger" style={{ borderColor: '#dc2626', fontWeight: 700 }}>Delete All</button>
           </div>
@@ -127,7 +193,10 @@ function UploadCard({
           <div className="progress-track">
             <div className="progress-fill" style={{ width: `${reembedProgress.pct}%` }} />
           </div>
-          <p className="mt-1 text-xs text-gray-600">{reembedProgress.label}</p>
+          <p className="mt-1 text-xs text-gray-600">
+            {reembedPaused && <span className="font-semibold text-amber-600 mr-1">[Paused]</span>}
+            {reembedProgress.label}
+          </p>
           {reembedProgress.error && (
             <pre className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2 max-h-40 overflow-auto whitespace-pre-wrap break-all">
               {reembedProgress.error}
@@ -169,6 +238,9 @@ export default function SettingsPage() {
   const [uploadProgress, setUploadProgress] = useState<{ pct: number; label: string; type: 'info' | 'success' | 'error' } | null>(null)
   const [uploadStatus, setUploadStatus] = useState('')
   const [uploadBtnLoading, setUploadBtnLoading] = useState(false)
+  const [uploadPaused, setUploadPaused] = useState(false)
+  const uploadPausedRef = useRef(false)
+  const uploadAbortRef = useRef<AbortController | null>(null)
 
   const { data: stats } = useQuery<Stats>({
     queryKey: ['stats'],
@@ -214,21 +286,30 @@ export default function SettingsPage() {
   const handleUpload = async () => {
     if (!uploadFile) { setUploadStatus('Please select a CSV file.'); return }
     setUploadBtnLoading(true)
+    setUploadPaused(false)
+    uploadPausedRef.current = false
     setUploadProgress({ pct: 2, label: 'Uploading file…', type: 'info' })
     setUploadStatus('')
     const form = new FormData()
     form.append('file', uploadFile)
+    const controller = new AbortController()
+    uploadAbortRef.current = controller
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
     try {
-      const response = await fetch('/api/upload', { method: 'POST', body: form, credentials: 'include' })
+      const response = await fetch('/api/upload', { method: 'POST', body: form, credentials: 'include', signal: controller.signal })
       if (!response.ok) {
         let msg = `HTTP ${response.status}`
         try { const d = await response.json(); msg = d.error ?? d.message ?? msg } catch {}
         throw new Error(msg)
       }
-      const reader = response.body!.getReader()
+      reader = response.body!.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
       while (true) {
+        while (uploadPausedRef.current && !controller.signal.aborted) {
+          await new Promise(r => setTimeout(r, 100))
+        }
+        if (controller.signal.aborted) break
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
@@ -285,12 +366,25 @@ export default function SettingsPage() {
         }
       }
     } catch (e) {
-      setUploadStatus(`Error: ${e instanceof Error ? e.message : String(e)}`)
-      setUploadProgress(null)
+      if (e instanceof Error && e.name === 'AbortError') {
+        setUploadStatus('Upload cancelled.')
+        setUploadProgress(null)
+      } else {
+        setUploadStatus(`Error: ${e instanceof Error ? e.message : String(e)}`)
+        setUploadProgress(null)
+      }
     } finally {
+      try { reader?.cancel() } catch {}
+      uploadAbortRef.current = null
       setUploadBtnLoading(false)
+      setUploadPaused(false)
+      uploadPausedRef.current = false
     }
   }
+
+  const pauseUpload = () => { uploadPausedRef.current = true; setUploadPaused(true) }
+  const resumeUpload = () => { uploadPausedRef.current = false; setUploadPaused(false) }
+  const stopUpload = () => { uploadAbortRef.current?.abort() }
 
   const [syncChromaLoading, setSyncChromaLoading] = useState(false)
   const [syncChromaProgress, setSyncChromaProgress] = useState<{ label: string; pct: number } | null>(null)
@@ -486,6 +580,22 @@ export default function SettingsPage() {
             >
               Upload &amp; Embed
             </button>
+            {uploadBtnLoading && (
+              <button
+                onClick={uploadPaused ? resumeUpload : pauseUpload}
+                className="px-4 py-1.5 rounded-lg text-sm font-semibold bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 transition-colors"
+              >
+                {uploadPaused ? 'Resume' : 'Pause'}
+              </button>
+            )}
+            {uploadBtnLoading && (
+              <button
+                onClick={stopUpload}
+                className="px-4 py-1.5 rounded-lg text-sm font-semibold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors"
+              >
+                Stop
+              </button>
+            )}
           </div>
           {uploadStatus && <p className="mt-2 text-sm text-gray-500">{uploadStatus}</p>}
           {uploadProgress && (
@@ -497,6 +607,7 @@ export default function SettingsPage() {
                 />
               </div>
               <p className={`mt-2 text-xs ${uploadProgress.type === 'error' ? 'text-red-600' : uploadProgress.type === 'success' ? 'text-green-600' : 'text-gray-600'}`}>
+                {uploadPaused && <span className="font-semibold text-amber-600 mr-1">[Paused]</span>}
                 {uploadProgress.label} ({Math.round(uploadProgress.pct)}%)
               </p>
             </div>
