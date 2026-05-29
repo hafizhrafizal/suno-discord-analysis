@@ -402,128 +402,135 @@ pub async fn semantic_search(
         }
     };
 
-    let chroma_base = format!(
-        "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
-        state.config.chroma_host, state.config.chroma_port
-    );
-
+    // Fetch more candidates than needed so post-filters have a large pool to work with.
+    let n_results = (limit * 8).min(800);
     let client = reqwest::Client::new();
+    let is_qdrant = state.config.vector_db.to_lowercase() == "qdrant";
 
-    let collection_info_url =
-        format!("{}/collections/{}", chroma_base, state.config.chroma_collection);
-    let collection_resp = client.get(&collection_info_url).send().await;
-    let collection_id = match collection_resp {
-        Err(e) => {
-            eprintln!("ChromaDB unreachable: {}", e);
-            return Ok(Json(json!({ "error": "ChromaDB unavailable", "results": [] })));
+    let (msg_uuids, uuid_to_similarity): (Vec<String>, std::collections::HashMap<String, f64>) =
+    if is_qdrant {
+        // ── Qdrant search ─────────────────────────────────────────────────────
+        let url = format!(
+            "{}/collections/{}/points/search",
+            state.config.qdrant_url, state.config.qdrant_collection
+        );
+        let mut req = client.post(&url).json(&json!({
+            "vector": embedding,
+            "limit": n_results,
+            "with_payload": true,
+            "with_vector": false,
+        }));
+        if let Some(key) = &state.config.qdrant_api_key {
+            req = req.header("api-key", key);
         }
-        Ok(r) if !r.status().is_success() => {
-            let err = r.text().await.unwrap_or_default();
-            eprintln!("ChromaDB collection lookup error: {}", err);
-            return Ok(Json(
-                json!({ "error": format!("ChromaDB error: {}", err), "results": [] }),
-            ));
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Qdrant unreachable: {}", e);
+                return Ok(Json(json!({ "error": "Qdrant unavailable", "results": [] })));
+            }
+        };
+        if !resp.status().is_success() {
+            let err = resp.text().await.unwrap_or_default();
+            eprintln!("Qdrant error: {}", err);
+            return Ok(Json(json!({ "error": format!("Qdrant error: {}", err), "results": [] })));
         }
-        Ok(r) => {
-            let info: Value = match r.json().await {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("ChromaDB collection parse error: {}", e);
-                    return Ok(Json(
-                        json!({ "error": "ChromaDB response parse error", "results": [] }),
-                    ));
-                }
-            };
-            match info["id"].as_str().map(String::from) {
-                Some(id) => id,
-                None => {
-                    eprintln!("ChromaDB collection missing id field");
-                    return Ok(Json(
-                        json!({ "error": "ChromaDB collection id missing", "results": [] }),
-                    ));
+        let data: Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Qdrant parse error: {}", e);
+                return Ok(Json(json!({ "error": "Qdrant response parse error", "results": [] })));
+            }
+        };
+        let empty = vec![];
+        let results = data["result"].as_array().unwrap_or(&empty);
+        if results.is_empty() {
+            return Ok(Json(json!([])));
+        }
+        let uuids: Vec<String> = results
+            .iter()
+            .filter_map(|p| p["payload"]["msg_uuid"].as_str().map(String::from))
+            .collect();
+        // Qdrant score for cosine is already similarity in [0,1]
+        let sim_map: std::collections::HashMap<String, f64> = results
+            .iter()
+            .filter_map(|p| {
+                let uuid = p["payload"]["msg_uuid"].as_str()?;
+                let score = p["score"].as_f64()?;
+                Some((uuid.to_string(), score.clamp(0.0, 1.0)))
+            })
+            .collect();
+        (uuids, sim_map)
+    } else {
+        // ── ChromaDB search ───────────────────────────────────────────────────
+        let chroma_base = format!(
+            "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
+            state.config.chroma_host, state.config.chroma_port
+        );
+        let collection_info_url =
+            format!("{}/collections/{}", chroma_base, state.config.chroma_collection);
+        let collection_resp = client.get(&collection_info_url).send().await;
+        let collection_id = match collection_resp {
+            Err(e) => {
+                eprintln!("ChromaDB unreachable: {}", e);
+                return Ok(Json(json!({ "error": "ChromaDB unavailable", "results": [] })));
+            }
+            Ok(r) if !r.status().is_success() => {
+                let err = r.text().await.unwrap_or_default();
+                return Ok(Json(json!({ "error": format!("ChromaDB error: {}", err), "results": [] })));
+            }
+            Ok(r) => {
+                let info: Value = r.json().await.unwrap_or_default();
+                match info["id"].as_str().map(String::from) {
+                    Some(id) => id,
+                    None => return Ok(Json(json!({ "error": "ChromaDB collection id missing", "results": [] }))),
                 }
             }
+        };
+        let chroma_url = format!("{}/collections/{}/query", chroma_base, collection_id);
+        let chroma_resp = match client
+            .post(&chroma_url)
+            .json(&json!({
+                "query_embeddings": [embedding],
+                "n_results": n_results,
+                "include": ["metadatas", "distances"]
+            }))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("ChromaDB unreachable: {}", e);
+                return Ok(Json(json!({ "error": "ChromaDB unavailable", "results": [] })));
+            }
+        };
+        if !chroma_resp.status().is_success() {
+            let err = chroma_resp.text().await.unwrap_or_default();
+            return Ok(Json(json!({ "error": format!("ChromaDB error: {}", err), "results": [] })));
         }
-    };
-
-    // Fetch more candidates than needed so post-filters (date, username, etc.)
-    // have a large pool to work with, especially for keyword-style queries.
-    let n_results = (limit * 8).min(800);
-    let chroma_url = format!("{}/collections/{}/query", chroma_base, collection_id);
-    let chroma_send = client
-        .post(&chroma_url)
-        .json(&json!({
-            "query_embeddings": [embedding],
-            "n_results": n_results,
-            "include": ["metadatas", "distances"]
-        }))
-        .send()
-        .await;
-
-    let chroma_resp = match chroma_send {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("ChromaDB unreachable: {}", e);
-            return Ok(Json(json!({ "error": "ChromaDB unavailable", "results": [] })));
+        let chroma_data: Value = chroma_resp.json().await.unwrap_or_default();
+        let empty_vec = vec![];
+        let ids = chroma_data["ids"][0].as_array().unwrap_or(&empty_vec);
+        if ids.is_empty() {
+            return Ok(Json(json!([])));
         }
-    };
-
-    if !chroma_resp.status().is_success() {
-        let err = chroma_resp.text().await.unwrap_or_default();
-        eprintln!("ChromaDB error response: {}", err);
-        return Ok(Json(
-            json!({ "error": format!("ChromaDB error: {}", err), "results": [] }),
-        ));
-    }
-
-    let chroma_data: Value = match chroma_resp.json().await {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("ChromaDB parse error: {}", e);
-            return Ok(Json(
-                json!({ "error": "ChromaDB response parse error", "results": [] }),
-            ));
-        }
-    };
-
-    let empty_vec = vec![];
-    let ids = chroma_data["ids"][0].as_array().unwrap_or(&empty_vec);
-    if ids.is_empty() {
-        return Ok(Json(json!([])));
-    }
-
-    let msg_uuids: Vec<String> = ids
-        .iter()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect();
-
-    let empty_dists = vec![];
-    let distances = chroma_data["distances"][0].as_array().unwrap_or(&empty_dists);
-    // ChromaDB may return L2 or cosine distances depending on collection config.
-    // Convert to a [0,1] similarity:
-    //   cosine distance ∈ [0,1]  → similarity = 1 - d
-    //   L2 distance (unit vecs)  → similarity = 1 - d/2  (L2 max = 2 for unit vecs)
-    // We detect which by checking whether any raw distance exceeds 1.0.
-    let max_raw_dist = distances
-        .iter()
-        .filter_map(|v| v.as_f64())
-        .fold(0.0_f64, f64::max);
-    let is_l2 = max_raw_dist > 1.0;
-
-    let uuid_to_similarity: std::collections::HashMap<String, f64> = msg_uuids
-        .iter()
-        .zip(distances.iter())
-        .filter_map(|(uuid, dist)| {
-            dist.as_f64().map(|d| {
-                let sim = if is_l2 {
-                    (1.0 - d / 2.0).clamp(0.0, 1.0)
-                } else {
-                    (1.0 - d).clamp(0.0, 1.0)
-                };
-                (uuid.clone(), sim)
+        let uuids: Vec<String> = ids.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        let empty_dists = vec![];
+        let distances = chroma_data["distances"][0].as_array().unwrap_or(&empty_dists);
+        let max_raw_dist = distances.iter().filter_map(|v| v.as_f64()).fold(0.0_f64, f64::max);
+        let is_l2 = max_raw_dist > 1.0;
+        let sim_map: std::collections::HashMap<String, f64> = uuids
+            .iter()
+            .zip(distances.iter())
+            .filter_map(|(uuid, dist)| {
+                dist.as_f64().map(|d| {
+                    let sim = if is_l2 { (1.0 - d / 2.0).clamp(0.0, 1.0) } else { (1.0 - d).clamp(0.0, 1.0) };
+                    (uuid.clone(), sim)
+                })
             })
-        })
-        .collect();
+            .collect();
+        (uuids, sim_map)
+    };
 
     let best_sim = uuid_to_similarity
         .values()
@@ -534,8 +541,8 @@ pub async fn semantic_search(
     // similarity scores against long messages even when semantically relevant.
     let min_similarity = 0.15_f64.max(best_sim * 0.50);
     tracing::debug!(
-        "Semantic: best_sim={:.3}, threshold={:.3}, is_l2={}, words={}",
-        best_sim, min_similarity, is_l2, word_count
+        "Semantic: best_sim={:.3}, threshold={:.3}, words={}",
+        best_sim, min_similarity, word_count
     );
 
     // Build IN clause with positional params
