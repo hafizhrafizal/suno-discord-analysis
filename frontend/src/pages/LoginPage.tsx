@@ -1,5 +1,5 @@
-import { useState, FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, FormEvent, useEffect } from 'react'
+import { useNavigate, Navigate } from 'react-router-dom'
 import { apiFetch, ApiError } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { User } from '../types'
@@ -11,8 +11,24 @@ export default function LoginPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [modeChecked, setModeChecked] = useState(false)
   const navigate = useNavigate()
-  const { setUser } = useAuthStore()
+  const { setUser, setAppMode, appMode, user } = useAuthStore()
+
+  useEffect(() => {
+    apiFetch<{ mode: string }>('/auth/app-mode')
+      .then(d => {
+        const mode = d?.mode ?? 'single'
+        setAppMode(mode)
+        setModeChecked(true)
+        if (mode !== 'multi') navigate('/', { replace: true })
+      })
+      .catch(() => {
+        setAppMode('single')
+        navigate('/', { replace: true })
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -26,11 +42,11 @@ export default function LoginPage() {
     setLoading(true)
     try {
       const endpoint = tab === 'login' ? '/auth/login' : '/auth/register'
-      const user = await apiFetch<User>(endpoint, {
+      const u = await apiFetch<User>(endpoint, {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       })
-      setUser(user)
+      setUser(u)
       navigate('/')
     } catch (err) {
       if (err instanceof ApiError) {
@@ -42,6 +58,21 @@ export default function LoginPage() {
       setLoading(false)
     }
   }
+
+  // Already authenticated — go to app
+  if (user) return <Navigate to="/" replace />
+
+  // While fetching mode show a spinner
+  if (!modeChecked) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="animate-spin rounded-full h-10 w-10 border-4 border-indigo-700 border-t-transparent" />
+      </div>
+    )
+  }
+
+  // Guard: if mode resolved to non-multi, navigation already happened; render nothing
+  if (appMode !== 'multi') return null
 
   return (
     <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
@@ -56,7 +87,7 @@ export default function LoginPage() {
         </div>
 
         <div className="p-8">
-          {/* Tabs — underline style */}
+          {/* Tabs */}
           <div className="flex mb-6 border-b border-gray-200">
             <button
               onClick={() => { setTab('login'); setError(null) }}

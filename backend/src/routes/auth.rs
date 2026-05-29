@@ -12,6 +12,10 @@ pub async fn register(
     session: Session,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<Value>> {
+    let mode = state.get_app_mode().await.unwrap_or_default();
+    if mode != "multi" {
+        return Err(AppError::Forbidden);
+    }
     if req.username.len() < 2 || req.username.len() > 40 {
         return Err(AppError::BadRequest("Username must be 2-40 characters".into()));
     }
@@ -61,6 +65,10 @@ pub async fn login(
     session: Session,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<Value>> {
+    let mode = state.get_app_mode().await.unwrap_or_default();
+    if mode != "multi" {
+        return Err(AppError::Forbidden);
+    }
     let row = sqlx::query(
         "SELECT id, username, password_hash, is_admin FROM users WHERE LOWER(username) = LOWER($1)",
     )

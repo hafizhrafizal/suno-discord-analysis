@@ -31,30 +31,33 @@ function ProtectedRoute() {
   const [redirect, setRedirect] = useState<string | null>(null)
 
   useEffect(() => {
-    if (user) {
-      setLoading(false)
-      return
-    }
-    const check = async () => {
+    ;(async () => {
       try {
-        const me = await apiFetch<User>('/auth/me')
-        setUser(me)
-        try {
-          const modeData = await apiFetch<{ mode: string }>('/auth/app-mode').catch(() => ({ mode: 'single' }))
-          setAppMode(modeData?.mode ?? 'single')
-        } catch {
-          setAppMode('single')
+        const modeData = await apiFetch<{ mode: string }>('/auth/app-mode').catch(() => ({ mode: 'single' }))
+        const mode = modeData?.mode ?? 'single'
+        setAppMode(mode)
+
+        if (mode !== 'multi') {
+          // Non-multi modes: no login required — backend returns synthetic user
+          return
         }
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 401) {
-          setRedirect('/login')
+
+        // Multi mode: verify an active session exists
+        if (user) return
+        try {
+          const me = await apiFetch<User>('/auth/me')
+          setUser(me)
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 401) {
+            setRedirect('/login')
+          }
         }
       } finally {
         setLoading(false)
       }
-    }
-    check()
-  }, [user, setUser, setAppMode])
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (loading) {
     return (
