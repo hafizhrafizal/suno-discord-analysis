@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../api/client'
 import { getUserStyle } from '../utils/colors'
+import { randomPaletteColor } from '../utils/palette'
+import ColorPicker from '../components/ui/ColorPicker'
 import type { Code, Message } from '../types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -168,7 +170,7 @@ function BookmarkCard({
   const [ctxMessages, setCtxMessages] = useState<Message[]>([])
   const [codeOpen, setCodeOpen] = useState(false)
   const [codeSearch, setCodeSearch] = useState('')
-  const [newCodeColor, setNewCodeColor] = useState('#0d3e7f')
+  const [newCodeColor, setNewCodeColor] = useState(() => randomPaletteColor())
   const [adding, setAdding] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [suggFocusIdx, setSuggFocusIdx] = useState(-1)
@@ -177,7 +179,7 @@ function BookmarkCard({
 
   // HL panel state
   const [hlSearch, setHlSearch] = useState('')
-  const [hlNewColor, setHlNewColor] = useState('#0d3e7f')
+  const [hlNewColor, setHlNewColor] = useState(() => randomPaletteColor())
   const [hlAdding, setHlAdding] = useState(false)
   const [hlShowSugg, setHlShowSugg] = useState(false)
   const [hlSuggFocusIdx, setHlSuggFocusIdx] = useState(-1)
@@ -506,12 +508,7 @@ function BookmarkCard({
                   </div>
                 )}
               </div>
-              <input
-                type="color"
-                value={newCodeColor}
-                onChange={(e) => setNewCodeColor(e.target.value)}
-                className="h-8 w-10 cursor-pointer border border-gray-300"
-              />
+              <ColorPicker value={newCodeColor} onChange={setNewCodeColor} />
               <button
                 onClick={handleCreate}
                 disabled={adding || !codeSearch.trim()}
@@ -627,12 +624,7 @@ function BookmarkCard({
                   </div>
                 )}
               </div>
-              <input
-                type="color"
-                value={hlNewColor}
-                onChange={(e) => setHlNewColor(e.target.value)}
-                className="h-8 w-10 cursor-pointer border border-gray-300"
-              />
+              <ColorPicker value={hlNewColor} onChange={setHlNewColor} />
               <button
                 onClick={handleHlCreate}
                 disabled={hlAdding || !hlSearch.trim()}
@@ -965,6 +957,26 @@ export default function BookmarksPage() {
     (b) => (b.codes?.length ?? 0) > 0 || (b.highlights?.length ?? 0) > 0,
   ).length
 
+  // ── Infinite scroll ───────────────────────────────────────────────────────────
+  const [visibleCount, setVisibleCount] = useState(10)
+  const ioRef = useRef<IntersectionObserver | null>(null)
+
+  // Callback ref: fires whenever the sentinel mounts or unmounts
+  const sentinelRef = useCallback((node: HTMLDivElement | null) => {
+    if (ioRef.current) { ioRef.current.disconnect(); ioRef.current = null }
+    if (!node) return
+    ioRef.current = new IntersectionObserver(
+      (entries) => { if (entries[0].isIntersecting) setVisibleCount((c) => c + 20) },
+      { rootMargin: '400px' },
+    )
+    ioRef.current.observe(node)
+  }, [])
+
+  // Reset to first page when filters or sort change
+  useEffect(() => {
+    setVisibleCount(10)
+  }, [filterUser, filterText, filterSuno, filterCoded, periodFrom, periodTo, sortKey, sortDir])
+
   const handleCloseAll = () => {
     setCloseAllStamp((s) => s + 1)
     setActiveHl(null)
@@ -1005,144 +1017,132 @@ export default function BookmarksPage() {
 
       {/* Sticky filter bar */}
       <div
-        className="sticky top-0 z-30 bg-white shadow border border-gray-200 px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2"
+        className="sticky top-0 z-30 bg-white border-b border-gray-100 shadow-sm px-4 py-3"
         role="search"
         aria-label="Bookmark filters"
       >
-        {/* Row 1 controls */}
-        <span className="font-semibold text-sm text-gray-800 shrink-0">Context</span>
-        <label className="flex items-center gap-1.5 text-sm text-gray-700">
-          <span className="text-xs shrink-0">Before</span>
-          <input
-            type="number"
-            value={ctxBefore}
-            onChange={(e) => setCtxBefore(parseInt(e.target.value) || 0)}
-            min={0}
-            max={100}
-            className="w-14 border border-gray-400 px-2 py-1 text-sm text-center text-gray-900"
-          />
-          <span className="text-gray-600 text-xs">msgs</span>
-        </label>
-        <label className="flex items-center gap-1.5 text-sm text-gray-700">
-          <span className="text-xs shrink-0">After</span>
-          <input
-            type="number"
-            value={ctxAfter}
-            onChange={(e) => setCtxAfter(parseInt(e.target.value) || 0)}
-            min={0}
-            max={100}
-            className="w-14 border border-gray-400 px-2 py-1 text-sm text-center text-gray-900"
-          />
-          <span className="text-gray-600 text-xs">msgs</span>
-        </label>
-        <label className="flex items-center gap-1.5 text-sm text-gray-700">
-          <span className="text-xs shrink-0">Sort</span>
-          <select
-            value={sortKey}
-            onChange={(e) => setSortKey(e.target.value as SortKey)}
-            className="border border-gray-400 px-2 py-1 text-sm text-gray-900 cursor-pointer"
-          >
-            <option value="date">Content date</option>
-            <option value="added">Bookmark added</option>
-            <option value="username">Username</option>
-          </select>
-          <button
-            onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
-            className="border border-gray-400 px-2 py-1 text-sm text-gray-700 hover:bg-gray-100 transition-colors select-none"
-          >
-            {sortDir === 'desc' ? '↓ Desc' : '↑ Asc'}
-          </button>
-        </label>
-        <label className="flex items-center gap-1.5 text-sm text-gray-700">
-          <span className="shrink-0 text-xs">Username</span>
-          <input
-            type="text"
-            value={filterUserRaw}
-            onChange={(e) => setFilterUserRaw(e.target.value)}
-            placeholder="Filter by username…"
-            className="border border-gray-400 px-2 py-1 text-sm text-gray-900 w-28 sm:w-36 min-w-0"
-          />
-        </label>
-        <label className="flex items-center gap-1.5 text-sm text-gray-700">
-          <span className="text-xs shrink-0">Suno</span>
-          <select
-            value={filterSuno}
-            onChange={(e) => setFilterSuno(e.target.value as SunoFilter)}
-            className="border border-gray-400 px-2 py-1 text-sm text-gray-900 cursor-pointer"
-          >
-            <option value="all">All</option>
-            <option value="only">Only Suno</option>
-            <option value="exclude">Exclude Suno</option>
-          </select>
-        </label>
-        <label className="flex items-center gap-1.5 text-sm text-gray-700">
-          <span className="text-xs shrink-0">Coded</span>
-          <select
-            value={filterCoded}
-            onChange={(e) => setFilterCoded(e.target.value as CodedFilter)}
-            className="border border-gray-400 px-2 py-1 text-sm text-gray-900 cursor-pointer"
-          >
-            <option value="all">All</option>
-            <option value="coded">Coded only</option>
-            <option value="uncoded">Uncoded only</option>
-          </select>
-        </label>
-        <label className="flex items-center gap-1.5 text-sm text-gray-700">
-          <span className="shrink-0 text-xs">Search</span>
-          <input
-            type="text"
-            value={filterTextRaw}
-            onChange={(e) => setFilterTextRaw(e.target.value)}
-            placeholder="Content search…"
-            className="border border-gray-400 px-2 py-1 text-sm text-gray-900 w-40 sm:w-52 min-w-0"
-          />
-        </label>
-        <button
-          onClick={handleCloseAll}
-          className="text-xs px-2 py-1 border border-gray-300 text-gray-600 hover:bg-gray-100 transition-colors shrink-0"
-          title="Close all open panels"
-        >
-          Close all panels
-        </button>
-        <button
-          onClick={() => refetch()}
-          className="ml-auto text-xs font-semibold text-indigo-700 hover:underline shrink-0"
-        >
-          Refresh
-        </button>
-
-        {/* Period filter row */}
-        <div className="w-full flex flex-wrap items-center gap-2 pt-2 border-t border-gray-200">
-          <span className="text-xs text-gray-700 font-semibold shrink-0">Period:</span>
-          <label className="flex items-center gap-1.5 text-sm text-gray-700">
-            <span className="text-xs shrink-0">From</span>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="filter-label">Username</label>
+            <input
+              type="text"
+              value={filterUserRaw}
+              onChange={(e) => setFilterUserRaw(e.target.value)}
+              placeholder="filter…"
+              className="search-input text-xs py-1 w-32"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="filter-label">Content</label>
+            <input
+              type="text"
+              value={filterTextRaw}
+              onChange={(e) => setFilterTextRaw(e.target.value)}
+              placeholder="filter…"
+              className="search-input text-xs py-1 w-40"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="filter-label">Suno Team</label>
+            <select
+              value={filterSuno}
+              onChange={(e) => setFilterSuno(e.target.value as SunoFilter)}
+              className="search-input text-xs py-1 cursor-pointer"
+            >
+              <option value="all">All</option>
+              <option value="only">Only Suno</option>
+              <option value="exclude">Exclude Suno</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="filter-label">Coded</label>
+            <select
+              value={filterCoded}
+              onChange={(e) => setFilterCoded(e.target.value as CodedFilter)}
+              className="search-input text-xs py-1 cursor-pointer"
+            >
+              <option value="all">All</option>
+              <option value="coded">Coded only</option>
+              <option value="uncoded">Uncoded only</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="filter-label">Sort</label>
+            <div className="flex">
+              <select
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as SortKey)}
+                className="search-input text-xs py-1 cursor-pointer"
+              >
+                <option value="date">Msg Date</option>
+                <option value="added">Saved Date</option>
+                <option value="username">Username</option>
+              </select>
+              <button
+                onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+                className="search-input text-xs py-1 px-2 border-l-0 hover:bg-gray-100 select-none"
+              >
+                {sortDir === 'desc' ? '↓' : '↑'}
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="filter-label">From</label>
             <input
               type="date"
               value={periodFrom}
               onChange={(e) => setPeriodFrom(e.target.value)}
-              className="border border-gray-400 px-2 py-1 text-sm text-gray-900"
+              className="search-input text-xs py-1"
             />
-          </label>
-          <label className="flex items-center gap-1.5 text-sm text-gray-700">
-            <span className="text-xs shrink-0">To</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="filter-label">To</label>
             <input
               type="date"
               value={periodTo}
               onChange={(e) => setPeriodTo(e.target.value)}
-              className="border border-gray-400 px-2 py-1 text-sm text-gray-900"
+              className="search-input text-xs py-1"
             />
-          </label>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="filter-label">Context Window</label>
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                value={ctxBefore}
+                onChange={(e) => setCtxBefore(parseInt(e.target.value) || 0)}
+                min={0}
+                max={100}
+                className="search-input text-xs py-1 w-14 text-center"
+              />
+              <span className="text-xs text-gray-400">↑</span>
+              <input
+                type="number"
+                value={ctxAfter}
+                onChange={(e) => setCtxAfter(parseInt(e.target.value) || 0)}
+                min={0}
+                max={100}
+                className="search-input text-xs py-1 w-14 text-center"
+              />
+              <span className="text-xs text-gray-400">↓</span>
+            </div>
+          </div>
+          {(filterUserRaw || filterTextRaw || filterSuno !== 'all' || filterCoded !== 'all' || periodFrom || periodTo) && (
+            <button
+              onClick={() => { setFilterUserRaw(''); setFilterTextRaw(''); setFilterSuno('all'); setFilterCoded('all'); setPeriodFrom(''); setPeriodTo('') }}
+              className="self-end pb-1 text-xs text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              Clear
+            </button>
+          )}
           <button
-            onClick={() => {
-              setPeriodFrom('')
-              setPeriodTo('')
-            }}
-            className="text-xs text-gray-400 hover:text-gray-700 px-2 py-1"
+            onClick={() => refetch()}
+            className="self-end ml-auto pb-1 text-xs font-semibold text-indigo-700 hover:underline shrink-0"
           >
-            Clear
+            Refresh
           </button>
         </div>
-
       </div>
 
       {/* Bookmarks list */}
@@ -1176,27 +1176,34 @@ export default function BookmarksPage() {
                 : 'No bookmarks match the current filters.'}
             </p>
           ) : (
-            sorted.map((bm) => (
-              <BookmarkCard
-                key={bm.id}
-                bookmark={bm}
-                ctxBefore={ctxBefore}
-                ctxAfter={ctxAfter}
-                allCodes={allCodes}
-                isHlOpen={activeHl?.bmId === bm.id}
-                hlText={activeHl?.bmId === bm.id ? activeHl.text : ''}
-                hlSegs={activeHl?.bmId === bm.id ? activeHl.segs : []}
-                closeAllStamp={closeAllStamp}
-                onDelete={() => deleteBookmark(bm.id)}
-                onAddCode={(codeId) => addCode(bm.id, codeId)}
-                onRemoveCode={(codeId) => removeCode(bm.id, codeId)}
-                onNewCode={(name, color) => createCode(name, color)}
-                onAddHighlight={addHighlight}
-                onRemoveHighlight={removeHighlight}
-                onOpenHlPanel={() => setActiveHl({ bmId: bm.id, text: '', segs: [] })}
-                onCloseHlPanel={() => setActiveHl(null)}
-              />
-            ))
+            <>
+              {sorted.slice(0, visibleCount).map((bm) => (
+                <BookmarkCard
+                  key={bm.id}
+                  bookmark={bm}
+                  ctxBefore={ctxBefore}
+                  ctxAfter={ctxAfter}
+                  allCodes={allCodes}
+                  isHlOpen={activeHl?.bmId === bm.id}
+                  hlText={activeHl?.bmId === bm.id ? activeHl.text : ''}
+                  hlSegs={activeHl?.bmId === bm.id ? activeHl.segs : []}
+                  closeAllStamp={closeAllStamp}
+                  onDelete={() => deleteBookmark(bm.id)}
+                  onAddCode={(codeId) => addCode(bm.id, codeId)}
+                  onRemoveCode={(codeId) => removeCode(bm.id, codeId)}
+                  onNewCode={(name, color) => createCode(name, color)}
+                  onAddHighlight={addHighlight}
+                  onRemoveHighlight={removeHighlight}
+                  onOpenHlPanel={() => setActiveHl({ bmId: bm.id, text: '', segs: [] })}
+                  onCloseHlPanel={() => setActiveHl(null)}
+                />
+              ))}
+              {visibleCount < sorted.length && (
+                <div ref={sentinelRef} className="py-4 text-center text-xs text-gray-400">
+                  Showing {Math.min(visibleCount, sorted.length)} of {sorted.length} — scroll for more
+                </div>
+              )}
+            </>
           )}
         </div>
       </section>

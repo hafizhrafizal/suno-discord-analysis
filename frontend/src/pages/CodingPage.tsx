@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../api/client'
+import ColorPicker from '../components/ui/ColorPicker'
 import type { Code, CodeCategory, Bookmark, BookmarkCode, ContextMessage } from '../types'
 
 type PageTab = 'manager' | 'table'
@@ -353,10 +355,22 @@ export default function CodingPage() {
     navigate(`/coding/${tab}`)
   }
 
-  const [codes, setCodes] = useState<CodeExt[]>([])
-  const [categories, setCategories] = useState<CodeCategoryExt[]>([])
-  const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
-  const [bookmarkCodes, setBookmarkCodes] = useState<BookmarkCode[]>([])
+  const queryClient = useQueryClient()
+  const { data: _codes } = useQuery<CodeExt[]>({ queryKey: ['codes'], queryFn: () => apiFetch('/codes') })
+  const { data: _categories } = useQuery<CodeCategoryExt[]>({ queryKey: ['code-categories'], queryFn: () => apiFetch('/code-categories') })
+  const { data: _bookmarks } = useQuery<Bookmark[]>({ queryKey: ['bookmarks'], queryFn: () => apiFetch('/bookmarks') })
+  const { data: _bookmarkCodes } = useQuery<BookmarkCode[]>({ queryKey: ['bookmark-codes'], queryFn: () => apiFetch('/bookmark-codes') })
+
+  // Initialize from cache so navigating back shows data instantly (no empty flash)
+  const [codes, setCodes] = useState<CodeExt[]>(() => queryClient.getQueryData<CodeExt[]>(['codes']) ?? [])
+  const [categories, setCategories] = useState<CodeCategoryExt[]>(() => queryClient.getQueryData<CodeCategoryExt[]>(['code-categories']) ?? [])
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => (queryClient.getQueryData<Bookmark[]>(['bookmarks']) ?? []) as Bookmark[])
+  const [bookmarkCodes, setBookmarkCodes] = useState<BookmarkCode[]>(() => queryClient.getQueryData<BookmarkCode[]>(['bookmark-codes']) ?? [])
+
+  useEffect(() => { if (_codes) setCodes(_codes) }, [_codes])
+  useEffect(() => { if (_categories) setCategories(_categories) }, [_categories])
+  useEffect(() => { if (_bookmarks) setBookmarks(_bookmarks as Bookmark[]) }, [_bookmarks])
+  useEffect(() => { if (_bookmarkCodes) setBookmarkCodes(_bookmarkCodes) }, [_bookmarkCodes])
 
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -370,6 +384,7 @@ export default function CodingPage() {
   const [dragOverCodeId, setDragOverCodeId] = useState<number | null>(null)
   const [showNewCode, setShowNewCode] = useState(false)
   const [showNewCat, setShowNewCat] = useState(false)
+  const [codeSearchFilter, setCodeSearchFilter] = useState('')
 
   const [newCodeName, setNewCodeName] = useState('')
   const [newCodeColor, setNewCodeColor] = useState('#0d3e7f')
@@ -409,20 +424,12 @@ export default function CodingPage() {
   const [catEditParentId, setCatEditParentId] = useState('')
   const [catEditMsg, setCatEditMsg] = useState('')
 
-  const loadAll = async () => {
-    const [c, cats, bms, bcs] = await Promise.all([
-      apiFetch<CodeExt[]>('/codes').catch(() => [] as CodeExt[]),
-      apiFetch<CodeCategoryExt[]>('/code-categories').catch(() => [] as CodeCategoryExt[]),
-      apiFetch<Bookmark[]>('/bookmarks').catch(() => [] as Bookmark[]),
-      apiFetch<BookmarkCode[]>('/bookmark-codes').catch(() => [] as BookmarkCode[]),
-    ])
-    setCodes(c)
-    setCategories(cats)
-    setBookmarks(bms)
-    setBookmarkCodes(bcs)
+  const loadAll = () => {
+    queryClient.invalidateQueries({ queryKey: ['codes'] })
+    queryClient.invalidateQueries({ queryKey: ['code-categories'] })
+    queryClient.invalidateQueries({ queryKey: ['bookmarks'] })
+    queryClient.invalidateQueries({ queryKey: ['bookmark-codes'] })
   }
-
-  useEffect(() => { loadAll() }, [])
 
   const filterActive = !!(dateFrom || dateTo || authorFilter !== 'all')
 
@@ -801,6 +808,14 @@ export default function CodingPage() {
   const visibleTreeRoots = filterActive ? treeRoots.filter(treeNodeHasVisible) : treeRoots
   const visibleUncategorized = filterActive ? uncategorized.filter(codeHasFilteredExcerpts) : uncategorized
 
+  const codeFilterLower = codeSearchFilter.trim().toLowerCase()
+  const flatSearchResults = codeFilterLower
+    ? codes.filter(c =>
+        c.name.toLowerCase().includes(codeFilterLower) ||
+        (c.description ?? '').toLowerCase().includes(codeFilterLower)
+      ).sort((a, b) => a.name.localeCompare(b.name))
+    : []
+
   return (
     <div className="max-w-5xl mx-auto px-3 sm:px-4 py-4 space-y-4">
 
@@ -820,51 +835,51 @@ export default function CodingPage() {
       </div>
 
       {/* Shared filter bar */}
-      <div className="bg-white rounded-2xl shadow px-4 py-3 flex flex-wrap items-center gap-3">
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide shrink-0">Filter Quotes</span>
-        <div className="flex items-center gap-1.5">
-          <label className="text-xs text-gray-500">From</label>
+      <div className="bg-white rounded-2xl shadow px-4 py-3 flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <label className="filter-label">From</label>
           <input
             type="date"
             value={dateFrom}
             onChange={e => setDateFrom(e.target.value)}
-            className="border border-gray-300 px-2 py-1 text-xs text-gray-700 cursor-pointer"
+            className="search-input text-xs py-1 cursor-pointer"
           />
         </div>
-        <div className="flex items-center gap-1.5">
-          <label className="text-xs text-gray-500">To</label>
+        <div className="flex flex-col gap-1">
+          <label className="filter-label">To</label>
           <input
             type="date"
             value={dateTo}
             onChange={e => setDateTo(e.target.value)}
-            className="border border-gray-300 px-2 py-1 text-xs text-gray-700 cursor-pointer"
+            className="search-input text-xs py-1 cursor-pointer"
           />
         </div>
         {filterActive && (
           <button
             onClick={() => { setDateFrom(''); setDateTo(''); setAuthorFilter('all') }}
-            className="text-xs text-gray-400 hover:text-red-500 transition-colors ml-auto"
+            className="self-end pb-1 text-xs text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1"
           >
-            ✕ Clear
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            Clear
           </button>
         )}
 
         <div className="w-full flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
-          <span className="text-xs text-gray-400 shrink-0">Phase:</span>
+          <span className="filter-label self-center shrink-0">Phase</span>
           <button
-            onClick={() => setPhase(1)}
+            onClick={() => activePhase === 1 ? (setDateFrom(''), setDateTo('')) : setPhase(1)}
             className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${activePhase === 1 ? 'border-blue-400 bg-blue-100 text-blue-800' : 'border-blue-300 text-blue-700 hover:bg-blue-50'}`}
           >
             Phase 1 — Capability Surfacing <span className="opacity-60 ml-1">Apr - 18 Jul 2023</span>
           </button>
           <button
-            onClick={() => setPhase(2)}
+            onClick={() => activePhase === 2 ? (setDateFrom(''), setDateTo('')) : setPhase(2)}
             className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${activePhase === 2 ? 'border-amber-400 bg-amber-100 text-amber-800' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}
           >
             Phase 2 — Enclosure &amp; Scrutiny <span className="opacity-60 ml-1">19 Jul - 5 Sep 2023</span>
           </button>
           <button
-            onClick={() => setPhase(3)}
+            onClick={() => activePhase === 3 ? (setDateFrom(''), setDateTo('')) : setPhase(3)}
             className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${activePhase === 3 ? 'border-emerald-400 bg-emerald-100 text-emerald-800' : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}
           >
             Phase 3 — Commercialization <span className="opacity-60 ml-1">Sep 2023 - onward</span>
@@ -872,7 +887,7 @@ export default function CodingPage() {
         </div>
 
         <div className="w-full flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
-          <span className="text-xs text-gray-400 shrink-0">Author:</span>
+          <span className="filter-label self-center shrink-0">Author</span>
           <button
             onClick={() => setAuthorFilter('all')}
             className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
@@ -882,7 +897,7 @@ export default function CodingPage() {
             All authors
           </button>
           <button
-            onClick={() => setAuthorFilter('only')}
+            onClick={() => setAuthorFilter(authorFilter === 'only' ? 'all' : 'only')}
             className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
               authorFilter === 'only' ? 'border-violet-400 bg-violet-100 text-violet-800' : 'border-violet-300 text-violet-700 hover:bg-violet-50'
             }`}
@@ -890,7 +905,7 @@ export default function CodingPage() {
             Suno team only
           </button>
           <button
-            onClick={() => setAuthorFilter('exclude')}
+            onClick={() => setAuthorFilter(authorFilter === 'exclude' ? 'all' : 'exclude')}
             className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
               authorFilter === 'exclude' ? 'border-rose-400 bg-rose-100 text-rose-800' : 'border-rose-300 text-rose-700 hover:bg-rose-50'
             }`}
@@ -902,196 +917,196 @@ export default function CodingPage() {
 
       {/* ── Coding Manager section ── */}
       {pageTab === 'manager' && (
-        <div className="space-y-4">
+        <div className="flex gap-4 items-start">
 
-          {/* Toolbar */}
-          <div className="bg-white rounded-2xl shadow px-5 py-3 flex flex-wrap items-center gap-3">
-            <button
-              onClick={() => { setShowNewCode(true); setShowNewCat(false) }}
-              className="px-3 py-1.5 text-xs font-semibold bg-indigo-700 text-white hover:bg-indigo-800 transition-colors"
-            >
-              + New Open Coding
-            </button>
-            <button
-              onClick={() => { setShowNewCat(true); setShowNewCode(false) }}
-              className="px-3 py-1.5 text-xs font-semibold bg-slate-600 text-white hover:bg-slate-700 transition-colors"
-            >
-              + New Higher Level Coding
-            </button>
+          {/* Left column: toolbar + forms + tree */}
+          <div className="flex-1 min-w-0 space-y-3">
+
+            {/* Toolbar */}
+            <div className="bg-white rounded-2xl shadow px-4 py-3 flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => { setShowNewCode(v => !v); setShowNewCat(false) }}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${showNewCode ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-indigo-700 text-white hover:bg-indigo-800'}`}
+              >
+                + Open Coding
+              </button>
+              <button
+                onClick={() => { setShowNewCat(v => !v); setShowNewCode(false) }}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${showNewCat ? 'bg-slate-100 text-slate-700 border border-slate-300' : 'bg-slate-600 text-white hover:bg-slate-700'}`}
+              >
+                + Higher Level Coding
+              </button>
+              <div className="flex items-center gap-1 ml-auto">
+                <button onClick={() => setCollapsedCats(new Set(categories.map(c => c.id)))} title="Collapse all" className="text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded px-2 py-1 transition-colors">⊟ Collapse</button>
+                <button onClick={() => { setCollapsedCats(new Set()); setExpandedCodes(new Set(codes.map(c => c.id))) }} title="Expand all" className="text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded px-2 py-1 transition-colors">⊞ Expand</button>
+                <label className="flex items-center gap-1.5 cursor-pointer text-xs border border-amber-200 rounded px-2 py-1 select-none hover:bg-amber-50 text-amber-700">
+                  <input type="checkbox" checked={mergeMode} onChange={e => { setMergeMode(e.target.checked); setMergeSelected(new Set()) }} className="accent-amber-500" />
+                  Merge
+                </label>
+                <button onClick={loadAll} title="Refresh" className="text-xs text-gray-400 hover:text-indigo-600 border border-gray-200 rounded px-2 py-1">↻</button>
+              </div>
+            </div>
+
+            {/* Merge action bar */}
             {mergeMode && mergeSelected.size >= 2 && (
-              <button
-                onClick={doMerge}
-                className="px-3 py-1.5 text-xs font-semibold border border-amber-500 text-amber-700 hover:bg-amber-50 transition-colors"
-              >
-                Merge Selected ({mergeSelected.size})
-              </button>
+              <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-2 flex items-center gap-3">
+                <span className="text-xs text-amber-700 font-semibold">{mergeSelected.size} codes selected</span>
+                <button onClick={doMerge} className="px-3 py-1 text-xs font-semibold bg-amber-500 text-white hover:bg-amber-600 rounded transition-colors">Merge into first selected</button>
+                <button onClick={() => { setMergeMode(false); setMergeSelected(new Set()) }} className="text-xs text-gray-500 hover:text-gray-700 ml-auto">Cancel</button>
+              </div>
             )}
-            {mergeMode && (
-              <button
-                onClick={() => { setMergeMode(false); setMergeSelected(new Set()) }}
-                className="px-3 py-1.5 text-xs font-semibold border border-gray-300 text-gray-500 hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-            )}
-            <button
-              onClick={() => setCollapsedCats(new Set(categories.map(c => c.id)))}
-              className="text-xs text-gray-500 hover:text-gray-700 border border-gray-300 hover:border-gray-400 px-2.5 py-1 transition-colors"
-            >
-              Collapse all
-            </button>
-            <button
-              onClick={() => { setCollapsedCats(new Set()); setExpandedCodes(new Set(codes.map(c => c.id))) }}
-              className="text-xs text-gray-500 hover:text-gray-700 border border-gray-300 hover:border-gray-400 px-2.5 py-1 transition-colors"
-            >
-              Expand all
-            </button>
-            <label className="flex items-center gap-2 ml-auto cursor-pointer text-xs text-gray-600 select-none">
-              <input
-                type="checkbox"
-                checked={mergeMode}
-                onChange={e => { setMergeMode(e.target.checked); setMergeSelected(new Set()) }}
-                className="accent-amber-500"
-              />
-              Select to merge
-            </label>
-            <button onClick={loadAll} className="text-xs text-indigo-600 hover:underline ml-2">&#8635; Refresh</button>
-          </div>
 
-          {/* New code panel */}
-          {showNewCode && (
-            <div className="bg-white rounded-2xl shadow p-4 border-l-4 border-indigo-500">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">New Open Coding</h3>
-              <div className="flex flex-wrap gap-3 items-end">
-                <div className="flex-1 min-w-[10rem]">
-                  <label className="text-xs text-gray-600 mb-1 block">Name *</label>
+            {/* New open coding form */}
+            {showNewCode && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
+                <h3 className="text-xs font-semibold text-indigo-800 mb-2">New Open Coding</h3>
+                <div className="flex flex-wrap gap-2 items-end">
+                  <div className="flex-1 min-w-[10rem]">
+                    <label className="filter-label mb-1 block">Name *</label>
+                    <input type="text" maxLength={80} value={newCodeName} onChange={e => setNewCodeName(e.target.value)} onKeyDown={e => e.key === 'Enter' && createCode()} placeholder="Open coding name…" className="w-full search-input text-sm" />
+                  </div>
+                  <div>
+                    <label className="filter-label mb-1 block">Color</label>
+                    <ColorPicker value={newCodeColor} onChange={setNewCodeColor} />
+                  </div>
+                  <div className="flex-1 min-w-[9rem]">
+                    <label className="filter-label mb-1 block">Higher level coding (optional)</label>
+                    <select value={newCodeCatId} onChange={e => setNewCodeCatId(e.target.value)} className="w-full search-input text-sm">
+                      <option value="">— Uncategorized —</option>
+                      {sortedCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex gap-1.5 self-end">
+                    <button onClick={createCode} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-700 text-white hover:bg-indigo-800 transition-colors">Create</button>
+                    <button onClick={() => { setShowNewCode(false); setNewCodeMsg('') }} className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 text-gray-600 hover:bg-white transition-colors">✕</button>
+                  </div>
+                </div>
+                {newCodeMsg && <p className="text-xs text-red-600 mt-1.5">{newCodeMsg}</p>}
+              </div>
+            )}
+
+            {/* New higher level coding form */}
+            {showNewCat && (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+                <h3 className="text-xs font-semibold text-slate-700 mb-2">New Higher Level Coding</h3>
+                <div className="flex flex-wrap gap-2 items-end">
+                  <div className="flex-1 min-w-[10rem]">
+                    <label className="filter-label mb-1 block">Name *</label>
+                    <input type="text" maxLength={60} value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === 'Enter' && createCat()} placeholder="Higher level coding name…" className="w-full search-input text-sm" />
+                  </div>
+                  <div>
+                    <label className="filter-label mb-1 block">Color</label>
+                    <ColorPicker value={newCatColor} onChange={setNewCatColor} />
+                  </div>
+                  <div className="flex-1 min-w-[9rem]">
+                    <label className="filter-label mb-1 block">Parent (optional)</label>
+                    <select value={newCatParentId} onChange={e => setNewCatParentId(e.target.value)} className="w-full search-input text-sm">
+                      <option value="">— Root level —</option>
+                      {sortedCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex gap-1.5 self-end">
+                    <button onClick={createCat} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-600 text-white hover:bg-slate-700 transition-colors">Create</button>
+                    <button onClick={() => { setShowNewCat(false); setNewCatMsg('') }} className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 text-gray-600 hover:bg-white transition-colors">✕</button>
+                  </div>
+                </div>
+                {newCatMsg && <p className="text-xs text-red-600 mt-1.5">{newCatMsg}</p>}
+              </div>
+            )}
+
+            {/* Tree / search results panel */}
+            <section className="bg-white rounded-2xl shadow p-4">
+
+              {/* Tree header: stats + keyword search */}
+              <div className="flex items-center gap-3 mb-3 pb-3 border-b border-gray-100">
+                <div>
+                  <span className="text-sm font-semibold text-gray-700">{codeFilterLower ? 'Search Results' : 'Code Tree'}</span>
+                  <span className="ml-2 text-xs text-gray-400">{categories.length} categories · {codes.length} codes · {bookmarkCodes.length} quotes</span>
+                </div>
+                <div className="relative ml-auto w-52">
                   <input
                     type="text"
-                    maxLength={80}
-                    value={newCodeName}
-                    onChange={e => setNewCodeName(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && createCode()}
-                    placeholder="Open coding name…"
-                    className="w-full border border-gray-300 px-3 py-1.5 text-sm"
+                    value={codeSearchFilter}
+                    onChange={e => setCodeSearchFilter(e.target.value)}
+                    placeholder="Filter codes…"
+                    className="w-full border border-gray-300 rounded-lg pl-3 pr-7 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
                   />
+                  {codeSearchFilter
+                    ? <button onClick={() => setCodeSearchFilter('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm leading-none">×</button>
+                    : <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 text-xs pointer-events-none">⌕</span>
+                  }
                 </div>
-                <div>
-                  <label className="text-xs text-gray-600 mb-1 block">Color</label>
-                  <input type="color" value={newCodeColor} onChange={e => setNewCodeColor(e.target.value)} className="h-8 w-10 cursor-pointer border border-gray-300" />
-                </div>
-                <div className="flex-1 min-w-[10rem]">
-                  <label className="text-xs text-gray-600 mb-1 block">Higher-Order Coding (optional)</label>
-                  <select value={newCodeCatId} onChange={e => setNewCodeCatId(e.target.value)} className="w-full border border-gray-300 px-3 py-1.5 text-sm">
-                    <option value="">— Uncategorized —</option>
-                    {sortedCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
+                {codeFilterLower && (
+                  <span className="text-xs text-indigo-600 font-medium shrink-0">{flatSearchResults.length} match{flatSearchResults.length !== 1 ? 'es' : ''}</span>
+                )}
               </div>
-              {newCodeMsg && <p className="text-xs text-red-600 mt-2">{newCodeMsg}</p>}
-              <div className="flex gap-2 mt-3">
-                <button onClick={createCode} className="px-4 py-1.5 text-xs font-semibold bg-indigo-700 text-white hover:bg-indigo-800 transition-colors">
-                  Create Open Coding
-                </button>
-                <button onClick={() => { setShowNewCode(false); setNewCodeMsg('') }} className="px-4 py-1.5 text-xs font-semibold border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
 
-          {/* New category panel */}
-          {showNewCat && (
-            <div className="bg-white rounded-2xl shadow p-4 border-l-4 border-slate-400">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">New Coding (2nd-order or higher)</h3>
-              <div className="flex flex-wrap gap-3 items-end">
-                <div className="flex-1 min-w-[10rem]">
-                  <label className="text-xs text-gray-600 mb-1 block">Name *</label>
-                  <input
-                    type="text"
-                    maxLength={60}
-                    value={newCatName}
-                    onChange={e => setNewCatName(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && createCat()}
-                    placeholder="Coding name…"
-                    className="w-full border border-gray-300 px-3 py-1.5 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-600 mb-1 block">Color</label>
-                  <input type="color" value={newCatColor} onChange={e => setNewCatColor(e.target.value)} className="h-8 w-10 cursor-pointer border border-gray-300" />
-                </div>
-                <div className="flex-1 min-w-[10rem]">
-                  <label className="text-xs text-gray-600 mb-1 block">Parent Coding (optional)</label>
-                  <select value={newCatParentId} onChange={e => setNewCatParentId(e.target.value)} className="w-full border border-gray-300 px-3 py-1.5 text-sm">
-                    <option value="">— Root level (2nd-order) —</option>
-                    {sortedCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-              </div>
-              {newCatMsg && <p className="text-xs text-red-600 mt-2">{newCatMsg}</p>}
-              <div className="flex gap-2 mt-3">
-                <button onClick={createCat} className="px-4 py-1.5 text-xs font-semibold bg-slate-600 text-white hover:bg-slate-700 transition-colors">
-                  Create Coding
-                </button>
-                <button onClick={() => { setShowNewCat(false); setNewCatMsg('') }} className="px-4 py-1.5 text-xs font-semibold border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Main layout: tree + detail panel */}
-          <div className="flex gap-4 items-start">
-
-            {/* Tree list */}
-            <section className="flex-1 min-w-0 bg-white rounded-2xl shadow p-4">
-              <div className="space-y-1">
-                {codes.length === 0 && categories.length === 0 ? (
-                  <p className="text-sm text-gray-400 text-center py-8">
-                    {bookmarks.length === 0 ? 'Loading…' : 'No codes yet. Click "+ New Open Coding" to create your first code.'}
-                  </p>
-                ) : (
-                  <>
-                    {visibleTreeRoots.map(node => (
-                      <CatNode
-                        key={node.id}
-                        node={node}
-                        depth={0}
-                        collapsedCats={collapsedCats}
-                        onToggleCollapse={id => setCollapsedCats(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })}
-                        expandedCodes={expandedCodes}
-                        onToggleCode={openCodeDetail}
-                        filteredBmIds={filteredBmIds}
-                        bookmarks={bookmarks}
-                        bookmarkCodes={bookmarkCodes}
-                        mergeMode={mergeMode}
-                        mergeSelected={mergeSelected}
-                        onMergeToggle={toggleMergeSelect}
-                        activeCodeId={detailMode === 'code' ? (detailCode?.id ?? null) : null}
-                        activeCatId={detailMode === 'category' ? (detailCat?.id ?? null) : null}
-                        onOpenCat={openCatDetail}
-                        dnd={dnd}
-                        filterActive={filterActive}
-                        onOpenExcerpt={openExcerptDetail}
-                        onDeleteExcerptCode={deleteExcerptCode}
-                        activeExcerptKey={activeExcerptKey}
-                      />
-                    ))}
-                    {(!filterActive || visibleUncategorized.length > 0 || dragOverCatId === 0) && (
-                    <div className="mt-2">
+              {codes.length === 0 && categories.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-8">No codes yet. Click &ldquo;+ Open Coding&rdquo; to get started.</p>
+              ) : codeFilterLower && flatSearchResults.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-6">No codes match &ldquo;{codeSearchFilter}&rdquo;</p>
+              ) : codeFilterLower ? (
+                <div className="space-y-0.5">
+                  {flatSearchResults.map(code => {
+                    const codeExcerpts = bookmarkCodes.filter(bc => bc.code_id === code.id)
+                    const cat = categories.find(c => c.id === code.category_id)
+                    return (
                       <div
-                        className={`flex items-center gap-2 py-1.5 rounded-lg px-2 transition-colors ${dragOverCatId === 0 ? 'bg-indigo-100 ring-2 ring-indigo-400' : 'hover:bg-gray-50'}`}
-                        onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDragOverCatId(0) }}
-                        onDragLeave={e => { e.stopPropagation(); setDragOverCatId(null) }}
-                        onDrop={e => { e.stopPropagation(); dnd.onCodeDrop(e, null) }}
+                        key={code.id}
+                        onClick={() => openCodeDetail(code)}
+                        className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-colors ${detailMode === 'code' && detailCode?.id === code.id ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-gray-50'}`}
                       >
-                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex-1">Uncategorized Open Codings</span>
-                        {dragOverCatId === 0 && <span className="text-[10px] text-indigo-600 font-semibold">Drop here</span>}
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: code.color }} />
+                        <span className="text-sm text-gray-800 flex-1 min-w-0 truncate">{code.name}</span>
+                        {cat && <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 shrink-0">{cat.name}</span>}
+                        <span className="text-[10px] text-gray-400 shrink-0">{codeExcerpts.length} quotes</span>
                       </div>
-                      <div className="space-y-1 mt-1">
-                        {visibleUncategorized.map(code => {
-                          const codeExcerpts = bookmarkCodes.filter(bc => bc.code_id === code.id)
-                          return (
+                    )
+                  })}
+                </div>
+              ) : (
+              <div className="space-y-1">
+                {visibleTreeRoots.map(node => (
+                  <CatNode
+                    key={node.id}
+                    node={node}
+                    depth={0}
+                    collapsedCats={collapsedCats}
+                    onToggleCollapse={id => setCollapsedCats(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })}
+                    expandedCodes={expandedCodes}
+                    onToggleCode={openCodeDetail}
+                    filteredBmIds={filteredBmIds}
+                    bookmarks={bookmarks}
+                    bookmarkCodes={bookmarkCodes}
+                    mergeMode={mergeMode}
+                    mergeSelected={mergeSelected}
+                    onMergeToggle={toggleMergeSelect}
+                    activeCodeId={detailMode === 'code' ? (detailCode?.id ?? null) : null}
+                    activeCatId={detailMode === 'category' ? (detailCat?.id ?? null) : null}
+                    onOpenCat={openCatDetail}
+                    dnd={dnd}
+                    filterActive={filterActive}
+                    onOpenExcerpt={openExcerptDetail}
+                    onDeleteExcerptCode={deleteExcerptCode}
+                    activeExcerptKey={activeExcerptKey}
+                  />
+                ))}
+                {(!filterActive || visibleUncategorized.length > 0 || dragOverCatId === 0) && (
+                <div className="mt-2">
+                  <div
+                    className={`flex items-center gap-2 py-1.5 rounded-lg px-2 transition-colors ${dragOverCatId === 0 ? 'bg-indigo-100 ring-2 ring-indigo-400' : 'hover:bg-gray-50'}`}
+                    onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDragOverCatId(0) }}
+                    onDragLeave={e => { e.stopPropagation(); setDragOverCatId(null) }}
+                    onDrop={e => { e.stopPropagation(); dnd.onCodeDrop(e, null) }}
+                  >
+                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex-1">Uncategorized Open Codings</span>
+                    {visibleUncategorized.length > 0 && <span className="text-[10px] text-gray-400">{visibleUncategorized.length} codes</span>}
+                    {dragOverCatId === 0 && <span className="text-[10px] text-indigo-600 font-semibold">Drop here</span>}
+                  </div>
+                  <div className="space-y-1 mt-1">
+                    {visibleUncategorized.map(code => {
+                      const codeExcerpts = bookmarkCodes.filter(bc => bc.code_id === code.id)
+                      return (
                             <CodeCard
                               key={code.id}
                               code={{ ...code, groundedness: codeExcerpts.length }}
@@ -1115,12 +1130,13 @@ export default function CodingPage() {
                       </div>
                     </div>
                     )}
-                  </>
+                </div>
                 )}
-              </div>
             </section>
 
-            {/* Detail panel */}
+          </div>
+
+          {/* Detail panel */}
             {detailMode && (
               <aside className="w-80 shrink-0 bg-white rounded-2xl shadow p-4 space-y-3 sticky top-0 max-h-screen overflow-y-auto">
                 <div className="flex items-center justify-between">
@@ -1138,7 +1154,7 @@ export default function CodingPage() {
                     </div>
                     <div>
                       <label className="text-xs text-gray-600 mb-1 block">Color</label>
-                      <input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} className="h-8 w-10 cursor-pointer border border-gray-300" />
+                      <ColorPicker value={editColor} onChange={setEditColor} />
                     </div>
                     <div>
                       <label className="text-xs text-gray-600 mb-1 block">Description</label>
@@ -1183,7 +1199,7 @@ export default function CodingPage() {
                     </div>
                     <div>
                       <label className="text-xs text-gray-600 mb-1 block">Color</label>
-                      <input type="color" value={catEditColor} onChange={e => setCatEditColor(e.target.value)} className="h-8 w-10 cursor-pointer border border-gray-300" />
+                      <ColorPicker value={catEditColor} onChange={setCatEditColor} />
                     </div>
                     <div>
                       <label className="text-xs text-gray-600 mb-1 block">Parent Coding (sets order level)</label>
@@ -1386,7 +1402,6 @@ export default function CodingPage() {
               </aside>
             )}
           </div>
-        </div>
       )}
 
       {/* ── Coding Table section ── */}

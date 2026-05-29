@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -26,80 +26,28 @@ function UploadCard({
   const [confirmType, setConfirmType] = useState<'full' | 'sqlite' | 'embeddings' | null>(null)
   const [deleteProgress, setDeleteProgress] = useState<DeleteProgress | null>(null)
   const [deleteMsg, setDeleteMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const doReembed = async () => {
-    if (pollRef.current) return
+    if (reembedLoading) return
     setReembedLoading(true)
-    setReembedProgress({ pct: 0, label: 'Submitting job…' })
+    setReembedProgress({ pct: 15, label: 'Re-embedding — checking ChromaDB for existing vectors…' })
 
-    let jobId: string
     try {
-      const res = await apiFetch<{ job_id: string; already_running?: boolean; skipped?: number; total_messages?: number }>(
+      const res = await apiFetch<{ upload_id: string; total: number; embedded: number; skipped: number; model: string }>(
         `/uploads/${encodeURIComponent(upload.id)}/reembed`,
         { method: 'POST' },
       )
-      jobId = res.job_id
-      if (res.already_running) {
-        setReembedProgress({ pct: 0, label: 'Job already running — resuming progress display…' })
-      } else {
-        const skip = res.skipped || 0
-        setReembedProgress({
-          pct: 0,
-          label: skip > 0
-            ? `Resuming: ${skip.toLocaleString()} already embedded, checking remainder…`
-            : `Job started — ${(res.total_messages || 0).toLocaleString()} messages queued`,
-        })
-      }
+      const newlyEmbedded = res.embedded || 0
+      const skippedCount = res.skipped || 0
+      const skipNote = skippedCount > 0 ? ` · ${skippedCount.toLocaleString()} already in ChromaDB` : ''
+      setReembedProgress({ pct: 100, label: `Done — ${newlyEmbedded.toLocaleString()} vectors embedded${skipNote}` })
+      onRefresh()
+      setTimeout(() => setReembedProgress(null), 4000)
     } catch (e) {
+      setReembedProgress({ pct: 0, label: 'Failed', error: e instanceof Error ? e.message : String(e) })
+    } finally {
       setReembedLoading(false)
-      setReembedProgress({ pct: 0, label: 'Failed to start', error: e instanceof Error ? e.message : String(e) })
-      return
     }
-
-    pollRef.current = setInterval(async () => {
-      try {
-        const job = await apiFetch<{
-          status: string; phase?: string; embedded: number; total: number; skipped: number;
-          batch_errors: { batch: number; error: string; traceback: string }[]
-          error?: string; traceback?: string; current_batch?: number
-        }>(`/jobs/${encodeURIComponent(jobId)}`)
-
-        const embedded = job.embedded || 0
-        const total = job.total || 0
-        const skipped = job.skipped || 0
-        const pct = total > 0 ? Math.round(embedded / total * 100) : (job.status === 'completed' ? 100 : 0)
-
-        if (job.status === 'running') {
-          if (job.phase === 'checking') {
-            const checkLabel = skipped > 0
-              ? `Checking… ${skipped.toLocaleString()} already embedded so far`
-              : 'Checking which messages are already embedded…'
-            setReembedProgress({ pct: 0, label: checkLabel })
-          } else {
-            const batchInfo = job.current_batch ? ` (batch ${job.current_batch})` : ''
-            const skipNote = skipped > 0 ? ` · ${skipped.toLocaleString()} skipped` : ''
-            setReembedProgress({ pct, label: `Embedding… ${pct}% — ${embedded.toLocaleString()}/${total.toLocaleString()} new messages${skipNote}${batchInfo}` })
-          }
-        } else if (job.status === 'completed') {
-          clearInterval(pollRef.current!); pollRef.current = null
-          const skipNote = skipped > 0 ? `, ${skipped.toLocaleString()} already embedded` : ''
-          const errNote = job.batch_errors.length > 0 ? ` (${job.batch_errors.length} batch error(s) — see below)` : ''
-          const errorDetail = job.batch_errors.length > 0
-            ? job.batch_errors.map(be => `Batch ${be.batch}:\n${be.error}\n\n${be.traceback}`).join('\n-----------------\n')
-            : undefined
-          setReembedLoading(false)
-          setReembedProgress({ pct: 100, label: `Done — ${embedded.toLocaleString()} embedded${skipNote}${errNote}`, error: errorDetail })
-          onRefresh()
-          if (!errorDetail) setTimeout(() => setReembedProgress(null), 4000)
-        } else if (job.status === 'failed') {
-          clearInterval(pollRef.current!); pollRef.current = null
-          const detail = `${job.error || 'Unknown error'}\n\n${job.traceback || ''}`.trim()
-          setReembedLoading(false)
-          setReembedProgress({ pct: 100, label: 'Failed', error: detail })
-        }
-      } catch { /* ignore blips */ }
-    }, 1500)
   }
 
   const doDelete = async (type: 'full' | 'sqlite' | 'embeddings') => {
@@ -264,13 +212,17 @@ export default function SettingsPage() {
   const handleUpload = async () => {
     if (!uploadFile) { setUploadStatus('Please select a CSV file.'); return }
     setUploadBtnLoading(true)
-    setUploadProgress({ pct: 0, label: 'Starting upload…', type: 'info' })
+    setUploadProgress({ pct: 2, label: 'Uploading file…', type: 'info' })
     setUploadStatus('')
     const form = new FormData()
     form.append('file', uploadFile)
     try {
-      const response = await fetch('/api/upload', { method: 'POST', body: form })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const response = await fetch('/api/upload', { method: 'POST', body: form, credentials: 'include' })
+      if (!response.ok) {
+        let msg = `HTTP ${response.status}`
+        try { const d = await response.json(); msg = d.error ?? d.message ?? msg } catch {}
+        throw new Error(msg)
+      }
       const reader = response.body!.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
@@ -282,25 +234,52 @@ export default function SettingsPage() {
         buffer = lines.pop() ?? ''
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
-          const data = line.slice(6).trim()
-          if (data.startsWith('Processing ')) setUploadProgress({ pct: 5, label: data, type: 'info' })
-          else if (data.startsWith('Inserted ')) setUploadProgress({ pct: 20, label: data, type: 'info' })
-          else if (data.startsWith('Starting embedding')) setUploadProgress({ pct: 30, label: data, type: 'info' })
-          else if (data.startsWith('Embedded ')) {
-            const match = data.match(/Embedded\s+(\d+)\/(\d+)/)
-            if (match) {
-              const pct = 30 + Math.min(70, 70 * parseInt(match[1]) / parseInt(match[2]))
-              setUploadProgress({ pct, label: data, type: 'info' })
+          try {
+            const event = JSON.parse(line.slice(6).trim())
+            if (event.type === 'progress') {
+              // Insertion phase: 2% → 48%
+              const pct = event.total > 0 ? Math.max(2, Math.round((event.inserted / event.total) * 48)) : 5
+              const skipped = Number(event.skipped ?? 0)
+              const skipNote = skipped > 0 ? ` · ${skipped.toLocaleString()} duplicate${skipped !== 1 ? 's' : ''} skipped` : ''
+              setUploadProgress({ pct, label: `Inserting: ${Number(event.inserted).toLocaleString()} / ${Number(event.total).toLocaleString()} rows${skipNote}`, type: 'info' })
+            } else if (event.type === 'embed_start') {
+              // Embedding phase begins: 50%
+              const alreadyEmb = Number(event.already_embedded ?? 0)
+              const skipNote = alreadyEmb > 0 ? ` · ${alreadyEmb.toLocaleString()} already in ChromaDB` : ''
+              setUploadProgress({ pct: 50, label: `Embedding ${Number(event.total).toLocaleString()} new messages${skipNote} with ${event.model ?? 'text-embedding-3-small'}…`, type: 'info' })
+            } else if (event.type === 'embed_progress') {
+              // Embedding phase: 50% → 97%
+              const pct = 50 + (event.total > 0 ? Math.round((event.embedded / event.total) * 47) : 0)
+              setUploadProgress({ pct, label: `Embedding: ${Number(event.embedded).toLocaleString()} / ${Number(event.total).toLocaleString()} vectors…`, type: 'info' })
+            } else if (event.type === 'embed_skip') {
+              if (event.reason === 'all_already_embedded') {
+                setUploadProgress({ pct: 97, label: `All ${Number(event.count).toLocaleString()} vectors already in ChromaDB — nothing to embed`, type: 'info' })
+              } else {
+                setUploadProgress({ pct: 50, label: event.reason === 'no_api_key' ? 'No OpenAI API key — embedding skipped' : 'ChromaDB unavailable — embedding skipped', type: 'info' })
+              }
+            } else if (event.type === 'done') {
+              const rowsNew = Number(event.total_inserted)
+              const rowsSkip = Number(event.total_skipped ?? 0)
+              const vecsNew = Number(event.embedded)
+              const vecsOld = Number(event.already_embedded ?? 0)
+              const rowNote = rowsSkip > 0 ? ` (${rowsSkip.toLocaleString()} duplicate${rowsSkip !== 1 ? 's' : ''} skipped)` : ''
+              let embedMsg = ''
+              if (vecsNew > 0 && vecsOld > 0) {
+                embedMsg = ` · ${vecsNew.toLocaleString()} new + ${vecsOld.toLocaleString()} existing vectors (${event.embed_model})`
+              } else if (vecsNew > 0) {
+                embedMsg = ` · ${vecsNew.toLocaleString()} vectors embedded (${event.embed_model})`
+              } else if (vecsOld > 0) {
+                embedMsg = ` · ${vecsOld.toLocaleString()} vectors already in ChromaDB`
+              } else {
+                embedMsg = ' · No vectors embedded'
+              }
+              setUploadProgress({ pct: 100, label: `Done! ${rowsNew.toLocaleString()} rows inserted${rowNote}${embedMsg}`, type: 'success' })
+              refetchUploads()
+              queryClient.invalidateQueries({ queryKey: ['stats'] })
+            } else if (event.type === 'error') {
+              setUploadProgress({ pct: 100, label: `Error: ${event.message}`, type: 'error' })
             }
-          } else if (data.startsWith('Completed:')) {
-            setUploadProgress({ pct: 100, label: data.replace('Completed: ', ''), type: 'success' })
-            refetchUploads()
-            queryClient.invalidateQueries({ queryKey: ['stats'] })
-          } else if (data.startsWith('Error')) {
-            setUploadProgress({ pct: 100, label: data, type: 'error' })
-          } else {
-            setUploadStatus(data)
-          }
+          } catch { /* skip malformed lines */ }
         }
       }
     } catch (e) {
@@ -308,6 +287,27 @@ export default function SettingsPage() {
       setUploadProgress(null)
     } finally {
       setUploadBtnLoading(false)
+    }
+  }
+
+  const [sunoAddInput, setSunoAddInput] = useState('')
+  const [sunoAddStatus, setSunoAddStatus] = useState<{ text: string; ok: boolean } | null>(null)
+  const [sunoAddLoading, setSunoAddLoading] = useState(false)
+
+  const handleAddSuno = async () => {
+    const username = sunoAddInput.trim()
+    if (!username) return
+    setSunoAddLoading(true)
+    setSunoAddStatus(null)
+    try {
+      const res = await apiFetch<{ updated: number }>(`/suno-team/${encodeURIComponent(username)}`, { method: 'POST' })
+      setSunoAddStatus({ text: `Marked ${res.updated.toLocaleString()} messages by "${username}" as Suno Team.`, ok: true })
+      setSunoAddInput('')
+      refetchSuno()
+    } catch (e) {
+      setSunoAddStatus({ text: `Failed: ${e instanceof Error ? e.message : String(e)}`, ok: false })
+    } finally {
+      setSunoAddLoading(false)
     }
   }
 
@@ -453,11 +453,37 @@ export default function SettingsPage() {
       {/* Suno Team management (admin only, hidden in demo mode) */}
       {isAdmin && appMode !== 'demo' && (
         <section className="bg-white rounded-2xl shadow p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-1">
             <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide">Suno Team Members</h2>
             <button onClick={() => refetchSuno()} className="text-xs font-semibold text-indigo-700 hover:underline">Refresh</button>
           </div>
-          <p className="text-xs text-gray-600 mb-3">Usernames currently flagged as Suno Team in the database. Removing a user marks all their messages as non-team.</p>
+          <p className="text-xs text-gray-500 mb-4">Usernames flagged as Suno Team. Adding a user marks all their existing messages as team; removing reverses it.</p>
+
+          {/* Add member */}
+          <div className="flex gap-2 mb-4">
+            <input
+              type="text"
+              value={sunoAddInput}
+              onChange={(e) => setSunoAddInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddSuno()}
+              placeholder="Enter exact username…"
+              className="search-input flex-1 text-sm"
+            />
+            <button
+              onClick={handleAddSuno}
+              disabled={sunoAddLoading || !sunoAddInput.trim()}
+              className="search-btn px-4 text-sm disabled:opacity-50"
+            >
+              {sunoAddLoading ? 'Adding…' : '+ Add to Team'}
+            </button>
+          </div>
+          {sunoAddStatus && (
+            <div className={`mb-3 px-3 py-2 text-xs font-medium border ${sunoAddStatus.ok ? 'bg-green-50 text-green-800 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+              {sunoAddStatus.text}
+            </div>
+          )}
+
+          {/* Members table */}
           <div className="overflow-x-auto">
             {sunoTeam.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-6">No Suno Team members found.</p>
@@ -476,10 +502,10 @@ export default function SettingsPage() {
                       <td className="px-3 py-2">
                         <span className="ubadge" style={{ background: '#ede9fe', color: '#5b21b6' }}>{m.username}</span>
                       </td>
-                      <td className="px-3 py-2 text-right text-gray-600 tabular-nums">{m.msg_count.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right text-gray-600 tabular-nums">{m.message_count.toLocaleString()}</td>
                       <td className="px-3 py-2 text-right">
                         <button onClick={() => handleRemoveSuno(m.username)} className="action-btn-danger">
-                          Remove from team
+                          Remove
                         </button>
                       </td>
                     </tr>

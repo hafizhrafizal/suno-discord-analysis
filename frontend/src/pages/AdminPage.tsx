@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Navigate } from 'react-router-dom'
 import { apiFetch } from '../api/client'
 import { useAuthStore } from '../store/authStore'
@@ -6,33 +6,25 @@ import type { User } from '../types'
 
 export default function AdminPage() {
   const { user, appMode } = useAuthStore()
-  const [users, setUsers] = useState<User[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
+  const isAllowed = !(appMode === 'multi' && !user?.is_admin)
 
-  if (appMode === 'multi' && !user?.is_admin) {
+  const { data: users = [], isLoading, error } = useQuery<User[]>({
+    queryKey: ['admin-users'],
+    queryFn: () => apiFetch('/admin/users'),
+    enabled: isAllowed,
+  })
+
+  if (!isAllowed) {
     return <Navigate to="/search" replace />
   }
 
-  const loadUsers = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await apiFetch<User[]>('/admin/users')
-      setUsers(data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load users')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => { loadUsers() }, [])
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['admin-users'] })
 
   const toggleAdmin = async (userId: number) => {
     try {
       await apiFetch(`/admin/users/${userId}/toggle-admin`, { method: 'POST' })
-      loadUsers()
+      refresh()
     } catch (err) {
       alert(`Failed: ${err instanceof Error ? err.message : String(err)}`)
     }
@@ -42,7 +34,7 @@ export default function AdminPage() {
     if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return
     try {
       await apiFetch(`/admin/users/${userId}`, { method: 'DELETE' })
-      loadUsers()
+      refresh()
     } catch (err) {
       alert(`Failed: ${err instanceof Error ? err.message : String(err)}`)
     }
@@ -53,14 +45,16 @@ export default function AdminPage() {
       <section className="bg-white rounded-2xl shadow p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide">User Management</h2>
-          <button onClick={loadUsers} className="text-xs font-semibold text-indigo-700 hover:underline">Refresh</button>
+          <button onClick={refresh} className="text-xs font-semibold text-indigo-700 hover:underline">Refresh</button>
         </div>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 mb-4">{error}</div>
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 mb-4">
+            {error instanceof Error ? error.message : 'Failed to load users'}
+          </div>
         )}
 
-        {loading ? (
+        {isLoading ? (
           <div className="flex justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-4 border-indigo-700 border-t-transparent" />
           </div>

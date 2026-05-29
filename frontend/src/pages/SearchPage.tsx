@@ -1,14 +1,15 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
 import ReactMarkdown from 'react-markdown'
 import { apiFetch, streamEvents } from '../api/client'
 import { useSearchStore } from '../store/searchStore'
-import { getUserStyle, highlightText, highlightTerms } from '../utils/colors'
+import { getUserStyle, getUserColor, highlightText, highlightTerms } from '../utils/colors'
 import type { Message, Upload, UserInRange } from '../types'
 
-type SearchTab = 'keyword' | 'semantic' | 'username' | 'range'
+type SearchTab = 'keyword' | 'semantic' | 'username' | 'range' | 'browse'
 type MatchType = 'fuzzy' | 'exact' | 'any'
 type SearchCat = 'chat' | 'users'
 type TrendBucket = 'month' | 'week' | 'day'
@@ -48,6 +49,21 @@ function UsernameTag({ username }: { username: string }) {
   )
 }
 
+// Discord timestamps are stored as UTC strings ("YYYY-MM-DD HH:MM:SS" or ISO).
+// Parse as UTC and display in the browser's local timezone with seconds + tz abbrev.
+function formatMsgDate(raw: string | undefined): string {
+  if (!raw) return ''
+  const normalized = raw.trim().replace(' ', 'T')
+  const iso = /Z$|[+-]\d{2}:\d{2}$/.test(normalized) ? normalized : normalized + 'Z'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return raw.slice(0, 19).replace('T', ' ')
+  return d.toLocaleString('en-GB', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    timeZoneName: 'short', hour12: false,
+  })
+}
+
 interface MessageCardProps {
   msg: Message
   keyword: string
@@ -58,13 +74,17 @@ interface MessageCardProps {
   onSelectToggle: (id: number) => void
   ctxBefore: number
   ctxAfter: number
+  isGrouped?: boolean
 }
 
-function MessageCard({ msg, keyword, tokens, isBookmarked, isSelected, onBookmarkToggle, onSelectToggle, ctxBefore, ctxAfter }: MessageCardProps) {
+function MessageCard({ msg, keyword, tokens, isBookmarked, isSelected, onBookmarkToggle, onSelectToggle, ctxBefore, ctxAfter, isGrouped = false }: MessageCardProps) {
   const [copied, setCopied] = useState(false)
   const [ctxOpen, setCtxOpen] = useState(false)
   const [ctxMessages, setCtxMessages] = useState<Message[]>([])
   const [ctxLoading, setCtxLoading] = useState(false)
+
+  const [, textColor] = getUserColor(msg.username)
+  const initials = (msg.username || '?').slice(0, 2).toUpperCase()
 
   const highlighted = tokens.length > 0
     ? highlightTerms(msg.content, tokens)
@@ -88,95 +108,192 @@ function MessageCard({ msg, keyword, tokens, isBookmarked, isSelected, onBookmar
     } catch { } finally { setCtxLoading(false) }
   }
 
+  const rowBg = isBookmarked
+    ? 'bg-amber-50 border-l-4 border-amber-300'
+    : 'hover:bg-gray-50 border-l-4 border-transparent'
+
   return (
-    <div id={`card-${msg.id}`} className={`bg-white rounded-2xl shadow p-4 border-2 transition-colors ${isSelected ? 'border-indigo-300' : 'border-transparent'}`}>
-      <div className="flex items-start gap-2">
-        <input
-          type="checkbox"
-          checked={isSelected}
-          onChange={() => onSelectToggle(msg.id)}
-          className="mt-1 accent-indigo-600 shrink-0"
-        />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap mb-1">
-                <UsernameTag username={msg.username} />
-                <span className="text-xs text-gray-500">{msg.date?.slice(0, 16)}</span>
-                {(msg.is_suno_team === 'True' || msg.is_suno_team === true || msg.is_suno_team === '1') && (
-                  <span className="text-[10px] font-semibold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full">Suno Team</span>
-                )}
-                {msg.similarity != null && (
-                  <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold bg-indigo-50 text-indigo-600 border border-indigo-200 px-1.5 py-0.5 rounded-full tabular-nums">
-                    <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
-                    {(msg.similarity * 100).toFixed(1)}%
-                  </span>
-                )}
-              </div>
-              <p
-                className="text-sm text-gray-800 whitespace-pre-wrap break-words"
-                dangerouslySetInnerHTML={{ __html: highlighted }}
-              />
-            </div>
-            <div className="flex flex-col gap-1 shrink-0">
-              <button
-                onClick={() => onBookmarkToggle(msg)}
-                className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors"
-                title={isBookmarked ? 'Remove bookmark' : 'Save bookmark'}
-              >
-                {isBookmarked ? (
-                  <>
-                    <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24"><path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
-                    <span className="text-amber-600">Bookmarked</span>
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
-                    <span className="text-gray-500">Bookmark</span>
-                  </>
-                )}
-              </button>
-              <button
-                onClick={handleCopy}
-                className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-                title="Copy content"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                <span>{copied ? 'Copied!' : 'Copy'}</span>
-              </button>
-              <button
-                onClick={handleCtxToggle}
-                className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors text-gray-500"
-                title="Show context"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
-                <span>Context</span>
-              </button>
-            </div>
+    <div id={`card-${msg.id}`} className={`group flex gap-3 px-2 py-1 rounded-lg transition-colors ${rowBg} ${isGrouped ? 'mt-0' : 'mt-3'}`}>
+      {/* Avatar column */}
+      <div className="w-8 shrink-0 pt-0.5 flex flex-col items-center">
+        {!isGrouped && (
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold select-none"
+            style={{ background: textColor }}
+          >
+            {initials}
           </div>
-        </div>
+        )}
       </div>
 
-      {ctxOpen && (
-        <div className="mt-3 border-t border-gray-100 pt-3 ml-5">
-          {ctxLoading ? (
-            <p className="text-xs text-gray-400 text-center py-2">Loading context…</p>
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        {!isGrouped && (
+          <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
+            <UsernameTag username={msg.username} />
+            <span className="text-xs text-gray-400 tabular-nums">{formatMsgDate(msg.date)}</span>
+            {(msg.is_suno_team === 'True' || msg.is_suno_team === true || msg.is_suno_team === '1') && (
+              <span className="text-[10px] font-semibold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full">Suno Team</span>
+            )}
+            {msg.similarity != null && (
+              <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold bg-indigo-50 text-indigo-600 border border-indigo-200 px-1.5 py-0.5 rounded-full tabular-nums">
+                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                {(msg.similarity * 100).toFixed(1)}%
+              </span>
+            )}
+          </div>
+        )}
+
+        <p
+          className="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed"
+          dangerouslySetInnerHTML={{ __html: highlighted }}
+        />
+
+        {ctxOpen && (
+          <div className="mt-2 border-t border-gray-100 pt-2">
+            {ctxLoading ? (
+              <p className="text-xs text-gray-400 text-center py-2">Loading context…</p>
+            ) : (
+              <div className="space-y-1">
+                {ctxMessages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`flex gap-2 text-xs px-2 py-1 rounded ${m.id === msg.id ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'}`}
+                  >
+                    <span className="shrink-0 font-semibold" style={getUserStyle(m.username)}>{m.username}</span>
+                    <span className="text-gray-400 shrink-0">{formatMsgDate(m.date)}</span>
+                    <span className="text-gray-700 flex-1">{m.content}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Action buttons — right column, fade in on hover */}
+      <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 items-end pt-0.5">
+        <button
+          onClick={() => onBookmarkToggle(msg)}
+          className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition-colors whitespace-nowrap ${isBookmarked ? 'text-amber-600 hover:bg-amber-100' : 'text-gray-500 hover:bg-gray-100'}`}
+          title={isBookmarked ? 'Remove bookmark' : 'Save bookmark'}
+        >
+          {isBookmarked ? (
+            <svg className="w-3.5 h-3.5 text-amber-500 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
           ) : (
-            <div className="space-y-1.5">
-              {ctxMessages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`flex gap-2 text-xs px-2 py-1 rounded ${m.id === msg.id ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50'}`}
-                >
-                  <span className="shrink-0 font-semibold" style={getUserStyle(m.username)}>{m.username}</span>
-                  <span className="text-gray-400 shrink-0">{m.date?.slice(0, 10)}</span>
-                  <span className="text-gray-700 flex-1">{m.content}</span>
-                </div>
-              ))}
-            </div>
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
           )}
-        </div>
-      )}
+          <span>{isBookmarked ? 'Bookmarked' : 'Bookmark'}</span>
+        </button>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors text-gray-500 whitespace-nowrap"
+        >
+          {copied ? (
+            <svg className="w-3.5 h-3.5 text-green-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+          ) : (
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+          )}
+          <span>{copied ? 'Copied!' : 'Copy'}</span>
+        </button>
+        <button
+          onClick={handleCtxToggle}
+          className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors text-gray-500 whitespace-nowrap"
+        >
+          <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+          <span>Context</span>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// --- Chat-style row for Browse All ---
+function BrowseChatRow({
+  msg,
+  isGrouped,
+  isBookmarked,
+  onBookmarkToggle,
+  tokens = [],
+}: {
+  msg: Message
+  isGrouped: boolean
+  isBookmarked: boolean
+  onBookmarkToggle: (msg: Message) => void
+  tokens?: string[]
+}) {
+  const [copied, setCopied] = useState(false)
+  const [, textColor] = getUserColor(msg.username)
+  const initials = (msg.username || '?').slice(0, 2).toUpperCase()
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(msg.content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  const rowBg = isBookmarked
+    ? 'bg-amber-50 border-l-4 border-amber-300'
+    : 'hover:bg-gray-50 border-l-4 border-transparent'
+
+  return (
+    <div className={`group flex gap-3 px-2 py-1 rounded-lg transition-colors ${rowBg} ${isGrouped ? 'mt-0' : 'mt-3'}`}>
+      {/* Avatar column — 32 px wide always so messages align */}
+      <div className="w-8 shrink-0 flex flex-col items-center pt-0.5">
+        {!isGrouped && (
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold select-none"
+            style={{ background: textColor }}
+          >
+            {initials}
+          </div>
+        )}
+      </div>
+
+      {/* Message body */}
+      <div className="flex-1 min-w-0">
+        {!isGrouped && (
+          <div className="flex items-baseline gap-2 mb-0.5">
+            <span className="text-sm font-semibold" style={{ color: textColor }}>{msg.username}</span>
+            <span className="text-xs text-gray-400 tabular-nums">{formatMsgDate(msg.date)}</span>
+            {(msg.is_suno_team === 'True' || msg.is_suno_team === true || msg.is_suno_team === '1') && (
+              <span className="text-[10px] font-semibold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full">Suno Team</span>
+            )}
+          </div>
+        )}
+        <p
+          className="text-sm text-gray-800 whitespace-pre-wrap break-words leading-relaxed"
+          dangerouslySetInnerHTML={{ __html: tokens.length > 0 ? highlightTerms(msg.content, tokens) : msg.content }}
+        />
+      </div>
+
+      {/* Action buttons — right column, fade in on hover */}
+      <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 items-end pt-0.5">
+        <button
+          onClick={() => onBookmarkToggle(msg)}
+          className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition-colors whitespace-nowrap ${isBookmarked ? 'text-amber-600 hover:bg-amber-100' : 'text-gray-500 hover:bg-gray-100'}`}
+          title={isBookmarked ? 'Remove bookmark' : 'Bookmark'}
+        >
+          {isBookmarked ? (
+            <svg className="w-3.5 h-3.5 text-amber-500 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
+          ) : (
+            <svg className="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
+          )}
+          <span>{isBookmarked ? 'Bookmarked' : 'Bookmark'}</span>
+        </button>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors text-gray-500 whitespace-nowrap"
+          title="Copy message"
+        >
+          {copied ? (
+            <svg className="w-3.5 h-3.5 text-green-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+          ) : (
+            <svg className="w-3.5 h-3.5 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+          )}
+          <span>{copied ? 'Copied!' : 'Copy'}</span>
+        </button>
+      </div>
     </div>
   )
 }
@@ -243,17 +360,53 @@ function ssSet(key: string, value: unknown) {
   try { sessionStorage.setItem(key, JSON.stringify(value)) } catch {}
 }
 
+const SEARCHING_MESSAGES = [
+  'Scanning the archives…',
+  'Hunting through thousands of messages…',
+  'Finding the signal in the noise…',
+  'Sifting through the data…',
+  'Turning over every stone…',
+  'Almost there…',
+]
+
+function SearchingAnimation() {
+  const [msgIdx, setMsgIdx] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setMsgIdx((i) => (i + 1) % SEARCHING_MESSAGES.length), 1800)
+    return () => clearInterval(t)
+  }, [])
+  return (
+    <div className="bg-white rounded-2xl shadow px-6 py-12 flex flex-col items-center gap-5">
+      <div className="relative w-14 h-14">
+        <div className="absolute inset-0 rounded-full border-[3px] border-gray-100" />
+        <div
+          className="absolute inset-0 rounded-full border-[3px] border-transparent border-t-indigo-500 border-r-indigo-300 animate-spin"
+          style={{ animationDuration: '0.85s' }}
+        />
+      </div>
+      <p
+        key={msgIdx}
+        className="text-sm font-medium text-gray-500 tracking-wide"
+      >
+        {SEARCHING_MESSAGES[msgIdx]}
+      </p>
+    </div>
+  )
+}
+
 export default function SearchPage() {
   const { results, setResults, selectedIds, toggleSelected, selectAll, clearSelected, bookmarkedIds, setBookmarkedIds, toggleBookmarked } = useSearchStore()
 
   // Search state
   const [searchCat, setSearchCat] = useState<SearchCat>(() => (localStorage.getItem('search_cat') as SearchCat) || 'chat')
   const [activeTab, setActiveTab] = useState<SearchTab>(() => (localStorage.getItem('search_tab') as SearchTab) || 'keyword')
-  const [matchType, setMatchType] = useState<MatchType>(() => ssGet('sr_match_type', 'fuzzy'))
+  const [matchType, setMatchType] = useState<MatchType>(() => ssGet('sr_match_type', 'any'))
   const [query, setQuery] = useState(() => ssGet('sr_query', ''))
   const [filterUsername, setFilterUsername] = useState(() => ssGet('sr_filter_username', ''))
   const [dateFrom, setDateFrom] = useState(() => ssGet('sr_date_from', ''))
   const [dateTo, setDateTo] = useState(() => ssGet('sr_date_to', ''))
+  const [rangeDateFrom, setRangeDateFrom] = useState(() => ssGet('sr_range_date_from', ''))
+  const [rangeDateTo, setRangeDateTo] = useState(() => ssGet('sr_range_date_to', ''))
   const [sunoTeam, setSunoTeam] = useState('all')
   const [maxResults, setMaxResults] = useState(200)
   const [minWords, setMinWords] = useState(0)
@@ -262,6 +415,7 @@ export default function SearchPage() {
   const [sortBy, setSortBy] = useState('similarity')
   const [showOptions, setShowOptions] = useState(false)
   const [searching, setSearching] = useState(false)
+  const [didSearch, setDidSearch] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [bookmarkError, setBookmarkError] = useState<string | null>(null)
   const [uploads, setUploads] = useState<Upload[]>([])
@@ -303,7 +457,7 @@ export default function SearchPage() {
   const stopSummarizeRef = useRef<(() => void) | null>(null)
 
   // Results filter bar state
-  const [filterMode, setFilterMode] = useState<FilterMode>('exact')
+  const [filterMode, setFilterMode] = useState<FilterMode>('any')
   const [filterText, setFilterText] = useState('')
   const [displayedResults, setDisplayedResults] = useState<Message[]>([])
   const [filterCount, setFilterCount] = useState<{ shown: number; total: number } | null>(null)
@@ -342,10 +496,27 @@ export default function SearchPage() {
   const [visibleCount, setVisibleCount] = useState(50)
   const sentinelRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    apiFetch<Upload[]>('/uploads').then(setUploads).catch(() => {})
-    apiFetch<number[]>('/bookmarks/ids').then(setBookmarkedIds).catch(() => {})
-  }, [setBookmarkedIds])
+  // Browse All tab — server-side pagination
+  const [browseMessages, setBrowseMessages] = useState<Message[]>([])
+  const [browseFetching, setBrowseFetching] = useState(false)
+  const [browseHasMore, setBrowseHasMore] = useState(true)
+  const resultsAnchorRef = useRef<HTMLDivElement>(null)
+  const browseOffsetRef = useRef(0)
+  const browseHasMoreRef = useRef(true)
+  const browseIsFetchingRef = useRef(false)
+  const browseSentinelRef = useRef<HTMLDivElement>(null)
+  // Browse filters (date: server-side re-fetch; username+keyword: client-side)
+  const [browseUsernameFilter, setBrowseUsernameFilter] = useState('')
+  const [browseKeywordFilter, setBrowseKeywordFilter] = useState('')
+  const [browseDateFrom, setBrowseDateFrom] = useState('')
+  const [browseDateTo, setBrowseDateTo] = useState('')
+  const browseDateFromRef = useRef('')
+  const browseDateToRef = useRef('')
+
+  const { data: _uploads } = useQuery<Upload[]>({ queryKey: ['uploads'], queryFn: () => apiFetch('/uploads') })
+  const { data: _bookmarkIds } = useQuery<number[]>({ queryKey: ['bookmark-ids'], queryFn: () => apiFetch('/bookmarks/ids') })
+  useEffect(() => { if (_uploads) setUploads(_uploads) }, [_uploads])
+  useEffect(() => { if (_bookmarkIds) setBookmarkedIds(_bookmarkIds) }, [_bookmarkIds])
 
   // Restore results to Zustand store on mount if store is empty (page refresh) but sessionStorage has data
   useEffect(() => {
@@ -362,6 +533,8 @@ export default function SearchPage() {
   useEffect(() => { ssSet('sr_match_type', matchType) }, [matchType])
   useEffect(() => { ssSet('sr_date_from', dateFrom) }, [dateFrom])
   useEffect(() => { ssSet('sr_date_to', dateTo) }, [dateTo])
+  useEffect(() => { ssSet('sr_range_date_from', rangeDateFrom) }, [rangeDateFrom])
+  useEffect(() => { ssSet('sr_range_date_to', rangeDateTo) }, [rangeDateTo])
   useEffect(() => { ssSet('sr_filter_username', filterUsername) }, [filterUsername])
   useEffect(() => { ssSet('sr_last_keyword', lastKeyword) }, [lastKeyword])
   useEffect(() => { ssSet('sr_last_tokens', lastTokens) }, [lastTokens])
@@ -449,6 +622,101 @@ export default function SearchPage() {
       to: maxs[period],
     })))
   }, [])
+
+  const fetchBrowsePage = useCallback(async () => {
+    if (browseIsFetchingRef.current || !browseHasMoreRef.current) return
+    browseIsFetchingRef.current = true
+    setBrowseFetching(true)
+    const offset = browseOffsetRef.current
+    try {
+      const p = new URLSearchParams({ limit: '50', offset: String(offset) })
+      if (browseDateFromRef.current) p.set('date_from', browseDateFromRef.current)
+      if (browseDateToRef.current) p.set('date_to', browseDateToRef.current)
+      const data = await apiFetch<Message[]>(`/search/range?${p}`)
+      setBrowseMessages((prev) => (offset === 0 ? data : [...prev, ...data]))
+      browseOffsetRef.current = offset + data.length
+      if (data.length < 50) { browseHasMoreRef.current = false; setBrowseHasMore(false) }
+    } catch {
+      // silent
+    } finally {
+      browseIsFetchingRef.current = false
+      setBrowseFetching(false)
+    }
+  }, [])
+
+  // Auto-fetch first page when switching to Browse tab
+  useEffect(() => {
+    if (activeTab === 'browse') {
+      fetchBrowsePage()
+    }
+  }, [activeTab, fetchBrowsePage])
+
+  // Re-fetch from scratch when browse date filters change
+  useEffect(() => {
+    if (activeTab !== 'browse') return
+    browseDateFromRef.current = browseDateFrom
+    browseDateToRef.current = browseDateTo
+    browseOffsetRef.current = 0
+    browseHasMoreRef.current = true
+    browseIsFetchingRef.current = false
+    setBrowseMessages([])
+    setBrowseFetching(false)
+    setBrowseHasMore(true)
+    fetchBrowsePage()
+  // fetchBrowsePage is stable; we intentionally skip it from deps to avoid double-fire on tab switch
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browseDateFrom, browseDateTo])
+
+  // IntersectionObserver for Browse All infinite scroll
+  useEffect(() => {
+    if (activeTab !== 'browse') return
+    const el = browseSentinelRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) fetchBrowsePage()
+      },
+      { rootMargin: '400px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [activeTab, browseMessages.length, fetchBrowsePage])
+
+  const formatTrendPeriod = useCallback((period: string) => {
+    if (trendBucket === 'month') {
+      const [y, m] = period.split('-').map(Number)
+      const d = new Date(y, m - 1, 1)
+      return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+    }
+    if (trendBucket === 'week') {
+      const [y, m, day] = period.split('-').map(Number)
+      const d = new Date(y, m - 1, day)
+      const weekOfMonth = Math.ceil(day / 7)
+      return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) + ` W${weekOfMonth}`
+    }
+    return period
+  }, [trendBucket])
+
+  const browseTokens = useMemo(() => {
+    if (!browseKeywordFilter.trim()) return []
+    return browseKeywordFilter.trim().split(/\s+/).filter(Boolean)
+  }, [browseKeywordFilter])
+
+  const filteredBrowseMessages = useMemo(() => {
+    let msgs = browseMessages
+    if (browseUsernameFilter.trim()) {
+      const lc = browseUsernameFilter.toLowerCase()
+      msgs = msgs.filter((m) => m.username?.toLowerCase().includes(lc))
+    }
+    if (browseTokens.length > 0) {
+      const words = browseTokens.map((w) => w.toLowerCase())
+      msgs = msgs.filter((m) => {
+        const lc = m.content.toLowerCase()
+        return words.some((w) => lc.includes(w))
+      })
+    }
+    return msgs
+  }, [browseMessages, browseUsernameFilter, browseTokens])
 
   // Apply text filter + optional chart range filter on top of full results
   const applyFilters = useCallback((
@@ -540,11 +808,12 @@ export default function SearchPage() {
 
   const doSearch = useCallback(async () => {
     setSearching(true)
+    setTimeout(() => resultsAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30)
     setError(null)
     setTrendData([])
     clearSelected()
     setFilterText('')
-    setFilterMode('exact')
+    setFilterMode('any')
     setFilterCount(null)
     setFilterTokens([])
     setChartRange(null)
@@ -553,7 +822,7 @@ export default function SearchPage() {
     setDisplayedResults([])
 
     // Range tab validation
-    if (activeTab === 'range' && !dateFrom && !dateTo) {
+    if (activeTab === 'range' && !rangeDateFrom && !rangeDateTo) {
       setError('Please enter at least one date before searching.')
       setSearching(false)
       return
@@ -592,8 +861,13 @@ export default function SearchPage() {
         params.set('q', query)
         data = await apiFetch<Message[]>(`/search/username?${params}`)
       } else if (activeTab === 'range') {
-        const p = buildParams()
-        p.delete('limit') // range search returns all messages in the date range — no cap
+        const p = new URLSearchParams()
+        if (rangeDateFrom) p.set('date_from', rangeDateFrom)
+        if (rangeDateTo) p.set('date_to', rangeDateTo)
+        if (sunoTeam === 'only') p.set('is_suno_team', 'only')
+        else if (sunoTeam === 'exclude') p.set('is_suno_team', 'exclude')
+        if (minWords > 0) p.set('min_words', String(minWords))
+        if (scopeParam) p.set('upload_ids', scopeParam)
         p.set('offset', String(rangeOffset))
         data = await apiFetch<Message[]>(`/search/range?${p}`)
       }
@@ -607,11 +881,14 @@ export default function SearchPage() {
       setError(err instanceof Error ? err.message : 'Search failed')
     } finally {
       setSearching(false)
+      setDidSearch(true)
+      setTimeout(() => resultsAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
     }
-  }, [query, activeTab, matchType, filterUsername, buildParams, rangeLimit, rangeOffset, sortBy, trendBucket, setResults, clearSelected, buildTrend, dateFrom, dateTo])
+  }, [query, activeTab, matchType, filterUsername, buildParams, rangeLimit, rangeOffset, sortBy, trendBucket, setResults, clearSelected, buildTrend, dateFrom, dateTo, rangeDateFrom, rangeDateTo, sunoTeam, minWords, scopeParam])
 
   const doUserSearch = async () => {
     setSearching(true)
+    setTimeout(() => resultsAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30)
     setError(null)
     try {
       const params = buildParams()
@@ -621,6 +898,8 @@ export default function SearchPage() {
       setError(err instanceof Error ? err.message : 'Search failed')
     } finally {
       setSearching(false)
+      setDidSearch(true)
+      setTimeout(() => resultsAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
     }
   }
 
@@ -659,7 +938,22 @@ export default function SearchPage() {
     setFilterTokens([])
     setChartRange(null)
     setAnalysisTab('none')
+    setDidSearch(false)
     clearSelected()
+    if (tab === 'browse') {
+      browseOffsetRef.current = 0
+      browseHasMoreRef.current = true
+      browseIsFetchingRef.current = false
+      browseDateFromRef.current = ''
+      browseDateToRef.current = ''
+      setBrowseMessages([])
+      setBrowseFetching(false)
+      setBrowseHasMore(true)
+      setBrowseUsernameFilter('')
+      setBrowseKeywordFilter('')
+      setBrowseDateFrom('')
+      setBrowseDateTo('')
+    }
   }
 
   const handleCatSwitch = (cat: SearchCat) => {
@@ -674,7 +968,15 @@ export default function SearchPage() {
     setFilterTokens([])
     setChartRange(null)
     setAnalysisTab('none')
+    setDidSearch(false)
     clearSelected()
+    // flush browse all data so switching back starts fresh
+    browseOffsetRef.current = 0
+    browseHasMoreRef.current = true
+    browseIsFetchingRef.current = false
+    setBrowseMessages([])
+    setBrowseFetching(false)
+    setBrowseHasMore(true)
   }
 
   const exportCSV = () => {
@@ -964,9 +1266,10 @@ export default function SearchPage() {
 
   const inputCls = 'search-input'
   const tabs: { id: SearchTab; label: string }[] = [
-    { id: 'keyword', label: 'Keyword' },
-    { id: 'semantic', label: 'Semantic' },
-    { id: 'username', label: 'Username' },
+    { id: 'browse', label: 'Browse All' },
+    { id: 'keyword', label: 'Keyword Search' },
+    { id: 'semantic', label: 'Semantic Search' },
+    { id: 'username', label: 'Username Search' },
     { id: 'range', label: 'Time Range' },
   ]
 
@@ -1290,7 +1593,7 @@ export default function SearchPage() {
         }}
       >
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide">Search</h2>
+          <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide">Search Options</h2>
           <button
             onClick={() => setShowSearchPanel((v) => !v)}
             className="text-gray-400 hover:text-gray-600 text-xs"
@@ -1303,8 +1606,8 @@ export default function SearchPage() {
           <>
             {/* Chat / Users top toggle */}
             <div className="flex gap-1 mb-4">
-              <button onClick={() => handleCatSwitch('chat')} className={`subtab-btn${searchCat === 'chat' ? ' subtab-btn-active' : ''}`}>Search Chat</button>
-              <button onClick={() => handleCatSwitch('users')} className={`subtab-btn${searchCat === 'users' ? ' subtab-btn-active' : ''}`}>Search Users</button>
+              <button onClick={() => handleCatSwitch('chat')} className={`subtab-btn${searchCat === 'chat' ? ' subtab-btn-active' : ''}`}>Chat Data</button>
+              <button onClick={() => handleCatSwitch('users')} className={`subtab-btn${searchCat === 'users' ? ' subtab-btn-active' : ''}`}>Users Data</button>
             </div>
 
             {/* Chat search */}
@@ -1321,17 +1624,14 @@ export default function SearchPage() {
                 {/* Keyword tab */}
                 {activeTab === 'keyword' && (
                   <>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="text-xs font-semibold text-gray-600">Match:</span>
-                      <div className="inline-flex border border-gray-300 overflow-hidden">
-                        {(['fuzzy', 'exact', 'any'] as MatchType[]).map((m) => (
+                    <div className="flex gap-2 mb-4 items-center">
+                      <div className="inline-flex shrink-0">
+                        {(['any', 'fuzzy', 'exact'] as MatchType[]).map((m) => (
                           <button key={m} onClick={() => setMatchType(m)} className={`range-mode-btn${matchType === m ? ' range-mode-active' : ''}`}>
-                            {m === 'fuzzy' ? 'Fuzzy' : m === 'exact' ? 'Exact' : 'Any Word'}
+                            {m === 'any' ? 'Any Word' : m === 'fuzzy' ? 'Fuzzy' : 'Exact'}
                           </button>
                         ))}
                       </div>
-                    </div>
-                    <div className="flex gap-2 mb-4">
                       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Keyword or phrase…" className={`${inputCls} flex-1`} />
                       <button onClick={doSearch} disabled={searching} className="search-btn">{searching ? 'Searching…' : 'Search'}</button>
                     </div>
@@ -1348,11 +1648,11 @@ export default function SearchPage() {
                           <input value={filterUsername} onChange={(e) => setFilterUsername(e.target.value)} placeholder="Optional username…" className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">From Date</label>
+                          <label className="filter-label">From</label>
                           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">To Date</label>
+                          <label className="filter-label">To</label>
                           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
@@ -1364,11 +1664,11 @@ export default function SearchPage() {
                           </select>
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">Max Results</label>
+                          <label className="filter-label">Limit</label>
                           <input type="text" inputMode="numeric" value={String(maxResults)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setMaxResults(d ? parseInt(d) : 200) }} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">Min Word Count</label>
+                          <label className="filter-label">Min Words</label>
                           <input type="text" inputMode="numeric" value={String(minWords)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setMinWords(d ? parseInt(d) : 0) }} className={inputCls} />
                         </div>
                       </div>
@@ -1396,11 +1696,11 @@ export default function SearchPage() {
                           <input value={filterUsername} onChange={(e) => setFilterUsername(e.target.value)} placeholder="Optional username…" className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">From Date</label>
+                          <label className="filter-label">From</label>
                           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">To Date</label>
+                          <label className="filter-label">To</label>
                           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
@@ -1412,11 +1712,11 @@ export default function SearchPage() {
                           </select>
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">Max Results</label>
+                          <label className="filter-label">Limit</label>
                           <input type="text" inputMode="numeric" value={String(maxResults)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setMaxResults(d ? parseInt(d) : 200) }} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">Min Word Count</label>
+                          <label className="filter-label">Min Words</label>
                           <input type="text" inputMode="numeric" value={String(minWords)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setMinWords(d ? parseInt(d) : 0) }} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
@@ -1449,11 +1749,11 @@ export default function SearchPage() {
                     {showOptions && (
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">From Date</label>
+                          <label className="filter-label">From</label>
                           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">To Date</label>
+                          <label className="filter-label">To</label>
                           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
@@ -1465,11 +1765,11 @@ export default function SearchPage() {
                           </select>
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">Max Results</label>
+                          <label className="filter-label">Limit</label>
                           <input type="text" inputMode="numeric" value={String(maxResults)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setMaxResults(d ? parseInt(d) : 200) }} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">Min Word Count</label>
+                          <label className="filter-label">Min Words</label>
                           <input type="text" inputMode="numeric" value={String(minWords)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setMinWords(d ? parseInt(d) : 0) }} className={inputCls} />
                         </div>
                       </div>
@@ -1481,19 +1781,19 @@ export default function SearchPage() {
                 {/* Time Range tab */}
                 {activeTab === 'range' && (
                   <>
-                    <div className="inline-flex border border-gray-300 overflow-hidden mb-3">
+                    <div className="inline-flex mb-3">
                       <button onClick={() => setRangeMode('exact')} className={`range-mode-btn${rangeMode === 'exact' ? ' range-mode-active' : ''}`}>Exact Date Range</button>
                       <button onClick={() => setRangeMode('month')} className={`range-mode-btn${rangeMode === 'month' ? ' range-mode-active' : ''}`}>By Month &amp; Year</button>
                     </div>
                     {rangeMode === 'exact' && (
                       <div className="grid grid-cols-2 gap-x-4 gap-y-3 mb-3">
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">From Date</label>
-                          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
+                          <label className="filter-label">From</label>
+                          <input type="date" value={rangeDateFrom} onChange={(e) => setRangeDateFrom(e.target.value)} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="filter-label">To Date</label>
-                          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
+                          <label className="filter-label">To</label>
+                          <input type="date" value={rangeDateTo} onChange={(e) => setRangeDateTo(e.target.value)} className={inputCls} />
                         </div>
                       </div>
                     )}
@@ -1501,11 +1801,11 @@ export default function SearchPage() {
                       <div className="grid grid-cols-2 gap-x-4 gap-y-3 mb-3">
                         <div className="flex flex-col gap-1">
                           <label className="filter-label">From Month</label>
-                          <input type="month" value={dateFrom.slice(0, 7)} onChange={(e) => setDateFrom(e.target.value + '-01')} className={inputCls} />
+                          <input type="month" value={rangeDateFrom.slice(0, 7)} onChange={(e) => setRangeDateFrom(e.target.value + '-01')} className={inputCls} />
                         </div>
                         <div className="flex flex-col gap-1">
                           <label className="filter-label">To Month</label>
-                          <input type="month" value={dateTo.slice(0, 7)} onChange={(e) => setDateTo(e.target.value + '-31')} className={inputCls} />
+                          <input type="month" value={rangeDateTo.slice(0, 7)} onChange={(e) => setRangeDateTo(e.target.value + '-31')} className={inputCls} />
                         </div>
                       </div>
                     )}
@@ -1519,13 +1819,18 @@ export default function SearchPage() {
                         </select>
                       </div>
                       <div className="flex flex-col gap-1">
-                        <label className="filter-label">Min Word Count</label>
+                        <label className="filter-label">Min Words</label>
                         <input type="text" inputMode="numeric" value={String(minWords)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setMinWords(d ? parseInt(d) : 0) }} className={inputCls} />
                       </div>
                     </div>
                     <button onClick={doSearch} disabled={searching} className="search-btn">{searching ? 'Searching…' : 'Search'}</button>
                     <p className="text-xs text-gray-500 mt-3">Returns all messages in the selected range. At least one date is required.</p>
                   </>
+                )}
+                {activeTab === 'browse' && (
+                  <p className="text-xs text-gray-500">
+                    Showing all messages oldest-first, 50 at a time. Scroll down to load more.
+                  </p>
                 )}
               </>
             )}
@@ -1535,11 +1840,11 @@ export default function SearchPage() {
               <div className="space-y-3">
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 mb-4">
                   <div className="flex flex-col gap-1">
-                    <label className="filter-label">From Date</label>
+                    <label className="filter-label">From</label>
                     <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
                   </div>
                   <div className="flex flex-col gap-1">
-                    <label className="filter-label">To Date</label>
+                    <label className="filter-label">To</label>
                     <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
                   </div>
                   <div className="flex flex-col gap-1">
@@ -1551,7 +1856,7 @@ export default function SearchPage() {
                     </select>
                   </div>
                   <div className="flex flex-col gap-1">
-                    <label className="filter-label">Min Word Count</label>
+                    <label className="filter-label">Min Words</label>
                     <input type="text" inputMode="numeric" value={String(minWords)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setMinWords(d ? parseInt(d) : 0) }} className={inputCls} />
                   </div>
                 </div>
@@ -1561,23 +1866,32 @@ export default function SearchPage() {
             )}
 
             {/* Context window */}
-            <div className="mt-4 pt-4 border-t flex flex-wrap gap-x-4 gap-y-2 items-center text-sm text-gray-700">
-              <span className="font-semibold text-gray-800 w-full sm:w-auto">Context window:</span>
-              <label className="flex items-center gap-1.5">
-                <span className="text-gray-700">Before</span>
-                <input type="text" inputMode="numeric" value={String(ctxBefore)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setCtxBefore(d ? parseInt(d) : 0) }} className="w-14 border border-gray-400 px-2 py-1 text-sm text-center text-gray-900" />
-                <span className="text-gray-600 text-xs">msgs</span>
-              </label>
-              <label className="flex items-center gap-1.5">
-                <span className="text-gray-700">After</span>
-                <input type="text" inputMode="numeric" value={String(ctxAfter)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setCtxAfter(d ? parseInt(d) : 0) }} className="w-14 border border-gray-400 px-2 py-1 text-sm text-center text-gray-900" />
-                <span className="text-gray-600 text-xs">msgs</span>
-              </label>
-              <span className="text-xs text-gray-600">(same CSV, original order)</span>
-            </div>
+            {activeTab !== 'browse' && searchCat === 'chat' && (
+              <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap items-end gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="filter-label">Context Before</label>
+                  <div className="flex items-center gap-1">
+                    <input type="text" inputMode="numeric" value={String(ctxBefore)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setCtxBefore(d ? parseInt(d) : 0) }} className="search-input text-xs py-1 w-16 text-center" />
+                    <span className="text-xs text-gray-400">msgs</span>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="filter-label">Context After</label>
+                  <div className="flex items-center gap-1">
+                    <input type="text" inputMode="numeric" value={String(ctxAfter)} onChange={(e) => { const d = e.target.value.replace(/\D/g, ''); setCtxAfter(d ? parseInt(d) : 0) }} className="search-input text-xs py-1 w-16 text-center" />
+                    <span className="text-xs text-gray-400">msgs</span>
+                  </div>
+                </div>
+                <span className="self-end pb-1 text-xs text-gray-400">(same CSV, original order)</span>
+              </div>
+            )}
           </>
         )}
       </section>
+
+      {/* Scroll anchor + loading animation */}
+      <div ref={resultsAnchorRef} className="-mt-2" />
+      {searching && <SearchingAnimation />}
 
       {/* Error */}
       {error && (
@@ -1587,9 +1901,13 @@ export default function SearchPage() {
       )}
 
       {/* No results feedback */}
-      {!searching && !error && searchCat === 'chat' && results.length === 0 && lastKeyword && (
+      {!searching && !error && didSearch && searchCat === 'chat' && results.length === 0 && (
         <div className="bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 text-sm text-gray-500 text-center">
-          No results found for <span className="font-semibold text-gray-700">"{lastKeyword}"</span>. Try a different query or match type.
+          {activeTab === 'range'
+            ? 'No results found for the selected date range. The dataset may not have data for that period.'
+            : lastKeyword
+              ? <>No results for <span className="font-semibold text-gray-700">"{lastKeyword}"</span>. Try a different query, match type, or date range.</>
+              : 'No results found. Try adjusting the username or date filter.'}
         </div>
       )}
 
@@ -1604,11 +1922,11 @@ export default function SearchPage() {
                 <input value={userNameFilter} onChange={(e) => setUserNameFilter(e.target.value)} placeholder="any" className="search-input text-xs py-1 w-32" />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="filter-label">First msg after</label>
+                <label className="filter-label">Active from</label>
                 <input type="date" value={refineFirstMsgIn} onChange={(e) => setRefineFirstMsgIn(e.target.value)} className="search-input text-xs py-1" />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="filter-label">Last msg after</label>
+                <label className="filter-label">Active until</label>
                 <input type="date" value={refineLastMsgFrom} onChange={(e) => setRefineLastMsgFrom(e.target.value)} className="search-input text-xs py-1" />
               </div>
               <div className="flex flex-col gap-1">
@@ -1616,7 +1934,7 @@ export default function SearchPage() {
                 <input type="text" inputMode="numeric" value={refineMinMessages} onChange={(e) => setRefineMinMessages(e.target.value.replace(/\D/g, ''))} placeholder="any" className="search-input text-xs py-1 w-20" />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="filter-label">Min weeks active</label>
+                <label className="filter-label">Min weeks</label>
                 <input type="text" inputMode="numeric" value={refineMinWeeks} onChange={(e) => setRefineMinWeeks(e.target.value.replace(/\D/g, ''))} placeholder="any" className="search-input text-xs py-1 w-20" />
               </div>
               <div className="flex flex-col gap-1">
@@ -1624,7 +1942,7 @@ export default function SearchPage() {
                 <input type="text" inputMode="numeric" value={refineAvgWordsMin} onChange={(e) => setRefineAvgWordsMin(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="any" className="search-input text-xs py-1 w-20" />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="filter-label">≤</label>
+                <label className="filter-label">Avg words ≤</label>
                 <input type="text" inputMode="numeric" value={refineAvgWordsMax} onChange={(e) => setRefineAvgWordsMax(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="any" className="search-input text-xs py-1 w-20" />
               </div>
               <span className="self-end pb-1 text-xs text-gray-500 ml-1">
@@ -1705,42 +2023,35 @@ export default function SearchPage() {
       {/* Chat results */}
       {searchCat === 'chat' && results.length > 0 && (
         <>
-          {/* Action toolbar */}
-          <div className="bg-white rounded-2xl shadow px-4 py-2.5 flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={selectedCount === results.length && results.length > 0}
-                onChange={(e) => e.target.checked ? selectAll() : clearSelected()}
-                className="accent-indigo-600"
-              />
-              Select all
-            </label>
-            <span className="text-xs text-gray-500">
-              {selectedCount > 0
-                ? `${selectedCount} selected`
-                : `Showing ${Math.min(visibleCount, displayedResults.length).toLocaleString()} of ${results.length.toLocaleString()} results`}
-            </span>
-            <div className="flex gap-2 ml-auto flex-wrap">
-              <button onClick={exportCSV} className="action-btn-primary">Export CSV</button>
-              <button onClick={copySelected} disabled={selectedCount === 0} className="action-btn-primary">Copy Selected</button>
-            </div>
-          </div>
-
           {/* Analysis tab bar */}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => toggleAnalysisTab('summarize')}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold border-2 transition-colors ${analysisTab === 'summarize' ? 'border-indigo-500 bg-indigo-50 text-indigo-800' : 'border-gray-200 bg-white text-gray-600 hover:border-indigo-300'}`}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border-2 transition-colors ${analysisTab === 'summarize' ? 'border-indigo-500 bg-indigo-50 text-indigo-800' : 'border-gray-200 bg-white text-gray-600 hover:border-indigo-300'}`}
             >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
               Summarize &amp; Analyse
             </button>
             <button
               onClick={() => toggleAnalysisTab('viz')}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold border-2 transition-colors ${analysisTab === 'viz' ? 'border-purple-500 bg-purple-50 text-purple-800' : 'border-gray-200 bg-white text-gray-600 hover:border-purple-300'}`}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border-2 transition-colors ${analysisTab === 'viz' ? 'border-purple-500 bg-purple-50 text-purple-800' : 'border-gray-200 bg-white text-gray-600 hover:border-purple-300'}`}
             >
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
               Visualization
             </button>
+            <button onClick={exportCSV} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border-2 border-gray-200 bg-white text-gray-600 hover:border-green-300 hover:text-green-700 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Export CSV
+            </button>
+            <span className="ml-auto text-xs text-gray-400">
+              {`${Math.min(visibleCount, displayedResults.length).toLocaleString()} of ${results.length.toLocaleString()} results`}
+            </span>
           </div>
 
           {/* Summarize & Analyse panel */}
@@ -1958,7 +2269,7 @@ export default function SearchPage() {
                     }}
                     style={{ cursor: 'pointer' }}
                   >
-                    <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+                    <XAxis dataKey="period" tick={{ fontSize: 11 }} tickFormatter={formatTrendPeriod} />
                     <YAxis tick={{ fontSize: 11 }} />
                     <Tooltip />
                     <Bar dataKey="count" radius={[2, 2, 0, 0]}>
@@ -1983,16 +2294,16 @@ export default function SearchPage() {
               {/* Mode buttons */}
               <div className="inline-flex rounded-lg overflow-hidden border border-gray-200 shrink-0">
                 <button
-                  onClick={() => setFilterMode('exact')}
-                  className={`px-3 py-1.5 text-xs font-semibold transition-colors ${filterMode === 'exact' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                >
-                  Exact
-                </button>
-                <button
                   onClick={() => setFilterMode('any')}
-                  className={`px-3 py-1.5 text-xs font-semibold border-l border-gray-200 transition-colors ${filterMode === 'any' ? 'bg-emerald-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors ${filterMode === 'any' ? 'bg-emerald-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                 >
                   Any Word
+                </button>
+                <button
+                  onClick={() => setFilterMode('exact')}
+                  className={`px-3 py-1.5 text-xs font-semibold border-l border-gray-200 transition-colors ${filterMode === 'exact' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                >
+                  Exact
                 </button>
                 <button
                   onClick={() => setFilterMode('fuzzy')}
@@ -2059,21 +2370,38 @@ export default function SearchPage() {
           )}
 
           {/* Message cards */}
-          <div className="space-y-3" id="results-container">
-            {displayedResults.slice(0, visibleCount).map((msg) => (
-              <MessageCard
-                key={msg.id}
-                msg={msg}
-                keyword={activeKeyword}
-                tokens={activeTokens}
-                isBookmarked={bookmarkedIds.has(msg.id)}
-                isSelected={selectedIds.has(msg.id)}
-                onBookmarkToggle={handleBookmarkToggle}
-                onSelectToggle={toggleSelected}
-                ctxBefore={ctxBefore}
-                ctxAfter={ctxAfter}
-              />
-            ))}
+          <div className="bg-white rounded-2xl shadow px-4 py-3" id="results-container">
+            {displayedResults.slice(0, visibleCount).map((msg, idx) => {
+              const sliced = displayedResults.slice(0, visibleCount)
+              const prev = sliced[idx - 1]
+              const isGrouped = idx > 0 && prev?.username === msg.username
+              const prevDay = prev?.date?.slice(0, 10)
+              const thisDay = msg.date?.slice(0, 10)
+              const showDateSep = idx === 0 || thisDay !== prevDay
+              return (
+                <div key={msg.id}>
+                  {showDateSep && (
+                    <div className="flex items-center gap-3 my-3">
+                      <div className="flex-1 border-t border-gray-100" />
+                      <span className="text-xs text-gray-400 font-medium shrink-0">{thisDay}</span>
+                      <div className="flex-1 border-t border-gray-100" />
+                    </div>
+                  )}
+                  <MessageCard
+                    msg={msg}
+                    keyword={activeKeyword}
+                    tokens={activeTokens}
+                    isBookmarked={bookmarkedIds.has(msg.id)}
+                    isSelected={selectedIds.has(msg.id)}
+                    onBookmarkToggle={handleBookmarkToggle}
+                    onSelectToggle={toggleSelected}
+                    ctxBefore={ctxBefore}
+                    ctxAfter={ctxAfter}
+                    isGrouped={isGrouped && !showDateSep}
+                  />
+                </div>
+              )
+            })}
             {displayedResults.length === 0 && filterText.trim() && (
               <div className="text-center py-8 text-gray-400 text-sm">No results match the current filter.</div>
             )}
@@ -2090,6 +2418,117 @@ export default function SearchPage() {
             )}
           </div>
         </>
+      )}
+
+      {/* Browse All results */}
+      {activeTab === 'browse' && searchCat === 'chat' && (
+        <div className="bg-white rounded-2xl shadow" id="browse-container">
+          {/* Sticky filter bar */}
+          <div className="sticky top-0 z-20 bg-white border-b border-gray-100 px-4 py-3 shadow-sm rounded-t-2xl">
+            <div className="flex flex-wrap gap-3 items-end">
+              <div className="flex flex-col gap-1">
+                <label className="filter-label">Username</label>
+                <input
+                  value={browseUsernameFilter}
+                  onChange={(e) => setBrowseUsernameFilter(e.target.value)}
+                  placeholder="filter…"
+                  className="search-input text-xs py-1 w-44"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="filter-label">Keyword</label>
+                <input
+                  value={browseKeywordFilter}
+                  onChange={(e) => setBrowseKeywordFilter(e.target.value)}
+                  placeholder="filter…"
+                  className="search-input text-xs py-1 w-56"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="filter-label">From</label>
+                <input
+                  type="date"
+                  value={browseDateFrom}
+                  onChange={(e) => setBrowseDateFrom(e.target.value)}
+                  className="search-input text-xs py-1"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="filter-label">To</label>
+                <input
+                  type="date"
+                  value={browseDateTo}
+                  onChange={(e) => setBrowseDateTo(e.target.value)}
+                  className="search-input text-xs py-1"
+                />
+              </div>
+              {(browseUsernameFilter || browseKeywordFilter || browseDateFrom || browseDateTo) && (
+                <button
+                  onClick={() => { setBrowseUsernameFilter(''); setBrowseKeywordFilter(''); setBrowseDateFrom(''); setBrowseDateTo('') }}
+                  className="self-end pb-1 text-xs text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  Clear
+                </button>
+              )}
+              <span className="self-end pb-1 ml-auto text-xs text-gray-400">
+                {filteredBrowseMessages.length !== browseMessages.length
+                  ? `${filteredBrowseMessages.length.toLocaleString()} / ${browseMessages.length.toLocaleString()} loaded`
+                  : `${browseMessages.length.toLocaleString()} loaded`}
+              </span>
+            </div>
+          </div>
+
+          {/* Messages */}
+          <div className="px-4 py-3">
+            {filteredBrowseMessages.map((msg, idx) => {
+              const prev = filteredBrowseMessages[idx - 1]
+              const isGrouped = idx > 0 && prev.username === msg.username
+              const prevDay = prev?.date?.slice(0, 10)
+              const thisDay = msg.date?.slice(0, 10)
+              const showDateSep = idx === 0 || thisDay !== prevDay
+              return (
+                <div key={msg.id}>
+                  {showDateSep && (
+                    <div className="flex items-center gap-3 my-3">
+                      <div className="flex-1 border-t border-gray-100" />
+                      <span className="text-xs text-gray-400 font-medium shrink-0">{thisDay}</span>
+                      <div className="flex-1 border-t border-gray-100" />
+                    </div>
+                  )}
+                  <BrowseChatRow
+                    msg={msg}
+                    isGrouped={isGrouped && !showDateSep}
+                    isBookmarked={bookmarkedIds.has(msg.id)}
+                    onBookmarkToggle={handleBookmarkToggle}
+                    tokens={browseTokens}
+                  />
+                </div>
+              )
+            })}
+            <div ref={browseSentinelRef} />
+            {browseFetching && (
+              <div className="flex items-center justify-center gap-2 py-6 text-sm text-indigo-500">
+                <svg className="w-4 h-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Loading more messages…
+              </div>
+            )}
+            {!browseHasMore && browseMessages.length > 0 && (
+              <div className="py-3 text-center text-xs text-gray-400">
+                All {browseMessages.length.toLocaleString()} messages loaded
+              </div>
+            )}
+            {browseMessages.length === 0 && !browseFetching && (
+              <div className="text-center py-8 text-gray-400 text-sm">No messages found.</div>
+            )}
+            {filteredBrowseMessages.length === 0 && browseMessages.length > 0 && (
+              <div className="text-center py-8 text-gray-400 text-sm">No messages match the current filters.</div>
+            )}
+          </div>
+        </div>
       )}
 
     </div>

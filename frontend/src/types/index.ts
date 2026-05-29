@@ -86,7 +86,7 @@ export interface EmbeddingModel {
 
 export interface SunoTeamMember {
   username: string
-  msg_count: number
+  message_count: number
 }
 
 export interface UserInRange {

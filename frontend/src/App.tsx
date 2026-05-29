@@ -17,6 +17,8 @@ import BookmarksPage from './pages/BookmarksPage'
 import AdminPage from './pages/AdminPage'
 import SettingsPage from './pages/SettingsPage'
 import CodingPage from './pages/CodingPage'
+import NotFoundPage from './pages/NotFoundPage'
+import ErrorPage from './pages/ErrorPage'
 
 function CodingRedirect() {
   const last = localStorage.getItem('coding_tab') || 'manager'
@@ -71,16 +73,20 @@ const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginPage />,
+    errorElement: <ErrorPage />,
   },
   {
     path: '/onboarding',
     element: <OnboardingPage />,
+    errorElement: <ErrorPage />,
   },
   {
     element: <ProtectedRoute />,
+    errorElement: <ErrorPage />,
     children: [
       {
         element: <Layout />,
+        errorElement: <ErrorPage />,
         children: [
           { path: '/', element: <Navigate to="/search" replace /> },
           { path: '/search', element: <SearchPage /> },
@@ -94,8 +100,12 @@ const router = createBrowserRouter([
       },
     ],
   },
+  {
+    path: '*',
+    element: <NotFoundPage />,
+  },
 ])
 
 export default function App() {
-  return <RouterProvider router={router} />
+  return <RouterProvider router={router} future={{ v7_startTransition: true }} />
 }
