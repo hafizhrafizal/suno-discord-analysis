@@ -9,6 +9,10 @@ concurrency:
   group: production-deploy
   cancel-in-progress: true
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/retrieval-backend
+
 jobs:
   build-frontend:
     runs-on: ubuntu-latest
@@ -37,35 +41,49 @@ jobs:
           path: frontend/dist/
           retention-days: 1
 
-  build-backend:
+  build-backend-image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          workspaces: backend
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Rust backend (release)
-        working-directory: backend
-        run: cargo build --release
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Upload backend binary
-        uses: actions/upload-artifact@v4
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
         with:
-          name: backend-binary
-          path: backend/target/release/retrieval-backend
-          retention-days: 1
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
     runs-on: ubuntu-latest
-    needs: [build-frontend, build-backend]
+    needs: [build-frontend, build-backend-image]
     permissions:
       contents: read
+      packages: read
 
     steps:
       - name: Download frontend dist
@@ -73,12 +91,6 @@ jobs:
         with:
           name: frontend-dist
           path: frontend-dist/
-
-      - name: Download backend binary
-        uses: actions/download-artifact@v4
-        with:
-          name: backend-binary
-          path: backend-binary/
 
       - name: Start SSH agent and add key
         uses: webfactory/ssh-agent@v0.9.0
@@ -90,26 +102,25 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Upload artifacts to VPS
+      - name: Upload frontend dist to VPS
         run: |
-          chmod +x backend-binary/retrieval-backend
           rsync -avz --delete frontend-dist/ \
             "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/frontend/dist/"
-          rsync -avz backend-binary/retrieval-backend \
-            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ secrets.VPS_APP_DIR }}/backend/retrieval-backend"
 
-      - name: Restart backend service on VPS
+      - name: Pull image and restart on VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+          GH_ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FULL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
         run: |
-          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" << 'EOF'
+          ssh "${VPS_USER}@${VPS_HOST}" bash << EOF
             set -e
-            cd "${{ secrets.VPS_APP_DIR }}"
-            git pull origin main
-            chmod +x backend/retrieval-backend
-            # Restart using systemd if available, otherwise docker compose
-            if systemctl is-active --quiet retrieval-backend 2>/dev/null; then
-              sudo systemctl restart retrieval-backend
-            else
-              docker compose up -d --build
-              docker image prune -f
-            fi
+            echo "${GH_TOKEN}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
+            docker pull "${FULL_IMAGE}"
+            cd "${VPS_APP_DIR}"
+            BACKEND_IMAGE="${FULL_IMAGE}" docker compose up -d --no-build
+            docker image prune -f
           EOF
