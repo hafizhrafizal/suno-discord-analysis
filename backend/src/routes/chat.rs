@@ -102,7 +102,18 @@ async fn fetch_embeddings(
     Some(result)
 }
 
+/// Convert any msg_uuid to a Qdrant-compatible UUID string (mirrors uploads.rs logic).
+fn to_qdrant_id(id: &str) -> String {
+    if uuid::Uuid::parse_str(id).is_ok() {
+        id.to_string()
+    } else {
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, id.as_bytes()).to_string()
+    }
+}
+
 /// Fetch embeddings from Qdrant for the given msg_uuids.
+/// Converts IDs to Qdrant UUID form for the lookup, then reads original msg_uuid
+/// back from the point payload so the returned keys match the database values.
 async fn fetch_embeddings_qdrant(
     qdrant_url: &str,
     collection: &str,
@@ -110,11 +121,13 @@ async fn fetch_embeddings_qdrant(
     uuids: &[String],
 ) -> Option<Vec<(String, Vec<f32>)>> {
     let client = reqwest::Client::new();
-    let url = format!("{}/collections/{}/points", qdrant_url, collection);
+    // /points/get is the correct endpoint for fetching points by ID
+    let url = format!("{}/collections/{}/points/get", qdrant_url, collection);
+    let qdrant_ids: Vec<String> = uuids.iter().map(|id| to_qdrant_id(id)).collect();
     let mut req = client.post(&url).json(&serde_json::json!({
-        "ids": uuids,
+        "ids": qdrant_ids,
         "with_vectors": true,
-        "with_payload": false,
+        "with_payload": true,  // needed to read back original msg_uuid
     }));
     if let Some(key) = api_key { req = req.header("api-key", key); }
     let resp = req.send().await.ok()?;
@@ -124,7 +137,11 @@ async fn fetch_embeddings_qdrant(
     let result: Vec<(String, Vec<f32>)> = points
         .iter()
         .filter_map(|p| {
-            let id = p["id"].as_str()?.to_string();
+            // Use payload.msg_uuid (original ID) as the map key so callers can
+            // look up by the same msg_uuid values they have from the database
+            let id = p["payload"]["msg_uuid"].as_str()
+                .or_else(|| p["id"].as_str())
+                .map(String::from)?;
             let vec: Vec<f32> = p["vector"]
                 .as_array()?
                 .iter()

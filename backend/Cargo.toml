@@ -21,7 +21,7 @@ sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "c
 reqwest = { version = "0.12", features = ["json", "stream"] }
 argon2 = "0.5"
 dotenvy = "0.15"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v5"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

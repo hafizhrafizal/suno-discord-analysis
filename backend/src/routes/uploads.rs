@@ -325,6 +325,19 @@ async fn get_existing_chroma_ids(
         .collect()
 }
 
+/// Convert any msg_uuid to a Qdrant-compatible UUID string.
+/// Qdrant only accepts UUIDs (string) or u64 (number) as point IDs.
+/// Discord Snowflake IDs are numeric strings that are not valid UUIDs, so we
+/// derive a deterministic UUID5 from them using NAMESPACE_OID — the same
+/// namespace used by the migration script (migrate_chroma_to_qdrant.py).
+fn to_qdrant_id(id: &str) -> String {
+    if Uuid::parse_str(id).is_ok() {
+        id.to_string()
+    } else {
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, id.as_bytes()).to_string()
+    }
+}
+
 /// Ensure a Qdrant collection exists; create with cosine distance if missing.
 async fn ensure_qdrant_collection(
     client: &reqwest::Client,
@@ -346,7 +359,9 @@ async fn ensure_qdrant_collection(
     put_req.send().await.map(|r| r.status().is_success()).unwrap_or(false)
 }
 
-/// Return the set of IDs already present in a Qdrant collection.
+/// Return the set of ORIGINAL IDs (msg_uuid) already present in a Qdrant collection.
+/// Converts each ID to its Qdrant UUID form for the lookup, then maps results back
+/// to original IDs so the caller can compare directly with database msg_uuid values.
 async fn get_existing_qdrant_ids(
     client: &reqwest::Client,
     qdrant_url: &str,
@@ -356,23 +371,35 @@ async fn get_existing_qdrant_ids(
 ) -> std::collections::HashSet<String> {
     let futs = ids.chunks(1000).map(|chunk| {
         let client = client.clone();
-        let url = format!("{}/collections/{}/points", qdrant_url, collection);
-        let chunk = chunk.to_vec();
+        // Correct endpoint: /points/get (not /points which is the upsert endpoint)
+        let url = format!("{}/collections/{}/points/get", qdrant_url, collection);
+        // Build original→qdrant_id mapping before the async block
+        let pairs: Vec<(String, String)> = chunk.iter()
+            .map(|id| (id.clone(), to_qdrant_id(id)))
+            .collect();
+        let qdrant_ids: Vec<String> = pairs.iter().map(|(_, qid)| qid.clone()).collect();
+        let qdrant_to_orig: std::collections::HashMap<String, String> = pairs
+            .into_iter()
+            .map(|(orig, qid)| (qid, orig))
+            .collect();
         let api_key = api_key.map(String::from);
         async move {
             let mut found = Vec::<String>::new();
             let mut req = client.post(&url).json(&json!({
-                "ids": chunk,
+                "ids": qdrant_ids,
                 "with_payload": false,
-                "with_vector": false,
+                "with_vectors": false,
             }));
             if let Some(key) = &api_key { req = req.header("api-key", key); }
             if let Ok(r) = req.send().await {
                 if let Ok(data) = r.json::<Value>().await {
                     if let Some(arr) = data["result"].as_array() {
                         for p in arr {
-                            if let Some(id) = p["id"].as_str() {
-                                found.push(id.to_string());
+                            // Qdrant returns UUID IDs as strings; map back to original
+                            if let Some(qid) = p["id"].as_str() {
+                                if let Some(orig) = qdrant_to_orig.get(qid) {
+                                    found.push(orig.clone());
+                                }
                             }
                         }
                     }
@@ -400,16 +427,24 @@ async fn upsert_qdrant_batch(
         .zip(embeddings.iter())
         .zip(documents.iter())
         .map(|((id, emb), doc)| json!({
-            "id": id,
+            // Qdrant requires UUID or u64 as point ID; convert Snowflake IDs → UUID5
+            "id": to_qdrant_id(id),
             "vector": emb,
+            // Keep original msg_uuid in payload so we can recover it on reads
             "payload": { "msg_uuid": id, "upload_id": upload_id, "document": doc }
         }))
         .collect();
     let url = format!("{}/collections/{}/points", qdrant_url, collection);
     let mut req = client.put(&url).json(&json!({ "points": points }));
     if let Some(key) = api_key { req = req.header("api-key", key); }
-    if let Err(e) = req.send().await {
-        tracing::warn!("Qdrant upsert failed: {}", e);
+    match req.send().await {
+        Ok(r) if !r.status().is_success() => {
+            let s = r.status();
+            let b = r.text().await.unwrap_or_default();
+            tracing::warn!("Qdrant upsert HTTP {}: {}", s, &b[..b.len().min(300)]);
+        }
+        Err(e) => tracing::warn!("Qdrant upsert failed: {}", e),
+        _ => {}
     }
 }
 
@@ -1236,7 +1271,10 @@ pub async fn sync_chroma(State(state): State<AppState>) -> Result<impl IntoRespo
         ));
 
         // ── Step 3: collect all vector store IDs ──────────────────────────────
-        let mut all_vec_ids: Vec<String> = Vec::new();
+        // Qdrant: point IDs are UUID5-converted, so we also fetch payload.msg_uuid
+        // (the original ID) for PostgreSQL comparison.
+        let mut all_orig_ids: Vec<String> = Vec::new();  // original msg_uuid for pg comparison
+        let mut all_point_ids: Vec<String> = Vec::new(); // qdrant/chroma point IDs for deletion
         if is_qdrant {
             let scroll_url = format!("{}/collections/{}/points/scroll", qdrant_url, qdrant_collection);
             let qdrant_client = reqwest::Client::builder()
@@ -1248,7 +1286,7 @@ pub async fn sync_chroma(State(state): State<AppState>) -> Result<impl IntoRespo
                 let body = json!({
                     "limit": 10000,
                     "offset": next_offset,
-                    "with_payload": false,
+                    "with_payload": true,
                     "with_vectors": false,
                 });
                 let mut scroll_req = qdrant_client.post(&scroll_url).json(&body);
@@ -1263,12 +1301,19 @@ pub async fn sync_chroma(State(state): State<AppState>) -> Result<impl IntoRespo
                 let points = resp["result"]["points"].as_array().map(|a| a.to_vec()).unwrap_or_default();
                 let count = points.len();
                 for p in &points {
-                    if let Some(id) = p["id"].as_str() {
-                        all_vec_ids.push(id.to_string());
+                    let point_id = p["id"].as_str().map(String::from);
+                    // prefer payload.msg_uuid (original ID), fall back to point ID
+                    let orig = p["payload"]["msg_uuid"].as_str()
+                        .or_else(|| p["payload"]["_chroma_id"].as_str())
+                        .or_else(|| p["id"].as_str())
+                        .map(String::from);
+                    if let (Some(pid), Some(oid)) = (point_id, orig) {
+                        all_point_ids.push(pid);
+                        all_orig_ids.push(oid);
                     }
                 }
                 yield Ok(Event::default().data(
-                    serde_json::to_string(&json!({ "type": "chroma_page", "fetched": all_vec_ids.len() })).unwrap()
+                    serde_json::to_string(&json!({ "type": "chroma_page", "fetched": all_point_ids.len() })).unwrap()
                 ));
                 next_offset = resp["result"]["next_page_offset"].clone();
                 if next_offset.is_null() || count == 0 { break; }
@@ -1292,20 +1337,26 @@ pub async fn sync_chroma(State(state): State<AppState>) -> Result<impl IntoRespo
                     _ => break,
                 };
                 let count = page_ids.len();
-                all_vec_ids.extend(page_ids);
+                all_point_ids.extend(page_ids.clone());
+                all_orig_ids.extend(page_ids);
                 yield Ok(Event::default().data(
-                    serde_json::to_string(&json!({ "type": "chroma_page", "fetched": all_vec_ids.len() })).unwrap()
+                    serde_json::to_string(&json!({ "type": "chroma_page", "fetched": all_point_ids.len() })).unwrap()
                 ));
                 if count < page_size { break; }
                 offset += page_size;
             }
         }
 
-        let total_vec = all_vec_ids.len() as i64;
-        let vec_set: std::collections::HashSet<String> = all_vec_ids.iter().cloned().collect();
-        let orphans: Vec<String> = all_vec_ids.into_iter().filter(|id| !pg_uuids.contains(id)).collect();
-        let orphan_count = orphans.len() as i64;
-        let un_embedded: i64 = pg_uuids.iter().filter(|id| !vec_set.contains(*id)).count() as i64;
+        let total_vec = all_point_ids.len() as i64;
+        let orig_set: std::collections::HashSet<String> = all_orig_ids.iter().cloned().collect();
+        // Orphan = in vector store but not in PostgreSQL (compare by original msg_uuid)
+        let orphan_point_ids: Vec<String> = all_orig_ids.into_iter()
+            .zip(all_point_ids.into_iter())
+            .filter(|(orig, _)| !pg_uuids.contains(orig))
+            .map(|(_, pid)| pid)
+            .collect();
+        let orphan_count = orphan_point_ids.len() as i64;
+        let un_embedded: i64 = pg_uuids.iter().filter(|id| !orig_set.contains(*id)).count() as i64;
 
         // ── Step 4: delete orphans ─────────────────────────────────────────────
         let qdrant_client2 = reqwest::Client::builder()
@@ -1313,7 +1364,7 @@ pub async fn sync_chroma(State(state): State<AppState>) -> Result<impl IntoRespo
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         let mut orphans_deleted: i64 = 0;
-        for chunk in orphans.chunks(500) {
+        for chunk in orphan_point_ids.chunks(500) {
             let deleted = if is_qdrant {
                 let mut del_req = qdrant_client2.post(&qdrant_delete_url)
                     .json(&json!({ "points": chunk }));
