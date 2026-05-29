@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tokio::sync::RwLock;
@@ -10,7 +9,6 @@ pub struct AppState {
     pub db: PgPool,
     pub config: Arc<Config>,
     pub openai_key: Arc<RwLock<Option<String>>>,
-    pub user_openai_keys: Arc<RwLock<HashMap<i64, String>>>,
     pub fts_ready: Arc<AtomicBool>,
 }
 
@@ -27,7 +25,6 @@ impl AppState {
             db,
             config: Arc::new(config),
             openai_key: Arc::new(RwLock::new(openai_key)),
-            user_openai_keys: Arc::new(RwLock::new(HashMap::new())),
             fts_ready,
         }
     }
@@ -43,12 +40,13 @@ impl AppState {
             .flatten()
     }
 
-    pub async fn get_openai_key(&self, user_id: Option<i64>) -> Option<String> {
-        if let Some(uid) = user_id {
-            let keys = self.user_openai_keys.read().await;
-            if let Some(k) = keys.get(&uid) {
-                return Some(k.clone());
-            }
+    /// Return the OpenAI key to use for a request.
+    /// Prefers the value the client sent in the `X-OpenAI-Key` header (sourced from
+    /// localStorage — never stored server-side), then falls back to the server-level
+    /// key from the `.env` / config file.
+    pub async fn get_openai_key(&self, header_key: Option<String>) -> Option<String> {
+        if let Some(k) = header_key {
+            if !k.is_empty() { return Some(k); }
         }
         self.openai_key.read().await.clone()
     }

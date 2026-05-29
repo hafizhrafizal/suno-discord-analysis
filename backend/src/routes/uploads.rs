@@ -1,14 +1,21 @@
 use axum::{
     extract::{Multipart, Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{sse::{Event, Sse}, IntoResponse},
     Json,
 };
+
+fn key_from_header(headers: &HeaderMap) -> Option<String> {
+    headers.get("x-openai-key")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
 use serde_json::{json, Value};
 use std::convert::Infallible;
 use uuid::Uuid;
 use chrono::Datelike;
-use crate::{error::{AppError, Result}, state::AppState};
+use crate::{error::{AppError, Result}, models::AuthUser, state::AppState};
 
 const EMBED_MODEL: &str = "text-embedding-3-small";
 /// 500 inputs × 1 536 dims × ~12 chars/float ≈ 9 MB per response — reliable ceiling before
@@ -479,6 +486,8 @@ async fn upsert_chroma_batch(
 
 pub async fn upload_csv(
     State(state): State<AppState>,
+    _user: AuthUser,
+    req_headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse> {
     let mut csv_bytes: Option<Vec<u8>> = None;
@@ -565,7 +574,7 @@ pub async fn upload_csv(
     // Capture everything the stream needs before moving into the generator
     let upload_id_clone = upload_id.clone();
     let db = state.db.clone();
-    let openai_key_opt = state.openai_key.read().await.clone();
+    let openai_key_opt = state.get_openai_key(key_from_header(&req_headers)).await;
     let chroma_host = state.config.chroma_host.clone();
     let chroma_port = state.config.chroma_port;
     let chroma_collection = state.config.chroma_collection.clone();
@@ -1043,6 +1052,8 @@ pub async fn delete_upload_embeddings(
 
 pub async fn reembed(
     State(state): State<AppState>,
+    _user: AuthUser,
+    req_headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
     let exists: Option<String> = sqlx::query_scalar("SELECT id FROM uploads WHERE id = $1")
@@ -1054,7 +1065,7 @@ pub async fn reembed(
     }
 
     let api_key = state
-        .get_openai_key(None)
+        .get_openai_key(key_from_header(&req_headers))
         .await
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 

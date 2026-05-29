@@ -1,7 +1,15 @@
 use axum::{
     extract::{Query, State},
+    http::HeaderMap,
     Json,
 };
+
+fn key_from_header(headers: &HeaderMap) -> Option<String> {
+    headers.get("x-openai-key")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
@@ -359,6 +367,7 @@ pub struct SemanticParams {
 pub async fn semantic_search(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: HeaderMap,
     Query(params): Query<SemanticParams>,
 ) -> Result<Json<Value>> {
     let q = params.q.as_deref().unwrap_or("").trim().to_string();
@@ -368,7 +377,7 @@ pub async fn semantic_search(
     let limit = params.limit.unwrap_or(20).min(200) as usize;
 
     let api_key = state
-        .get_openai_key(Some(user.id))
+        .get_openai_key(key_from_header(&headers))
         .await
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 

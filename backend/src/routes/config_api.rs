@@ -9,19 +9,14 @@ use crate::{
 const EMBEDDING_MODEL_ID: &str = "text-embedding-3-small";
 const EMBEDDING_MODEL_DIMS: u32 = 1536;
 
+/// The API key is stored in the browser's localStorage only and sent per-request via
+/// the `X-OpenAI-Key` header.  This endpoint is kept for backward compatibility but
+/// no longer stores anything server-side.
 pub async fn set_api_key(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Json(req): Json<SetApiKeyRequest>,
+    _state: State<AppState>,
+    _user: AuthUser,
+    _req: Json<SetApiKeyRequest>,
 ) -> Result<Json<Value>> {
-    let mode = state.get_app_mode().await;
-    if mode.as_deref() == Some("multi") {
-        let mut keys = state.user_openai_keys.write().await;
-        keys.insert(user.id, req.api_key.clone());
-    } else {
-        let mut key = state.openai_key.write().await;
-        *key = Some(req.api_key.clone());
-    }
     Ok(Json(json!({ "status": "ok" })))
 }
 

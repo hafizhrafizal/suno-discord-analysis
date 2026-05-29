@@ -1,11 +1,19 @@
 use axum::{
     extract::State,
+    http::HeaderMap,
     response::{
         sse::{Event, Sse},
         IntoResponse,
     },
     Json,
 };
+
+fn key_from_header(headers: &HeaderMap) -> Option<String> {
+    headers.get("x-openai-key")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
 use serde_json::json;
 use std::convert::Infallible;
 use crate::{
@@ -276,10 +284,11 @@ async fn call_openai_stream(
 pub async fn chat(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<ChatRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let api_key = state
-        .get_openai_key(Some(user.id))
+        .get_openai_key(key_from_header(&headers))
         .await
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 
@@ -298,10 +307,11 @@ pub async fn chat(
 pub async fn summarize(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<SummarizeRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let api_key = state
-        .get_openai_key(Some(user.id))
+        .get_openai_key(key_from_header(&headers))
         .await
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 
@@ -316,10 +326,11 @@ pub async fn summarize(
 pub async fn summarize_followup(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<SummarizeFollowupRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let api_key = state
-        .get_openai_key(Some(user.id))
+        .get_openai_key(key_from_header(&headers))
         .await
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 
@@ -336,10 +347,11 @@ pub async fn summarize_followup(
 pub async fn summarize_results(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<SummarizeResultsRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let api_key = state
-        .get_openai_key(Some(user.id))
+        .get_openai_key(key_from_header(&headers))
         .await
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 
@@ -562,10 +574,11 @@ pub async fn summarize_results(
 pub async fn summarize_results_followup(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<SummarizeResultsFollowupRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let api_key = state
-        .get_openai_key(Some(user.id))
+        .get_openai_key(key_from_header(&headers))
         .await
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 
@@ -588,10 +601,11 @@ pub async fn summarize_results_followup(
 pub async fn user_profile(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<UserProfileRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let api_key = state
-        .get_openai_key(Some(user.id))
+        .get_openai_key(key_from_header(&headers))
         .await
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 
@@ -631,10 +645,11 @@ pub async fn user_profile(
 pub async fn user_profile_followup(
     State(state): State<AppState>,
     user: AuthUser,
+    headers: HeaderMap,
     Json(req): Json<UserProfileFollowupRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let api_key = state
-        .get_openai_key(Some(user.id))
+        .get_openai_key(key_from_header(&headers))
         .await
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 

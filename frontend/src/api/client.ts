@@ -8,6 +8,11 @@ export class ApiError extends Error {
   }
 }
 
+function openaiKeyHeader(): Record<string, string> {
+  const k = localStorage.getItem('openai_api_key')
+  return k ? { 'X-OpenAI-Key': k } : {}
+}
+
 export async function apiFetch<T = unknown>(
   path: string,
   options?: RequestInit,
@@ -15,9 +20,10 @@ export async function apiFetch<T = unknown>(
   const isFormData = options?.body instanceof FormData
   const res = await fetch(`/api${path}`, {
     headers: isFormData
-      ? { ...(options?.headers ?? {}) }
+      ? { ...openaiKeyHeader(), ...(options?.headers ?? {}) }
       : {
           'Content-Type': 'application/json',
+          ...openaiKeyHeader(),
           ...(options?.headers ?? {}),
         },
     credentials: 'include',
@@ -61,7 +67,7 @@ export function streamEvents(
     try {
       const res = await fetch(`/api${path}`, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...openaiKeyHeader() },
         body: JSON.stringify(body),
         signal: controller.signal,
         credentials: 'include',

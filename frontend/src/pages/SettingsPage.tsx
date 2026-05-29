@@ -17,11 +17,13 @@ function UploadCard({
   isAdmin,
   vdbName,
   onRefresh,
+  onNeedApiKey,
 }: {
   upload: Upload
   isAdmin: boolean
   vdbName: string
   onRefresh: () => void
+  onNeedApiKey: () => void
 }) {
   const [reembedProgress, setReembedProgress] = useState<{ pct: number; label: string; error?: string } | null>(null)
   const [reembedLoading, setReembedLoading] = useState(false)
@@ -34,6 +36,8 @@ function UploadCard({
 
   const doReembed = async () => {
     if (reembedLoading) return
+    const apiKey = localStorage.getItem('openai_api_key')
+    if (!apiKey) { onNeedApiKey(); return }
     setReembedLoading(true)
     setReembedPaused(false)
     reembedPausedRef.current = false
@@ -48,6 +52,7 @@ function UploadCard({
         method: 'POST',
         credentials: 'include',
         signal: controller.signal,
+        headers: { 'X-OpenAI-Key': apiKey },
       })
       if (!response.ok) {
         let msg = `HTTP ${response.status}`
@@ -263,15 +268,11 @@ export default function SettingsPage() {
     enabled: isAdmin,
   })
 
-  const handleSaveKey = async () => {
+  const handleSaveKey = () => {
     if (!keyInput.trim()) { setKeyError('Please enter your API key.'); return }
     setKeySaving(true)
     setKeyError('')
     try {
-      await apiFetch('/set-api-key', {
-        method: 'POST',
-        body: JSON.stringify({ api_key: keyInput.trim() }),
-      })
       localStorage.setItem('openai_api_key', keyInput.trim())
       setShowKeyPopup(false)
       setKeyInput('')
@@ -285,6 +286,8 @@ export default function SettingsPage() {
 
   const handleUpload = async () => {
     if (!uploadFile) { setUploadStatus('Please select a CSV file.'); return }
+    const apiKey = localStorage.getItem('openai_api_key')
+    if (!apiKey) { setShowKeyPopup(true); return }
     setUploadBtnLoading(true)
     setUploadPaused(false)
     uploadPausedRef.current = false
@@ -296,7 +299,7 @@ export default function SettingsPage() {
     uploadAbortRef.current = controller
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
     try {
-      const response = await fetch('/api/upload', { method: 'POST', body: form, credentials: 'include', signal: controller.signal })
+      const response = await fetch('/api/upload', { method: 'POST', body: form, credentials: 'include', signal: controller.signal, headers: { 'X-OpenAI-Key': apiKey } })
       if (!response.ok) {
         let msg = `HTTP ${response.status}`
         try { const d = await response.json(); msg = d.error ?? d.message ?? msg } catch {}
@@ -485,7 +488,8 @@ export default function SettingsPage() {
 
   const vdbName = stats?.vector_db_label ?? 'ChromaDB'
 
-  const apiKeyStatus = stats?.api_key_set
+  const hasLocalKey = !!localStorage.getItem('openai_api_key')
+  const apiKeyStatus = (hasLocalKey || stats?.api_key_set)
     ? 'API key is set and active.'
     : 'No API key set. Click "Change Key" to add one.'
 
@@ -647,7 +651,7 @@ export default function SettingsPage() {
             <p className="text-sm text-gray-600 text-center py-6">No dataset uploads yet.</p>
           ) : (
             uploads.map((u) => (
-              <UploadCard key={u.id} upload={u} isAdmin={isAdmin} vdbName={vdbName} onRefresh={() => { refetchUploads(); queryClient.invalidateQueries({ queryKey: ['stats'] }) }} />
+              <UploadCard key={u.id} upload={u} isAdmin={isAdmin} vdbName={vdbName} onRefresh={() => { refetchUploads(); queryClient.invalidateQueries({ queryKey: ['stats'] }) }} onNeedApiKey={() => setShowKeyPopup(true)} />
             ))
           )}
         </div>
