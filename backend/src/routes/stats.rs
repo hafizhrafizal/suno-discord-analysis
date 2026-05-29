@@ -13,12 +13,7 @@ pub async fn get_stats(State(state): State<AppState>) -> Result<Json<Value>> {
             .fetch_one(&state.db)
             .await?;
 
-    let embedded_messages: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT m.id) FROM messages m
-         JOIN embedded_uploads eu ON m.upload_id = eu.upload_id",
-    )
-    .fetch_one(&state.db)
-    .await?;
+    let embedded_messages: i64 = state.get_vector_count().await.unwrap_or(0);
 
     let api_key_set = state.openai_key.read().await.is_some();
 

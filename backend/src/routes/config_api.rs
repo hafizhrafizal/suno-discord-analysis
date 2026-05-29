@@ -41,13 +41,7 @@ pub async fn set_embedding_model(
 }
 
 pub async fn list_embedding_models(State(state): State<AppState>) -> Result<Json<Value>> {
-    let vector_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM embedded_uploads WHERE model_id = $1",
-    )
-    .bind(EMBEDDING_MODEL_ID)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
+    let vector_count: i64 = state.get_vector_count().await.unwrap_or(0);
 
     Ok(Json(json!([{
         "id": EMBEDDING_MODEL_ID,

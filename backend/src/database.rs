@@ -34,7 +34,7 @@ pub async fn init_db(pool: &PgPool) -> Result<(), sqlx::Error> {
             is_suno_team TEXT DEFAULT 'false',
             week TEXT,
             month TEXT,
-            upload_id TEXT REFERENCES uploads(id),
+            upload_id TEXT REFERENCES uploads(id) ON DELETE CASCADE,
             row_index BIGINT,
             word_count BIGINT,
             search_vector tsvector
@@ -166,6 +166,19 @@ pub async fn init_db(pool: &PgPool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+
+    // Migrate messages.upload_id FK to ON DELETE CASCADE (safe to re-run)
+    let _ = sqlx::query(
+        "ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_upload_id_fkey",
+    )
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "ALTER TABLE messages ADD CONSTRAINT messages_upload_id_fkey \
+         FOREIGN KEY (upload_id) REFERENCES uploads(id) ON DELETE CASCADE",
+    )
+    .execute(pool)
+    .await;
 
     // Column migrations — ADD COLUMN IF NOT EXISTS is safe to re-run
     for stmt in &[

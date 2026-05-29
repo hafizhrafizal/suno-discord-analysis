@@ -56,4 +56,40 @@ impl AppState {
     pub fn get_embedding_model(&self) -> String {
         "text-embedding-3-small".to_string()
     }
+
+    /// Query ChromaDB for the total number of vectors in the active collection.
+    /// Returns None if ChromaDB is unreachable or the collection doesn't exist.
+    pub async fn get_vector_count(&self) -> Option<i64> {
+        let base = format!(
+            "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
+            self.config.chroma_host, self.config.chroma_port
+        );
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .ok()?;
+
+        // Step 1: resolve collection name → UUID
+        let info: serde_json::Value = client
+            .get(format!("{}/collections/{}", base, self.config.chroma_collection))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        let collection_id = info["id"].as_str()?.to_string();
+
+        // Step 2: fetch count for that collection UUID
+        let count_val: serde_json::Value = client
+            .get(format!("{}/collections/{}/count", base, collection_id))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+
+        count_val.as_i64().or_else(|| count_val.as_f64().map(|f| f as i64))
+    }
 }

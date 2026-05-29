@@ -9,6 +9,7 @@ mod routes;
 mod state;
 
 use axum::{
+    extract::DefaultBodyLimit,
     http::{Method, StatusCode},
     routing::get_service,
     Router,
@@ -115,7 +116,8 @@ async fn main() -> anyhow::Result<()> {
         .fallback_service(frontend_service)
         .layer(cors)
         .layer(session_layer)
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        .layer(DefaultBodyLimit::max(200 * 1024 * 1024));
 
     let addr = "0.0.0.0:8000";
     tracing::info!("Listening on http://{}", addr);

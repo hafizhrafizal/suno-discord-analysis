@@ -163,10 +163,10 @@ pub async fn keyword_search(
     if let Some(ref st) = params.is_suno_team {
         match st.as_str() {
             "true" | "1" | "only" => {
-                qb.push(" AND m.is_suno_team IN ('true','1')");
+                qb.push(" AND LOWER(m.is_suno_team) IN ('true','1')");
             }
             "exclude" | "false" | "0" => {
-                qb.push(" AND (m.is_suno_team IS NULL OR m.is_suno_team NOT IN ('true','1'))");
+                qb.push(" AND (m.is_suno_team IS NULL OR LOWER(m.is_suno_team) NOT IN ('true','1'))");
             }
             _ => {}
         }
@@ -373,22 +373,31 @@ pub async fn semantic_search(
     let embed_model = state.get_embedding_model();
 
     let is_question = is_question_query(&q);
-    let embedding = if is_question {
-        tracing::debug!("HyDE: question query detected — generating hypothetical document");
-        let (raw_res, hyde_opt) = tokio::join!(
-            embed_query(&api_key, &q, &embed_model),
-            hyde_embed(&api_key, &q, &embed_model)
-        );
-        let raw = normalize_embedding(raw_res?);
-        match hyde_opt {
-            Some(hyde) => blend_embeddings(&raw, &normalize_embedding(hyde), 0.5),
-            None => {
-                tracing::warn!("HyDE failed — falling back to raw query embedding");
-                raw
-            }
+    let word_count = q.split_whitespace().count();
+
+    // Always run HyDE in parallel with the raw embed — it always helps when
+    // comparing short queries against full-length Discord messages.
+    // Blend weight controls how much the hypothetical doc steers the embedding:
+    //   short keyword (≤3 words): lean heavily on HyDE (raw query is too sparse)
+    //   question or medium phrase:  equal blend
+    let hyde_weight = if word_count <= 3 { 0.75 } else { 0.55 };
+
+    tracing::debug!(
+        "Semantic: is_question={}, words={}, hyde_weight={}",
+        is_question, word_count, hyde_weight
+    );
+
+    let (raw_res, hyde_opt) = tokio::join!(
+        embed_query(&api_key, &q, &embed_model),
+        hyde_embed(&api_key, &q, &embed_model)
+    );
+    let raw = normalize_embedding(raw_res?);
+    let embedding = match hyde_opt {
+        Some(hyde) => blend_embeddings(&raw, &normalize_embedding(hyde), hyde_weight),
+        None => {
+            tracing::warn!("HyDE failed — using raw query embedding");
+            raw
         }
-    } else {
-        normalize_embedding(embed_query(&api_key, &q, &embed_model).await?)
     };
 
     let chroma_base = format!(
@@ -435,7 +444,9 @@ pub async fn semantic_search(
         }
     };
 
-    let n_results = (limit * 5).min(500);
+    // Fetch more candidates than needed so post-filters (date, username, etc.)
+    // have a large pool to work with, especially for keyword-style queries.
+    let n_results = (limit * 8).min(800);
     let chroma_url = format!("{}/collections/{}/query", chroma_base, collection_id);
     let chroma_send = client
         .post(&chroma_url)
@@ -486,12 +497,29 @@ pub async fn semantic_search(
 
     let empty_dists = vec![];
     let distances = chroma_data["distances"][0].as_array().unwrap_or(&empty_dists);
+    // ChromaDB may return L2 or cosine distances depending on collection config.
+    // Convert to a [0,1] similarity:
+    //   cosine distance ∈ [0,1]  → similarity = 1 - d
+    //   L2 distance (unit vecs)  → similarity = 1 - d/2  (L2 max = 2 for unit vecs)
+    // We detect which by checking whether any raw distance exceeds 1.0.
+    let max_raw_dist = distances
+        .iter()
+        .filter_map(|v| v.as_f64())
+        .fold(0.0_f64, f64::max);
+    let is_l2 = max_raw_dist > 1.0;
+
     let uuid_to_similarity: std::collections::HashMap<String, f64> = msg_uuids
         .iter()
         .zip(distances.iter())
         .filter_map(|(uuid, dist)| {
-            dist.as_f64()
-                .map(|d| (uuid.clone(), (1.0 - d).clamp(0.0, 1.0)))
+            dist.as_f64().map(|d| {
+                let sim = if is_l2 {
+                    (1.0 - d / 2.0).clamp(0.0, 1.0)
+                } else {
+                    (1.0 - d).clamp(0.0, 1.0)
+                };
+                (uuid.clone(), sim)
+            })
         })
         .collect();
 
@@ -499,12 +527,13 @@ pub async fn semantic_search(
         .values()
         .cloned()
         .fold(0.0_f64, f64::max);
-    let min_similarity = 0.30_f64.max(best_sim * 0.65);
+
+    // Use a looser relative threshold — short queries produce lower absolute
+    // similarity scores against long messages even when semantically relevant.
+    let min_similarity = 0.15_f64.max(best_sim * 0.50);
     tracing::debug!(
-        "Semantic: best_sim={:.3}, threshold={:.3}, hyde={}",
-        best_sim,
-        min_similarity,
-        is_question
+        "Semantic: best_sim={:.3}, threshold={:.3}, is_l2={}, words={}",
+        best_sim, min_similarity, is_l2, word_count
     );
 
     // Build IN clause with positional params
@@ -574,7 +603,7 @@ pub async fn semantic_search(
             }
             if let Some(ref st) = params.is_suno_team {
                 let is_team =
-                    matches!(m["is_suno_team"].as_str().unwrap_or(""), "true" | "1");
+                    matches!(m["is_suno_team"].as_str().unwrap_or("").to_lowercase().as_str(), "true" | "1");
                 match st.as_str() {
                     "true" | "1" | "only" => {
                         if !is_team {
@@ -663,10 +692,10 @@ pub async fn username_search(
     if let Some(ref st) = params.is_suno_team {
         match st.as_str() {
             "true" | "1" | "only" => {
-                qb.push(" AND is_suno_team IN ('true','1')");
+                qb.push(" AND LOWER(is_suno_team) IN ('true','1')");
             }
             "exclude" | "false" | "0" => {
-                qb.push(" AND (is_suno_team IS NULL OR is_suno_team NOT IN ('true','1'))");
+                qb.push(" AND (is_suno_team IS NULL OR LOWER(is_suno_team) NOT IN ('true','1'))");
             }
             _ => {}
         }
@@ -816,7 +845,7 @@ pub async fn users_in_range(
                 ))::numeric, 1)::float8 AS avg_words,
                 COUNT(DISTINCT COALESCE(m.week,
                     TO_CHAR(NULLIF(m.date,'')::timestamp, 'IYYY-IW'))) AS weeks_active,
-                MAX(CASE WHEN m.is_suno_team IN ('true', '1', 'True') THEN 1 ELSE 0 END)::bigint AS is_team,
+                MAX(CASE WHEN LOWER(m.is_suno_team) IN ('true', '1') THEN 1 ELSE 0 END)::bigint AS is_team,
                 (SELECT COUNT(DISTINCT COALESCE(week,
                      TO_CHAR(NULLIF(date,'')::timestamp, 'IYYY-IW')))
                  FROM messages WHERE 1=1{df}) AS total_weeks

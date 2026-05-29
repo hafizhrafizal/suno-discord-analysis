@@ -11,7 +11,7 @@ pub mod stats;
 pub mod suno_team;
 pub mod uploads;
 
-use axum::{routing::{delete, get, post, put}, Router};
+use axum::{extract::DefaultBodyLimit, routing::{delete, get, post, put}, Router};
 use crate::state::AppState;
 
 pub fn all_routes(state: AppState) -> Router {
@@ -52,11 +52,12 @@ pub fn all_routes(state: AppState) -> Router {
         .route("/summarize-results/followup", post(chat::summarize_results_followup))
         .route("/user-profile", post(chat::user_profile))
         .route("/user-profile/followup", post(chat::user_profile_followup))
-        // Uploads
-        .route("/upload", post(uploads::upload_csv))
+        // Uploads — 200 MB body limit for large Discord CSV exports
+        .route("/upload", post(uploads::upload_csv).layer(DefaultBodyLimit::max(200 * 1024 * 1024)))
         .route("/uploads", get(uploads::list_uploads))
         .route("/uploads/:id", delete(uploads::delete_upload))
-.route("/uploads/:id/embeddings", delete(uploads::delete_upload_embeddings))
+        .route("/uploads/:id/sqlite", delete(uploads::delete_upload_sqlite))
+        .route("/uploads/:id/embeddings", delete(uploads::delete_upload_embeddings))
         .route("/uploads/:id/reembed", post(uploads::reembed))
         .route("/jobs/:job_id", get(uploads::get_job))
         // Bookmarks
@@ -82,6 +83,6 @@ pub fn all_routes(state: AppState) -> Router {
         .route("/bookmark-codes/:bookmark_id/:code_id", delete(codes::remove_code_assignment))
         // Suno team
         .route("/suno-team", get(suno_team::list_suno_team))
-        .route("/suno-team/:username", delete(suno_team::remove_suno_team))
+        .route("/suno-team/:username", post(suno_team::add_suno_team).delete(suno_team::remove_suno_team))
         .with_state(state)
 }
