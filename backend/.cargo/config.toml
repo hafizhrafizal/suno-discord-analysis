@@ -1,4 +1,0 @@
-[build]
-# Redirect build artifacts to a short path to avoid Windows MAX_PATH (260 chars) limit.
-# The project lives deep in OneDrive, making target/ paths exceed the limit.
-target-dir = "C:\\ct"

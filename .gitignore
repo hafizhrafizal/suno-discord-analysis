@@ -39,6 +39,8 @@ out/
 target/
 **/*.rs.bk
 Cargo.lock.bak
+# Machine-specific cargo config (Windows MAX_PATH workaround — keep local only)
+backend/.cargo/config.toml
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
