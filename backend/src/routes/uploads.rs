@@ -285,6 +285,94 @@ async fn get_existing_chroma_ids(
         .collect()
 }
 
+/// Ensure a Qdrant collection exists; create with cosine distance if missing.
+async fn ensure_qdrant_collection(
+    client: &reqwest::Client,
+    qdrant_url: &str,
+    collection: &str,
+    api_key: Option<&str>,
+    vector_size: u64,
+) -> bool {
+    let url = format!("{}/collections/{}", qdrant_url, collection);
+    let mut get_req = client.get(&url);
+    if let Some(key) = api_key { get_req = get_req.header("api-key", key); }
+    if let Ok(r) = get_req.send().await {
+        if r.status().is_success() { return true; }
+    }
+    let mut put_req = client
+        .put(&url)
+        .json(&json!({ "vectors": { "size": vector_size, "distance": "Cosine" } }));
+    if let Some(key) = api_key { put_req = put_req.header("api-key", key); }
+    put_req.send().await.map(|r| r.status().is_success()).unwrap_or(false)
+}
+
+/// Return the set of IDs already present in a Qdrant collection.
+async fn get_existing_qdrant_ids(
+    client: &reqwest::Client,
+    qdrant_url: &str,
+    collection: &str,
+    api_key: Option<&str>,
+    ids: &[String],
+) -> std::collections::HashSet<String> {
+    let futs = ids.chunks(1000).map(|chunk| {
+        let client = client.clone();
+        let url = format!("{}/collections/{}/points", qdrant_url, collection);
+        let chunk = chunk.to_vec();
+        let api_key = api_key.map(String::from);
+        async move {
+            let mut found = Vec::<String>::new();
+            let mut req = client.post(&url).json(&json!({
+                "ids": chunk,
+                "with_payload": false,
+                "with_vector": false,
+            }));
+            if let Some(key) = &api_key { req = req.header("api-key", key); }
+            if let Ok(r) = req.send().await {
+                if let Ok(data) = r.json::<Value>().await {
+                    if let Some(arr) = data["result"].as_array() {
+                        for p in arr {
+                            if let Some(id) = p["id"].as_str() {
+                                found.push(id.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            found
+        }
+    });
+    futures::future::join_all(futs).await.into_iter().flatten().collect()
+}
+
+/// Upsert a batch of embeddings into Qdrant.
+async fn upsert_qdrant_batch(
+    client: &reqwest::Client,
+    qdrant_url: &str,
+    collection: &str,
+    api_key: Option<&str>,
+    ids: &[String],
+    embeddings: &[Vec<f64>],
+    documents: &[String],
+    upload_id: &str,
+) {
+    let points: Vec<Value> = ids
+        .iter()
+        .zip(embeddings.iter())
+        .zip(documents.iter())
+        .map(|((id, emb), doc)| json!({
+            "id": id,
+            "vector": emb,
+            "payload": { "msg_uuid": id, "upload_id": upload_id, "document": doc }
+        }))
+        .collect();
+    let url = format!("{}/collections/{}/points", qdrant_url, collection);
+    let mut req = client.put(&url).json(&json!({ "points": points }));
+    if let Some(key) = api_key { req = req.header("api-key", key); }
+    if let Err(e) = req.send().await {
+        tracing::warn!("Qdrant upsert failed: {}", e);
+    }
+}
+
 /// Upsert a batch of embeddings into ChromaDB.
 async fn upsert_chroma_batch(
     client: &reqwest::Client,
@@ -826,7 +914,6 @@ pub async fn reembed(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>> {
-    // Check upload exists
     let exists: Option<String> = sqlx::query_scalar("SELECT id FROM uploads WHERE id = $1")
         .bind(&id)
         .fetch_optional(&state.db)
@@ -840,21 +927,39 @@ pub async fn reembed(
         .await
         .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
 
-    let chroma_base = format!(
-        "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
-        state.config.chroma_host, state.config.chroma_port
-    );
+    let is_qdrant = state.config.vector_db.to_lowercase() == "qdrant";
+
     let chroma_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let embed_client = chroma_client.clone();
 
-    let collection_id = get_or_create_chroma_collection(
-        &chroma_client, &chroma_base, &state.config.chroma_collection,
-    )
-    .await
-    .ok_or_else(|| AppError::Internal("ChromaDB unavailable".into()))?;
+    // Connect to the configured vector store
+    let (chroma_base, collection_id) = if is_qdrant {
+        let ok = ensure_qdrant_collection(
+            &chroma_client,
+            &state.config.qdrant_url,
+            &state.config.qdrant_collection,
+            state.config.qdrant_api_key.as_deref(),
+            1536,
+        ).await;
+        if !ok {
+            return Err(AppError::Internal("Qdrant unavailable".into()));
+        }
+        (String::new(), String::new())
+    } else {
+        let base = format!(
+            "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
+            state.config.chroma_host, state.config.chroma_port
+        );
+        let cid = get_or_create_chroma_collection(
+            &chroma_client, &base, &state.config.chroma_collection,
+        )
+        .await
+        .ok_or_else(|| AppError::Internal("ChromaDB unavailable".into()))?;
+        (base, cid)
+    };
 
     let msgs: Vec<(String, String)> = {
         use sqlx::Row;
@@ -872,13 +977,22 @@ pub async fn reembed(
     };
 
     let total = msgs.len() as i64;
-    let mut embedded: i64 = 0;
-
-    // Skip vectors already in ChromaDB so re-embed is resumable
     let all_ids: Vec<String> = msgs.iter().map(|(mid, _)| mid.clone()).collect();
-    let existing_ids = get_existing_chroma_ids(&chroma_client, &chroma_base, &collection_id, &all_ids).await;
-    let skipped = existing_ids.len() as i64;
 
+    // Skip already-embedded vectors so re-embed is resumable
+    let existing_ids = if is_qdrant {
+        get_existing_qdrant_ids(
+            &chroma_client,
+            &state.config.qdrant_url,
+            &state.config.qdrant_collection,
+            state.config.qdrant_api_key.as_deref(),
+            &all_ids,
+        ).await
+    } else {
+        get_existing_chroma_ids(&chroma_client, &chroma_base, &collection_id, &all_ids).await
+    };
+
+    let skipped = existing_ids.len() as i64;
     let msgs_to_embed: Vec<(String, String)> = msgs
         .into_iter()
         .filter(|(mid, _)| !existing_ids.contains(mid))
@@ -891,6 +1005,8 @@ pub async fn reembed(
             chunk.iter().map(|(_, c)| c.clone()).collect::<Vec<_>>(),
         ))
         .collect();
+
+    let mut embedded: i64 = 0;
 
     for window in all_batches.chunks(EMBED_CONCURRENCY) {
         let embed_futs = window.iter().map(|(ids, texts)| {
@@ -915,12 +1031,26 @@ pub async fn reembed(
             let collection_id = collection_id.clone();
             let upload_id_inner = id.clone();
             let valid = valid.clone();
+            let qdrant_url = state.config.qdrant_url.clone();
+            let qdrant_collection = state.config.qdrant_collection.clone();
+            let qdrant_api_key = state.config.qdrant_api_key.clone();
             async move {
                 if valid.is_empty() { return 0i64; }
                 let v_ids: Vec<String> = valid.iter().map(|(vid, _, _)| vid.clone()).collect();
                 let v_embs: Vec<Vec<f64>> = valid.iter().map(|(_, emb, _)| emb.clone()).collect();
                 let v_docs: Vec<String> = valid.iter().map(|(_, _, doc)| doc.clone()).collect();
-                upsert_chroma_batch(&chroma_client, &chroma_base, &collection_id, &v_ids, &v_embs, &v_docs, &upload_id_inner).await;
+                if is_qdrant {
+                    upsert_qdrant_batch(
+                        &chroma_client, &qdrant_url, &qdrant_collection,
+                        qdrant_api_key.as_deref(),
+                        &v_ids, &v_embs, &v_docs, &upload_id_inner,
+                    ).await;
+                } else {
+                    upsert_chroma_batch(
+                        &chroma_client, &chroma_base, &collection_id,
+                        &v_ids, &v_embs, &v_docs, &upload_id_inner,
+                    ).await;
+                }
                 valid.len() as i64
             }
         });
