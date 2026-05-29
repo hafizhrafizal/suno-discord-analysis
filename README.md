@@ -1,4 +1,4 @@
-# Suno Discord Analysis — Retrieval & Analysis Platform
+# Suno Discord Analysis — Retrieval & Analysis Platform-
 
 A web-based research tool for ingesting, searching, and analysing exported Discord conversation data using keyword search, vector-similarity retrieval, and LLM-powered summarisation. Built for academic research into the Suno AI community.
 
