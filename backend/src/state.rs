@@ -99,18 +99,21 @@ impl AppState {
     }
 
     async fn get_qdrant_vector_count(&self) -> Option<i64> {
-        let url = format!("{}/collections/{}", self.config.qdrant_url, self.config.qdrant_collection);
+        // POST /points/count with exact:true is guaranteed to return the true total
+        // regardless of indexing or optimizer state — more reliable than collection info fields.
+        let url = format!("{}/collections/{}/points/count", self.config.qdrant_url, self.config.qdrant_collection);
         let mut req = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
             .build()
             .ok()?
-            .get(&url);
+            .post(&url)
+            .json(&serde_json::json!({ "exact": true }));
         if let Some(key) = &self.config.qdrant_api_key {
             req = req.header("api-key", key);
         }
         let resp: serde_json::Value = req.send().await.ok()?.json().await.ok()?;
-        resp["result"]["vectors_count"]
+        resp["result"]["count"]
             .as_i64()
-            .or_else(|| resp["result"]["vectors_count"].as_f64().map(|f| f as i64))
+            .or_else(|| resp["result"]["count"].as_f64().map(|f| f as i64))
     }
 }
