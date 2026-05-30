@@ -18,6 +18,9 @@ export default function ApiKeyModal() {
 
   if (!showKeyModal) return null
 
+  // When no key is stored anywhere, lock the modal — must enter a key to proceed
+  const isForced = !localStorage.getItem('openai_api_key')
+
   const handleSave = () => {
     if (!keyInput.trim()) { setKeyError('Please enter your API key.'); return }
     try {
@@ -32,7 +35,11 @@ export default function ApiKeyModal() {
 
   return createPortal(
     <>
-      <div className="fixed inset-0 z-[9999] bg-black/50" onClick={() => setShowKeyModal(false)} />
+      <div
+        className="fixed inset-0 z-[9999] bg-black/50"
+        onClick={isForced ? undefined : () => setShowKeyModal(false)}
+        style={isForced ? { cursor: 'default' } : undefined}
+      />
       <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center p-0 sm:p-4 pointer-events-none">
         <div className="pointer-events-auto w-full sm:max-w-md rounded-t-2xl sm:rounded-xl shadow-2xl overflow-hidden">
           {/* Header */}
@@ -43,7 +50,7 @@ export default function ApiKeyModal() {
               </svg>
               <h2 className="text-lg font-bold text-white">OpenAI API Key Required</h2>
             </div>
-            <p className="text-xs text-blue-200 ml-[30px]">Required for Chat, Summarize, and the embedding model.</p>
+            <p className="text-xs text-blue-200 ml-[30px]">Required for semantic search, summarize, and embedding.</p>
           </div>
           {/* Body */}
           <div className="bg-white px-5 py-5">
@@ -68,12 +75,14 @@ export default function ApiKeyModal() {
               >
                 Save &amp; Continue
               </button>
-              <button
-                onClick={() => setShowKeyModal(false)}
-                className="px-5 py-3 text-sm font-semibold border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
+              {!isForced && (
+                <button
+                  onClick={() => setShowKeyModal(false)}
+                  className="px-5 py-3 text-sm font-semibold border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           </div>
         </div>

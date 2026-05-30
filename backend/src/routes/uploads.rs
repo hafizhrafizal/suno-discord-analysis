@@ -1109,3 +1109,332 @@ pub async fn get_job(Path(job_id): Path<String>) -> (StatusCode, Json<Value>) {
         Json(json!({ "error": "No active embedding jobs", "job_id": job_id })),
     )
 }
+
+/// Scan all uploads, compare DB message UUIDs against Qdrant point UUIDs, then:
+/// - embed messages that are in the DB but missing from Qdrant, and
+/// - delete vectors that are in Qdrant but have no matching DB message (orphans).
+/// Streams SSE events for scan progress, per-upload embed/delete progress, and final summary.
+pub async fn sync_qdrant(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    req_headers: HeaderMap,
+) -> Result<impl IntoResponse> {
+    let api_key = state
+        .get_openai_key(key_from_header(&req_headers))
+        .await
+        .ok_or_else(|| AppError::BadRequest("OpenAI API key not set".into()))?;
+
+    let db = state.db.clone();
+    let qdrant_url = state.config.qdrant_url.clone();
+    let qdrant_collection = state.config.qdrant_collection.clone();
+    let qdrant_api_key = state.config.qdrant_api_key.clone();
+
+    let event_stream = async_stream::stream! {
+        let http_client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                yield Ok::<Event, Infallible>(Event::default().data(
+                    serde_json::to_string(&json!({"type":"error","message":e.to_string()})).unwrap()
+                ));
+                return;
+            }
+        };
+
+        let ok = ensure_qdrant_collection(
+            &http_client, &qdrant_url, &qdrant_collection,
+            qdrant_api_key.as_deref(), 1536,
+        ).await;
+        if !ok {
+            yield Ok(Event::default().data(
+                serde_json::to_string(&json!({"type":"error","message":"Qdrant unavailable"})).unwrap()
+            ));
+            return;
+        }
+
+        // Load all uploads
+        let uploads: Vec<(String, String)> = match sqlx::query(
+            "SELECT id, filename FROM uploads ORDER BY upload_time DESC",
+        )
+        .fetch_all(&db)
+        .await
+        {
+            Ok(rows) => {
+                use sqlx::Row;
+                rows.into_iter().map(|r| (r.get("id"), r.get("filename"))).collect()
+            }
+            Err(e) => {
+                yield Ok(Event::default().data(
+                    serde_json::to_string(&json!({"type":"error","message":e.to_string()})).unwrap()
+                ));
+                return;
+            }
+        };
+
+        let total_uploads = uploads.len();
+        yield Ok(Event::default().data(
+            serde_json::to_string(&json!({
+                "type": "scan_start",
+                "total_uploads": total_uploads,
+            })).unwrap()
+        ));
+
+        // Phase 1: full UUID scan per upload
+        //   work_items: (upload_id, filename, missing_msg_uuids, orphan_qdrant_point_ids)
+        let mut work_items: Vec<(String, String, Vec<String>, Vec<String>)> = Vec::new();
+
+        for (upload_id, filename) in &uploads {
+            // DB UUIDs with non-empty content
+            let db_uuids: std::collections::HashSet<String> = {
+                use sqlx::Row;
+                sqlx::query(
+                    "SELECT msg_uuid FROM messages WHERE upload_id = $1 AND content IS NOT NULL",
+                )
+                .bind(upload_id)
+                .fetch_all(&db)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|r| r.get::<String, _>("msg_uuid"))
+                .collect()
+            };
+
+            // Qdrant UUIDs for this upload (full scroll via payload filter)
+            let qdrant_uuids = get_existing_qdrant_ids_for_upload(
+                &http_client, &qdrant_url, &qdrant_collection,
+                qdrant_api_key.as_deref(), upload_id,
+            ).await;
+
+            let db_count = db_uuids.len() as i64;
+            let qdrant_count = qdrant_uuids.len() as i64;
+
+            // Messages in DB but not in Qdrant → need embedding
+            let missing_uuids: Vec<String> = db_uuids.iter()
+                .filter(|id| !qdrant_uuids.contains(*id))
+                .cloned()
+                .collect();
+
+            // Vectors in Qdrant but not in DB → orphans to delete
+            // Convert original msg_uuid back to the Qdrant point ID (UUID5 form)
+            let orphan_point_ids: Vec<String> = qdrant_uuids.iter()
+                .filter(|id| !db_uuids.contains(*id))
+                .map(|id| to_qdrant_id(id))
+                .collect();
+
+            let missing = missing_uuids.len() as i64;
+            let orphans = orphan_point_ids.len() as i64;
+
+            yield Ok(Event::default().data(
+                serde_json::to_string(&json!({
+                    "type": "scan_result",
+                    "upload_id": upload_id,
+                    "filename": filename,
+                    "db_count": db_count,
+                    "qdrant_count": qdrant_count,
+                    "missing": missing,
+                    "orphans": orphans,
+                })).unwrap()
+            ));
+
+            if missing > 0 || orphans > 0 {
+                work_items.push((
+                    upload_id.clone(),
+                    filename.clone(),
+                    missing_uuids,
+                    orphan_point_ids,
+                ));
+            }
+        }
+
+        yield Ok(Event::default().data(
+            serde_json::to_string(&json!({
+                "type": "sync_start",
+                "to_sync": work_items.len(),
+            })).unwrap()
+        ));
+
+        if work_items.is_empty() {
+            yield Ok(Event::default().data(
+                serde_json::to_string(&json!({
+                    "type": "done",
+                    "total_uploads": total_uploads,
+                    "synced_uploads": 0,
+                    "total_embedded": 0,
+                    "total_deleted": 0,
+                })).unwrap()
+            ));
+            return;
+        }
+
+        // Phase 2: for each upload that needs action, delete orphans then embed missing
+        let mut total_embedded_all: i64 = 0;
+        let mut total_deleted_all: i64 = 0;
+        let mut synced_count: i64 = 0;
+
+        for (upload_id, filename, missing_uuids, orphan_point_ids) in work_items {
+            let mut embedded: i64 = 0;
+            let mut deleted: i64 = 0;
+
+            // ── Step A: delete orphan vectors ────────────────────────────────────
+            if !orphan_point_ids.is_empty() {
+                let delete_url = format!(
+                    "{}/collections/{}/points/delete",
+                    qdrant_url, qdrant_collection,
+                );
+                for chunk in orphan_point_ids.chunks(500) {
+                    let mut req = http_client.post(&delete_url)
+                        .json(&json!({ "points": chunk }));
+                    if let Some(key) = &qdrant_api_key { req = req.header("api-key", key); }
+                    match req.send().await {
+                        Ok(r) if r.status().is_success() => deleted += chunk.len() as i64,
+                        Ok(r) => {
+                            let s = r.status();
+                            let b = r.text().await.unwrap_or_default();
+                            tracing::warn!(
+                                "Qdrant orphan delete HTTP {}: {}",
+                                s, &b[..b.len().min(200)]
+                            );
+                        }
+                        Err(e) => tracing::warn!("Qdrant orphan delete failed: {}", e),
+                    }
+                }
+            }
+
+            // ── Step B: embed missing messages ───────────────────────────────────
+            if !missing_uuids.is_empty() {
+                let msgs: Vec<(String, String)> = match sqlx::query(
+                    "SELECT msg_uuid, content FROM messages
+                     WHERE upload_id = $1 AND content IS NOT NULL
+                       AND msg_uuid = ANY($2)
+                     ORDER BY row_index",
+                )
+                .bind(&upload_id)
+                .bind(&missing_uuids)
+                .fetch_all(&db)
+                .await
+                {
+                    Ok(rows) => {
+                        use sqlx::Row;
+                        rows.into_iter()
+                            .map(|r| (r.get("msg_uuid"), r.get("content")))
+                            .collect()
+                    }
+                    Err(_) => vec![],
+                };
+
+                let total_to_embed = msgs.len() as i64;
+                if total_to_embed > 0 {
+                    yield Ok(Event::default().data(
+                        serde_json::to_string(&json!({
+                            "type": "embed_start",
+                            "upload_id": upload_id,
+                            "filename": filename,
+                            "total": total_to_embed,
+                        })).unwrap()
+                    ));
+
+                    let embed_client = http_client.clone();
+                    let all_batches: Vec<(Vec<String>, Vec<String>)> = msgs
+                        .chunks(EMBED_BATCH_SIZE)
+                        .map(|chunk| (
+                            chunk.iter().map(|(id, _)| id.clone()).collect(),
+                            chunk.iter().map(|(_, c)| c.clone()).collect(),
+                        ))
+                        .collect();
+
+                    for window in all_batches.chunks(EMBED_CONCURRENCY) {
+                        let embed_futs = window.iter().map(|(ids, texts)| {
+                            let embed_client = embed_client.clone();
+                            let api_key = api_key.clone();
+                            let ids = ids.clone();
+                            let texts = texts.clone();
+                            async move {
+                                let embeddings = embed_batch(embed_client, &api_key, &texts).await;
+                                ids.into_iter()
+                                    .zip(embeddings)
+                                    .zip(texts)
+                                    .filter_map(|((id, emb_opt), text)| {
+                                        emb_opt.map(|emb| (id, emb, text))
+                                    })
+                                    .collect::<Vec<_>>()
+                            }
+                        });
+                        let window_results = futures::future::join_all(embed_futs).await;
+
+                        let upsert_futs = window_results.iter().map(|valid| {
+                            let http_client = http_client.clone();
+                            let uid = upload_id.clone();
+                            let valid = valid.clone();
+                            let qu = qdrant_url.clone();
+                            let qc = qdrant_collection.clone();
+                            let qk = qdrant_api_key.clone();
+                            async move {
+                                if valid.is_empty() { return 0i64; }
+                                let v_ids: Vec<String> = valid.iter().map(|(vid, _, _)| vid.clone()).collect();
+                                let v_embs: Vec<Vec<f64>> = valid.iter().map(|(_, emb, _)| emb.clone()).collect();
+                                let v_docs: Vec<String> = valid.iter().map(|(_, _, doc)| doc.clone()).collect();
+                                upsert_qdrant_batch(
+                                    &http_client, &qu, &qc, qk.as_deref(),
+                                    &v_ids, &v_embs, &v_docs, &uid,
+                                ).await;
+                                valid.len() as i64
+                            }
+                        });
+                        let counts = futures::future::join_all(upsert_futs).await;
+                        embedded += counts.iter().sum::<i64>();
+
+                        yield Ok(Event::default().data(
+                            serde_json::to_string(&json!({
+                                "type": "embed_progress",
+                                "upload_id": upload_id,
+                                "embedded": embedded,
+                                "total": total_to_embed,
+                            })).unwrap()
+                        ));
+                    }
+
+                    let _ = sqlx::query(
+                        "INSERT INTO embedded_uploads (upload_id, model_id) VALUES ($1, $2)
+                         ON CONFLICT DO NOTHING",
+                    )
+                    .bind(&upload_id)
+                    .bind(EMBED_MODEL)
+                    .execute(&db)
+                    .await;
+                }
+            }
+
+            total_embedded_all += embedded;
+            total_deleted_all += deleted;
+            synced_count += 1;
+
+            yield Ok(Event::default().data(
+                serde_json::to_string(&json!({
+                    "type": "upload_done",
+                    "upload_id": upload_id,
+                    "filename": filename,
+                    "embedded": embedded,
+                    "deleted": deleted,
+                })).unwrap()
+            ));
+        }
+
+        yield Ok(Event::default().data(
+            serde_json::to_string(&json!({
+                "type": "done",
+                "total_uploads": total_uploads,
+                "synced_uploads": synced_count,
+                "total_embedded": total_embedded_all,
+                "total_deleted": total_deleted_all,
+            })).unwrap()
+        ));
+    };
+
+    Ok(Sse::new(event_stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("ping"),
+    ))
+}

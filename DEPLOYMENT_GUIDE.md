@@ -1,6 +1,6 @@
 # Suno Discord Analysis — VPS Deployment Guide (CI/CD)
 
-> **Convert to PDF**: In VS Code, open this file → right-click tab → *Open Preview* → `Ctrl+P` → *Save as PDF*.
+
 
 ---
 
@@ -8,7 +8,7 @@
 
 Every `git push` to `main` automatically:
 1. Builds the React frontend
-2. Builds the Rust backend as a Docker image → pushes to GitHub Container Registry
+2. Compiles the Rust backend binary → packages it into a Docker image → pushes to GitHub Container Registry
 3. rsyncs the frontend files to your VPS
 4. SSHes into the VPS → pulls the new image → restarts services
 
@@ -17,7 +17,7 @@ Every `git push` to `main` automatically:
 ```
 nginx  (port 80 / 443) ─── serves frontend + proxies /api/* to backend
 backend (internal only) ── Rust API on port 8000
-postgres (internal only) ─ PostgreSQL database
+postgres (internal only) ─ PostgreSQL 16
 qdrant (internal only) ─── vector store on port 6333
 ```
 
@@ -235,13 +235,14 @@ git push origin main
 Watch the build at:
 `https://github.com/hafizhrafizal/Retrieval-Web-Refactor/actions`
 
-The workflow runs three jobs in sequence:
+The workflow runs four jobs in sequence:
 
 | Job | What it does | Time |
 |---|---|---|
-| `build-frontend` | `npm install && npm run build`, uploads dist as artifact | ~2 min |
-| `build-backend-image` | `docker build`, pushes to `ghcr.io` | ~10 min (first time), ~2 min (cached) |
-| `deploy` | rsyncs frontend dist, SSHes into VPS, `docker pull` + `docker compose up -d` | ~1 min |
+| `build-frontend` | `npm install && npm run build`, uploads `dist/` as artifact | ~2 min |
+| `build-backend-binary` | `cargo build --release`, uploads binary as artifact | ~10 min (first), ~2 min (cached) |
+| `package-and-push` | Wraps binary in Docker image, pushes to `ghcr.io` with `sha-<short>` and `latest` tags | ~1 min |
+| `deploy` | rsyncs frontend dist, SSHes into VPS, `docker compose pull` + `docker compose up -d --no-build` + `docker image prune` | ~1 min |
 
 ---
 
@@ -339,7 +340,7 @@ scp discord_db_export.sql user@your-vps-ip:~/app/
 On the **VPS**:
 
 ```bash
-cd ~/suno-analysis/app
+cd ~/app
 
 # Copy dump file into the postgres container
 docker compose cp discord_db_export.sql postgres:/tmp/discord_db_export.sql
@@ -376,7 +377,7 @@ docker compose start backend
 # Clean up temp files
 docker compose exec postgres psql -U retrieval -d retrieval -c "SELECT 1;" > /dev/null \
   && docker compose exec postgres rm /tmp/discord_db_export.sql
-rm ~/suno-analysis/app/discord_db_export.sql
+rm ~/app/discord_db_export.sql
 ```
 
 ### 10.4 Verify row counts match
@@ -407,93 +408,7 @@ Both numbers must match.
 
 ---
 
-## Step 11 — Migrate ChromaDB → Qdrant
-
-The migration script reads your local ChromaDB files and pushes all vectors into the Qdrant container on the VPS via an SSH tunnel.
-
-### 11.1 Install migration script dependencies (LOCAL machine)
-
-```bash
-pip install chromadb qdrant-client tqdm
-```
-
-### 11.2 Start Qdrant on VPS
-
-On the **VPS**:
-
-```bash
-cd ~/app
-docker compose up -d qdrant
-docker compose ps qdrant    # should show Up
-```
-
-### 11.3 Open an SSH tunnel (LOCAL machine)
-
-Qdrant runs inside Docker and is not exposed to the internet. Open a tunnel from your local port 6333 to the VPS Qdrant:
-
-```bash
-# Open this in a SEPARATE terminal — keep it running during the migration
-ssh -L 6333:localhost:6333 user@your-vps-ip -N
-```
-
-Test the tunnel:
-
-```bash
-curl http://localhost:6333/healthz
-# Expected: {"title":"qdrant - vector search engine","version":"..."}
-```
-
-### 11.4 Dry run first (count vectors, no upload)
-
-```bash
-cd /path/to/Retrieval-Web-Refactor
-
-python scripts/migrate_chroma_to_qdrant.py \
-  --chroma-path ./chroma_db \
-  --chroma-collection discord_openai \
-  --qdrant-url http://localhost:6333 \
-  --qdrant-collection discord_openai \
-  --dry-run
-```
-
-Confirm the reported count matches your expected number of embedded messages.
-
-### 11.5 Run the migration
-
-```bash
-python scripts/migrate_chroma_to_qdrant.py \
-  --chroma-path ./chroma_db \
-  --chroma-collection discord_openai \
-  --qdrant-url http://localhost:6333 \
-  --qdrant-collection discord_openai \
-  --vector-size 1536 \
-  --batch-size 200
-```
-
-Expected output:
-
-```
-Connecting to ChromaDB at ./chroma_db ...
-  Found 45,231 vectors in ChromaDB collection 'discord_openai'
-
-Connecting to Qdrant at http://localhost:6333 ...
-  Creating Qdrant collection 'discord_openai' (dim=1536, cosine) ...
-
-Migrating 45,231 vectors in batches of 200 ...
-100%|████████████████████████████| 227/227 [04:12<00:00]
-
-Done! Uploaded 45,231 vectors. Errors: 0.
-Qdrant reports 45,231 vectors in 'discord_openai'.
-Migration verified successfully.
-```
-
-### 11.6 Close the SSH tunnel
-
-Press `Ctrl+C` in the tunnel terminal.
-
----
-
-## Step 12 — Final Verification
+## Step 11 — Final Verification
 
 ### Check the stats page
 
@@ -509,9 +424,10 @@ Open `https://yourdomain.com/api/stats` in your browser. Confirm:
 }
 ```
 
-- `total_messages` → matches your local PostgreSQL count
-- `embedded_messages` → matches your ChromaDB vector count
+- `total_messages` → matches your local PostgreSQL message count
+- `embedded_messages` → matches your expected number of embedded messages in Qdrant
 - `vector_db_label` → must be `"Qdrant"` (confirms Qdrant is connected)
+- `api_key_set` → `true` if `OPENAI_API_KEY` is set in `.env`
 
 ### Log in as admin
 

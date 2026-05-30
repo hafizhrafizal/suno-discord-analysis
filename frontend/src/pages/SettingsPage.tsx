@@ -5,6 +5,18 @@ import { apiFetch } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { Stats, EmbeddingModel, Upload, SunoTeamMember } from '../types'
 
+interface SyncScanResult {
+  upload_id: string
+  filename: string
+  db_count: number
+  qdrant_count: number
+  missing: number
+  orphans?: number
+  status: 'scanned' | 'embedding' | 'done'
+  embedded?: number
+  deleted?: number
+}
+
 interface DeleteProgress {
   pct: number
   label: string
@@ -396,7 +408,111 @@ export default function SettingsPage() {
     }
   }
 
-  const vdbName = stats?.vector_db_label ?? 'ChromaDB'
+  const vdbName = stats?.vector_db_label ?? 'Qdrant'
+
+  // Vector DB Maintenance (sync) state
+  const [syncLoading, setSyncLoading] = useState(false)
+  const [syncPhase, setSyncPhase] = useState<'idle' | 'scanning' | 'syncing' | 'done'>('idle')
+  const [syncResults, setSyncResults] = useState<SyncScanResult[]>([])
+  const [syncSummary, setSyncSummary] = useState<{ total_uploads: number; synced_uploads: number; total_embedded: number; total_deleted: number } | null>(null)
+  const [syncError, setSyncError] = useState<string | null>(null)
+  const syncAbortRef = useRef<AbortController | null>(null)
+
+  const handleSyncVectors = async () => {
+    if (syncLoading) return
+    const apiKey = localStorage.getItem('openai_api_key')
+    if (!apiKey) { setShowKeyModal(true); return }
+    setSyncLoading(true)
+    setSyncPhase('scanning')
+    setSyncResults([])
+    setSyncSummary(null)
+    setSyncError(null)
+    const controller = new AbortController()
+    syncAbortRef.current = controller
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+    try {
+      const response = await fetch('/api/uploads/sync-qdrant', {
+        method: 'POST',
+        credentials: 'include',
+        signal: controller.signal,
+        headers: { 'X-OpenAI-Key': apiKey },
+      })
+      if (!response.ok) {
+        let msg = `HTTP ${response.status}`
+        try { const d = await response.json(); msg = d.error ?? d.message ?? msg } catch {}
+        throw new Error(msg)
+      }
+      reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        if (controller.signal.aborted) break
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let event: any
+          try { event = JSON.parse(line.slice(6).trim()) } catch { continue }
+          if (event.type === 'scan_result') {
+            setSyncResults(prev => [...prev, {
+              upload_id: event.upload_id,
+              filename: event.filename,
+              db_count: Number(event.db_count),
+              qdrant_count: Number(event.qdrant_count),
+              missing: Number(event.missing),
+              orphans: Number(event.orphans ?? 0),
+              status: 'scanned' as const,
+            }])
+          } else if (event.type === 'sync_start') {
+            setSyncPhase('syncing')
+          } else if (event.type === 'embed_start') {
+            setSyncResults(prev => prev.map(r =>
+              r.upload_id === event.upload_id ? { ...r, status: 'embedding' as const } : r
+            ))
+          } else if (event.type === 'embed_progress') {
+            setSyncResults(prev => prev.map(r =>
+              r.upload_id === event.upload_id ? { ...r, embedded: Number(event.embedded) } : r
+            ))
+          } else if (event.type === 'upload_done') {
+            setSyncResults(prev => prev.map(r =>
+              r.upload_id === event.upload_id
+                ? { ...r, status: 'done' as const, embedded: Number(event.embedded), deleted: Number(event.deleted ?? 0) }
+                : r
+            ))
+          } else if (event.type === 'done') {
+            setSyncPhase('done')
+            setSyncSummary({
+              total_uploads: Number(event.total_uploads),
+              synced_uploads: Number(event.synced_uploads),
+              total_embedded: Number(event.total_embedded),
+              total_deleted: Number(event.total_deleted ?? 0),
+            })
+            queryClient.invalidateQueries({ queryKey: ['stats'] })
+            queryClient.invalidateQueries({ queryKey: ['uploads'] })
+          } else if (event.type === 'error') {
+            throw new Error(String(event.message))
+          }
+        }
+      }
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        setSyncError('Sync cancelled.')
+      } else {
+        setSyncError(e instanceof Error ? e.message : String(e))
+      }
+      setSyncPhase('idle')
+    } finally {
+      try { reader?.cancel() } catch {}
+      syncAbortRef.current = null
+      setSyncLoading(false)
+    }
+  }
+
+  const stopSync = () => { syncAbortRef.current?.abort() }
 
   const hasLocalKey = !!localStorage.getItem('openai_api_key')
   const apiKeyStatus = (hasLocalKey || stats?.api_key_set)
@@ -566,6 +682,114 @@ export default function SettingsPage() {
           )}
         </div>
       </section>}
+
+      {/* Vector DB Maintenance (admin only) */}
+      {isAdmin && (
+        <section className="bg-white rounded-2xl shadow p-5">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide">Vector DB Maintenance</h2>
+          </div>
+          <p className="text-xs text-gray-500 mb-4">
+            Scans all uploads, embeds any messages missing from {vdbName}, and removes orphan vectors with no matching message. Safe to run at any time.
+          </p>
+
+          <div className="flex gap-2 mb-4 flex-wrap">
+            <button
+              onClick={handleSyncVectors}
+              disabled={syncLoading}
+              className="search-btn px-4 text-sm disabled:opacity-50"
+            >
+              {syncLoading
+                ? (syncPhase === 'scanning' ? 'Scanning uploads…' : 'Syncing vectors…')
+                : 'Analyze & Sync Vectors'}
+            </button>
+            {syncLoading && (
+              <button onClick={stopSync} className="action-btn-danger">Cancel</button>
+            )}
+            {syncPhase === 'done' && !syncLoading && (
+              <button
+                onClick={() => { setSyncPhase('idle'); setSyncResults([]); setSyncSummary(null); setSyncError(null) }}
+                className="action-btn-primary"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {syncError && (
+            <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+              {syncError}
+            </div>
+          )}
+
+          {syncSummary && (
+            <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-xs text-green-800 font-medium">
+              {syncSummary.total_embedded === 0 && syncSummary.total_deleted === 0
+                ? `All ${syncSummary.total_uploads} upload${syncSummary.total_uploads !== 1 ? 's' : ''} fully synced — no issues found.`
+                : `Sync complete · ${[
+                    syncSummary.total_embedded > 0 ? `${syncSummary.total_embedded.toLocaleString()} new vectors embedded` : null,
+                    syncSummary.total_deleted > 0 ? `${syncSummary.total_deleted.toLocaleString()} orphan vectors deleted` : null,
+                  ].filter(Boolean).join(' · ')}`}
+            </div>
+          )}
+
+          {syncResults.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    <th className="px-3 py-2 border-b border-gray-200">Upload</th>
+                    <th className="px-3 py-2 border-b border-gray-200 text-right">DB messages</th>
+                    <th className="px-3 py-2 border-b border-gray-200 text-right">{vdbName} vectors</th>
+                    <th className="px-3 py-2 border-b border-gray-200 text-right">Missing</th>
+                    <th className="px-3 py-2 border-b border-gray-200 text-right">Orphans</th>
+                    <th className="px-3 py-2 border-b border-gray-200">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {syncResults.map((r) => (
+                    <tr key={r.upload_id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="px-3 py-2 max-w-[180px] truncate text-xs font-medium text-gray-800" title={r.filename}>
+                        {r.filename}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-gray-600">
+                        {r.db_count.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-indigo-600">
+                        {r.qdrant_count.toLocaleString()}
+                      </td>
+                      <td className={`px-3 py-2 text-right tabular-nums text-xs font-semibold ${r.missing > 0 ? 'text-amber-600' : 'text-green-600'}`}>
+                        {r.missing.toLocaleString()}
+                      </td>
+                      <td className={`px-3 py-2 text-right tabular-nums text-xs font-semibold ${(r.orphans ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        {(r.orphans ?? 0).toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {r.status === 'embedding' ? (
+                          <span className="text-indigo-600 font-medium">
+                            Embedding{r.embedded != null ? ` ${r.embedded.toLocaleString()}/${r.missing.toLocaleString()}` : '…'}
+                          </span>
+                        ) : r.status === 'done' ? (
+                          <span className="text-green-600 font-medium">
+                            {[
+                              r.embedded != null && r.embedded > 0 ? `✓ ${r.embedded.toLocaleString()} embedded` : null,
+                              r.deleted != null && r.deleted > 0 ? `${r.deleted.toLocaleString()} deleted` : null,
+                            ].filter(Boolean).join(' · ') || '✓ Synced'}
+                          </span>
+                        ) : r.missing === 0 && (r.orphans ?? 0) === 0 ? (
+                          <span className="text-green-600">✓ Synced</span>
+                        ) : (
+                          <span className="text-amber-600">Pending</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Suno Team management (multi-mode admins only) */}
       {appMode === 'multi' && user?.is_admin === true && (

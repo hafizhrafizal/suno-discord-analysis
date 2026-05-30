@@ -2,10 +2,20 @@ import { useState, useEffect, useRef } from 'react'
 import { Outlet } from 'react-router-dom'
 import Header from './Header'
 import ApiKeyModal from '../modals/ApiKeyModal'
+import { useAuthStore } from '../../store/authStore'
 
 export default function Layout() {
   const mainRef = useRef<HTMLElement>(null)
   const [showBackToTop, setShowBackToTop] = useState(false)
+  const { setShowKeyModal } = useAuthStore()
+
+  // Show modal immediately on mount if no key is stored in the browser
+  useEffect(() => {
+    if (!localStorage.getItem('openai_api_key')) {
+      setShowKeyModal(true)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const el = mainRef.current

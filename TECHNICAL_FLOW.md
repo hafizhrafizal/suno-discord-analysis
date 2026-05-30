@@ -2,629 +2,1007 @@
 
 This document provides implementation-level descriptions of every feature for academic transparency. It traces data from the HTTP request through each layer to the final response.
 
+**Backend:** Rust 1.x + Axum 0.7, async runtime via Tokio, database access via sqlx 0.7 (compile-time-checked queries).  
+**Frontend:** React 18.3 + TypeScript 5.5, built with Vite 5.4, data fetching via TanStack Query 5.56, global state via Zustand 4.5.  
+**Relational store:** PostgreSQL 16 with `tsvector` full-text search.  
+**Vector store:** Qdrant (REST API, 1536-dim cosine).
+
 ---
 
 ## Table of Contents
 
 1. [Application Startup](#1-application-startup)
 2. [Database Schema](#2-database-schema)
-3. [Vector Store Layer](#3-vector-store-layer)
+3. [Vector Store Layer (Qdrant)](#3-vector-store-layer-qdrant)
 4. [Embedding Pipeline](#4-embedding-pipeline)
-5. [Keyword Search (FTS5)](#5-keyword-search-fts5)
-6. [Semantic Search](#6-semantic-search)
+5. [Keyword Search (PostgreSQL FTS)](#5-keyword-search-postgresql-fts)
+6. [Semantic Search with HyDE](#6-semantic-search-with-hyde)
 7. [In-Results Semantic Filter](#7-in-results-semantic-filter)
 8. [Context Window](#8-context-window)
-9. [RAG Chat](#9-rag-chat)
-10. [Hybrid Summary Pipeline](#10-hybrid-summary-pipeline)
-11. [Summarize Results Pipeline](#11-summarize-results-pipeline)
-12. [User Profile Analysis](#12-user-profile-analysis)
-13. [Bookmarks and Labels](#13-bookmarks-and-labels)
-14. [Security Model](#14-security-model)
-15. [Caching Strategy](#15-caching-strategy)
+9. [Summarize Results (HDBSCAN Pipeline)](#9-summarize-results-hdbscan-pipeline)
+10. [Hybrid Summary](#10-hybrid-summary)
+11. [User Profile Analysis](#11-user-profile-analysis)
+12. [Bookmarks and Labels](#12-bookmarks-and-labels)
+13. [Qualitative Coding System](#13-qualitative-coding-system)
+14. [Authentication and Sessions](#14-authentication-and-sessions)
+15. [Security Model](#15-security-model)
+16. [SSE Streaming Pattern](#16-sse-streaming-pattern)
 
 ---
 
 ## 1. Application Startup
 
-**File:** `app.py` — `lifespan()` async context manager
+**File:** `backend/src/main.rs`
 
-On startup the following steps run in parallel using `asyncio.gather`:
+On startup, the following steps execute in order:
 
-1. **Vector store initialisation** — `init_vector_store()` (blocking, run in thread executor):
-   - Reads `VECTOR_DB` from environment.
-   - `qdrant`: connects to `QDRANT_URL`; creates collections defined in `EMBEDDING_MODELS` if they do not exist; wraps each in `QdrantCollectionWrapper`; logs vector counts.
-   - `chroma_persistent`: opens a `PersistentClient` at `CHROMA_PATH`; calls `get_or_create_collection` with `hnsw:space=cosine`.
-   - `chroma_http`: opens an `HttpClient`; verifies connectivity with `heartbeat()`; creates collections.
-   - Returns `{model_id: wrapper}` stored in `state.vector_collections`.
+1. **Environment** — `dotenvy::dotenv_override()` loads `.env` from one directory above the backend working directory (the project root). `RUST_LOG` defaults to `"retrieval_backend=debug,tower_http=info"`.
 
-2. **Database initialisation** — `init_db()` (blocking, run in thread executor):
-   - Calls `get_db()` which sets SQLite PRAGMAs: WAL journal mode, NORMAL synchronous, foreign keys ON, 32 MB page cache, in-memory temp store, 128 MB memory-mapped I/O.
-   - Runs `CREATE TABLE IF NOT EXISTS` for: `messages`, `uploads`, `settings`, `bookmarks`, `bookmark_labels`, `labels`, `embedded_uploads`.
-   - Creates indexes: `idx_username`, `idx_upload_row`, `idx_date`, `idx_msg_uuid`, `idx_suno_team`, `idx_date_suno`, `idx_bookmark_msg`, `idx_embedded_model`.
-   - Creates the FTS5 virtual table `messages_fts` (content mirror of `messages.content`).
-   - Creates three triggers: `tg_messages_ai` (after insert), `tg_messages_ad` (after delete), `tg_messages_au` (after update on content) to keep the FTS index synchronised.
-   - If `messages_fts` row count is 0 but `messages` has rows, runs `INSERT INTO messages_fts VALUES ('rebuild')` to rebuild the index from existing data (migration safety net).
+2. **PostgreSQL pool** — `sqlx::postgres::PgPoolOptions::new().max_connections(10).connect_with()` establishes the connection pool.
 
-3. **API key restoration** — if `OPENAI_API_KEY` is set in the environment, both a synchronous `OpenAI` client and an asynchronous `AsyncOpenAI` client are created and stored in `state`.
+3. **Schema initialisation** — `init_db(&pool)` runs `CREATE TABLE IF NOT EXISTS` for all 12 tables and creates all indexes and triggers. See §2 for the complete schema.
 
-4. **Embedding model restoration** — `get_setting("embedding_model")` reads the last-saved model ID from SQLite and applies it to `state.current_embedding_model`.
+4. **FTS backfill** — If `search_vector` is NULL for any `messages` rows (migration from a schema version that lacked the column), a `tokio::spawn` background task fills them using:
+   ```sql
+   UPDATE messages SET search_vector =
+     to_tsvector('simple', COALESCE(content,'') || ' ' || COALESCE(username,''))
+   WHERE search_vector IS NULL
+   ```
+   The startup log line `search_vector index is current — fast keyword search active from startup` confirms no backfill was needed.
 
-5. **Migration** — if `embedded_uploads` is empty but `uploads` has rows, a background thread scans each upload's messages against the vector store and backfills `embedded_uploads` records. This runs in `loop.run_in_executor` so it never blocks startup or requests.
+5. **Word-count backfill** — If `word_count` is NULL for any rows, a similar background task fills it. The computation is the space-count+1 heuristic: `array_length(string_to_array(trim(content), ' '), 1)`.
+
+6. **Week backfill** — If `week` is NULL for any rows, fills it from the `date` column as `to_char(date::date, 'IYYY-IW')`.
+
+7. **Admin seed** — In `single` or `demo` mode, `UPSERT INTO users (id=1, username='admin', is_admin=true)` ensures a default admin account exists.
+
+8. **Session store** — `PostgresStore::new(pool.clone())` is constructed and `.migrate()` is called to create the `tower_sessions` table. Session expiry is set to `Expiry::OnInactivity(Duration::seconds(30 * 24 * 3600))` — **30 days of inactivity**.
+
+9. **Router assembly** — All route modules are merged via `Router::merge()`. The middleware stack is layered (innermost to outermost):
+   ```
+   DefaultBodyLimit::max(200 * 1024 * 1024)   ← 200 MB upload limit
+   TraceLayer::new_for_http()
+   SessionManagerLayer::new(session_store)
+   CORSLayer::very_permissive()
+   ```
+
+10. **Bind** — `axum::serve(TcpListener::bind("0.0.0.0:8000").await?, app)`.
+
+**App state** (`AppState`) holds:
+- `db: PgPool` — the database connection pool
+- `config: Config` — parsed environment configuration
 
 ---
 
 ## 2. Database Schema
 
-**File:** `database.py`
+**File:** `backend/src/models.rs` — `init_db()` function
 
 ```sql
-messages (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    msg_uuid    TEXT    UNIQUE NOT NULL,   -- UUID assigned at upload time
-    author_id   TEXT,
-    username    TEXT,
-    date        TEXT,                      -- ISO-8601 string from CSV
-    content     TEXT,
-    attachments TEXT,
-    reactions   TEXT,
-    is_suno_team TEXT,                     -- "true"/"1" or empty
-    week        TEXT,
-    month       TEXT,
-    upload_id   TEXT    NOT NULL,          -- FK to uploads.id
-    row_index   INTEGER NOT NULL           -- original 0-based row position in CSV
-)
+-- ── Core data ──────────────────────────────────────────────────────────────
 
-uploads (
-    id          TEXT    PRIMARY KEY,       -- UUID assigned at upload time
+CREATE TABLE IF NOT EXISTS uploads (
+    id          TEXT    PRIMARY KEY,               -- UUID assigned at upload time
     filename    TEXT    NOT NULL,
-    row_count   INTEGER NOT NULL,
-    upload_time TEXT    NOT NULL
-)
+    row_count   BIGINT  DEFAULT 0,
+    upload_time TEXT    NOT NULL                   -- ISO-8601 UTC
+);
 
-bookmarks (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    msg_id     INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    ctx_before INTEGER NOT NULL DEFAULT 5,
-    ctx_after  INTEGER NOT NULL DEFAULT 5,
-    note       TEXT    DEFAULT '',
+CREATE TABLE IF NOT EXISTS messages (
+    id            BIGSERIAL PRIMARY KEY,
+    msg_uuid      TEXT    UNIQUE NOT NULL,          -- UUID assigned at upload time
+    author_id     TEXT,
+    username      TEXT    NOT NULL DEFAULT 'unknown',
+    date          TEXT,                             -- ISO-8601 string from CSV
+    content       TEXT,
+    attachments   TEXT,
+    reactions     TEXT,
+    is_suno_team  TEXT    DEFAULT 'false',
+    week          TEXT,                             -- "YYYY-IW" (ISO week, e.g. "2024-03")
+    month         TEXT,
+    upload_id     TEXT    REFERENCES uploads(id) ON DELETE CASCADE,
+    row_index     BIGINT,                           -- 0-based position in original CSV
+    word_count    BIGINT,                           -- space-count + 1 heuristic
+    search_vector tsvector                          -- maintained by trigger (see below)
+);
+
+-- Indexes on messages
+CREATE INDEX IF NOT EXISTS idx_messages_date
+    ON messages(date);
+CREATE INDEX IF NOT EXISTS idx_messages_username
+    ON messages(username);
+CREATE INDEX IF NOT EXISTS idx_messages_upload_id
+    ON messages(upload_id);
+CREATE INDEX IF NOT EXISTS idx_messages_suno_team
+    ON messages(is_suno_team);
+CREATE INDEX IF NOT EXISTS idx_messages_date_username
+    ON messages(date, username);
+CREATE INDEX IF NOT EXISTS idx_messages_week
+    ON messages(week);
+CREATE INDEX IF NOT EXISTS idx_messages_search_vector
+    USING GIN ON messages(search_vector);          -- enables O(log n) FTS
+
+-- Trigger: keep search_vector synchronised with content and username
+CREATE OR REPLACE FUNCTION update_search_vector() RETURNS TRIGGER AS $$
+BEGIN
+    NEW.search_vector :=
+        to_tsvector('simple',
+            COALESCE(NEW.content, '') || ' ' || COALESCE(NEW.username, ''));
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER tg_messages_sv_update
+BEFORE INSERT OR UPDATE OF content, username ON messages
+FOR EACH ROW EXECUTE FUNCTION update_search_vector();
+
+-- ── Authentication ─────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS users (
+    id            BIGSERIAL PRIMARY KEY,
+    username      TEXT    NOT NULL,
+    password_hash TEXT,                            -- Argon2id PHC string
+    password_salt TEXT,                            -- random Base64 salt
+    is_admin      BOOLEAN DEFAULT false,
+    created_at    TEXT    NOT NULL,                -- ISO-8601 UTC
+    google_id     TEXT    UNIQUE,                  -- reserved for future OAuth
+    email         TEXT    UNIQUE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username
+    ON users(LOWER(username));                     -- case-insensitive uniqueness
+
+-- ── Bookmarks ──────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id         BIGSERIAL PRIMARY KEY,
+    msg_id     BIGINT  NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    ctx_before BIGINT  DEFAULT 5,
+    ctx_after  BIGINT  DEFAULT 5,
+    note       TEXT,
+    created_at TEXT    NOT NULL,
+    user_id    BIGINT  REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS labels (
+    id         BIGSERIAL PRIMARY KEY,
+    name       TEXT    UNIQUE NOT NULL,
+    color      TEXT    DEFAULT '#6366f1',
     created_at TEXT    NOT NULL
-)
+);
 
-labels (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT    NOT NULL UNIQUE,
-    color      TEXT    NOT NULL DEFAULT '#6366f1',
-    created_at TEXT    NOT NULL
-)
-
-bookmark_labels (
-    bookmark_id INTEGER NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
-    label_id    INTEGER NOT NULL REFERENCES labels(id)    ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS bookmark_labels (
+    bookmark_id BIGINT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+    label_id    BIGINT NOT NULL REFERENCES labels(id)    ON DELETE CASCADE,
     PRIMARY KEY (bookmark_id, label_id)
-)
+);
 
-embedded_uploads (
+-- ── Embedding tracking ─────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS embedded_uploads (
     upload_id   TEXT NOT NULL REFERENCES uploads(id) ON DELETE CASCADE,
     model_id    TEXT NOT NULL,
     embedded_at TEXT NOT NULL,
     PRIMARY KEY (upload_id, model_id)
-)
+);
 
-settings (
+-- ── Settings ───────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
-)
+);
 
--- FTS5 virtual table (content mirror of messages.content)
-messages_fts USING fts5(content, content='messages', content_rowid='id')
+-- ── Qualitative coding ─────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS code_categories (
+    id         BIGSERIAL PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    color      TEXT NOT NULL DEFAULT '#94a3b8',
+    parent_id  BIGINT REFERENCES code_categories(id) ON DELETE SET NULL,  -- self-ref
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS codes (
+    id          BIGSERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    color       TEXT DEFAULT '#6366f1',
+    description TEXT DEFAULT '',
+    category_id BIGINT REFERENCES code_categories(id) ON DELETE SET NULL,
+    created_at  TEXT NOT NULL
+);
+
+-- Message-level code assignment (one code per bookmark, optional excerpt)
+CREATE TABLE IF NOT EXISTS bookmark_codes (
+    bookmark_id      BIGINT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+    code_id          BIGINT NOT NULL REFERENCES codes(id)     ON DELETE CASCADE,
+    highlighted_text TEXT,
+    PRIMARY KEY (bookmark_id, code_id)
+);
+
+-- Passage-level highlights (multiple excerpts per bookmark+code pair)
+CREATE TABLE IF NOT EXISTS bookmark_code_highlights (
+    id               BIGSERIAL PRIMARY KEY,
+    bookmark_id      BIGINT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+    code_id          BIGINT NOT NULL REFERENCES codes(id)     ON DELETE CASCADE,
+    highlighted_text TEXT NOT NULL,
+    created_at       TEXT NOT NULL
+);
+
+-- ── Session store (auto-managed by tower-sessions-sqlx-store) ──────────────
+-- Table: tower_sessions — created by PostgresStore::migrate()
 ```
 
-**Indexes:** `username COLLATE NOCASE`, `(upload_id, row_index)`, `date`, `msg_uuid`, `is_suno_team`, `(date, is_suno_team)`, `bookmarks.msg_id`, `embedded_uploads.model_id`.
+**Key design decisions:**
 
-**`row_index`** is the original 0-based position of the row in the uploaded CSV. It is used to reconstruct conversation context windows without relying on timestamp ordering, which can be non-unique or imprecise.
+- `row_index` stores the original 0-based CSV row position so context windows reconstruct exact conversation order independent of timestamp precision or ties.
+- `search_vector` is a GIN-indexed `tsvector` built from both `content` and `username` using the `simple` dictionary (no language-specific stemming, pure token matching). This means queries match on original word forms including usernames.
+- `word_count` is denormalised at insert time to avoid recomputing in every filter query.
+- `LOWER(username)` unique index enforces case-insensitive username uniqueness without requiring a normalised column.
+- `bookmark_codes` and `bookmark_code_highlights` serve different granularities: the former tracks which code applies to a whole bookmarked message (with an optional short excerpt), the latter supports any number of passage-level highlights per `(bookmark, code)` pair.
 
 ---
 
-## 3. Vector Store Layer
+## 3. Vector Store Layer (Qdrant)
 
-**File:** `vector_store.py`
+**Files:** `backend/src/routes/uploads.rs`, `backend/src/routes/search.rs`, `backend/src/routes/chat.rs`
 
-Both `QdrantCollectionWrapper` and `ChromaCollectionWrapper` expose the same five-method interface:
+All vector operations target the Qdrant REST API at `QDRANT_URL`. The collection is created on first embed if it does not exist.
 
-| Method | Signature | Description |
+**Collection parameters:**
+
+| Parameter | Value |
+|---|---|
+| Vector dimension | 1536 |
+| Distance metric | Cosine |
+| Point ID format | UUID v5 (derived from Discord Snowflake ID, namespace `NAMESPACE_OID`) |
+| Payload fields | `msg_uuid` (string), `upload_id` (string), `document` (string) |
+
+**UUID v5 derivation:** Discord message IDs are 64-bit Snowflake integers stored as text strings. They are converted to stable Qdrant point IDs via `uuid::Uuid::new_v5(&NAMESPACE_OID, id.as_bytes())`. This ensures that re-embedding the same Discord message always produces the same Qdrant point ID, enabling idempotent upserts.
+
+**HTTP client:** `reqwest::Client` with `Authorization: api-key <QDRANT_API_KEY>` header when the key is set.
+
+**Key operations used:**
+
+| Operation | Qdrant endpoint | Notes |
 |---|---|---|
-| `count()` | `→ int` | Returns the number of stored vectors |
-| `get()` | `(ids?, where?, limit?, include?) → dict` | Fetch points by ID list or filter; optionally return embeddings |
-| `upsert()` | `(embeddings, documents, ids, metadatas)` | Insert or update points |
-| `query()` | `(query_embeddings, n_results) → dict` | ANN search; returns `{"ids": [[...]], "distances": [[...]]}` |
-| `delete()` | `(ids?, where?)` | Delete by ID list or payload filter |
-
-**Qdrant fallback chain for `query()`:**
-
-The client and server may be at different versions. `QdrantCollectionWrapper.query()` tries three strategies in order:
-
-1. `client.query_points()` — modern API (qdrant-client ≥ 1.7, Qdrant server ≥ 1.7). If the server returns HTTP 404, falls through.
-2. `client.search()` — legacy API (qdrant-client < 1.7). Used if `query_points` is absent.
-3. Direct REST `POST /collections/{name}/points/search` — bypasses the Python client entirely; works on all server versions. Used when `query_points` gets a 404 and `QDRANT_URL` is set.
-
-**ChromaDB SQLite safety:** ChromaDB's persistent backend uses SQLite internally, which raises "too many SQL variables" when bind-variable count exceeds ~999. `ChromaCollectionWrapper` caps `n_results` at 900 in `query()` and chunks large ID lists in `get()` (batches of 900), merging results transparently.
-
-**`_where_to_filter()`:** Converts a Chroma-style `{"field": {"$eq": value}}` dict to a Qdrant `Filter` with `FieldCondition` / `MatchValue` objects.
-
-**Distance convention:** Both backends are configured for cosine distance. The wrappers return `distance = 1 − cosine_similarity`, so smaller distance = higher relevance. The search endpoints convert back: `similarity_score = round(1.0 − distance, 4)`.
+| Create collection | `PUT /collections/{name}` | Called if collection does not exist before embedding |
+| Upsert vectors | `PUT /collections/{name}/points` | Batch upsert during embedding |
+| Scroll (existence check) | `POST /collections/{name}/points/scroll` | 10,000 points per page, `with_payload: false, with_vector: false` |
+| Search (ANN) | `POST /collections/{name}/points/search` | Returns `{id, score, payload}` |
+| Get by IDs | `POST /collections/{name}/points` | `with_payload: true, with_vector: true` — fetches stored embeddings |
+| Delete by filter | `POST /collections/{name}/points/delete` | Filter: `{must: [{key: "upload_id", match: {value: id}}]}` |
+| Collection info | `GET /collections/{name}` | `result.vectors_count` used for stats |
 
 ---
 
 ## 4. Embedding Pipeline
 
-**File:** `embeddings.py`, `routers/uploads.py`
+**File:** `backend/src/routes/uploads.rs`
 
-### Embedding function
+### Upload-time embedding (inline SSE stream)
 
-```python
-async def embed_texts_async(texts: list[str]) -> list[list[float]]:
+`POST /api/upload` is an Axum handler returning `Sse<impl Stream<Item = ...>>`. The CSV parsing, DB inserts, and embedding all happen inside a single `async_stream::stream!` block:
+
+**Phase 1 — Database insert:**
+
+1. Multipart body is parsed; the CSV file field is extracted.
+2. CSV headers are normalised: stripped, lowercased, spaces → underscores. Alias mappings handle `"message id"` → `"msg_uuid"` etc.
+3. Required columns (`author_id`, `username`, `date`, `content`) are validated. Missing required column → immediate `{type: "error"}` SSE and stream close.
+4. Rows are collected and inserted in batches of **500**:
+   ```sql
+   INSERT INTO messages (msg_uuid, author_id, username, date, content,
+     attachments, reactions, is_suno_team, week, month, upload_id, row_index,
+     word_count)
+   VALUES ($1, $2, ...) ON CONFLICT (msg_uuid) DO NOTHING
+   ```
+5. The database trigger fires on each inserted row, populating `search_vector`.
+6. `is_suno_team` cross-upload backfill: any username already present in `messages` with `is_suno_team = 'true'` causes all new messages from that username to be inserted with `is_suno_team = 'true'` as well.
+7. SSE event after each batch:
+   ```json
+   {"type": "progress", "inserted": N, "skipped": S, "total": T}
+   ```
+
+**Phase 2 — Embed:**
+
+1. All messages for this upload are fetched from PostgreSQL.
+2. A Qdrant scroll over the collection (filtered by `upload_id`, 10,000 per page) collects all existing point IDs. UUIDs already present are marked as `already_embedded`. This is the **resumability check** — re-running an upload or starting a partially-completed embed will not re-embed already-done messages.
+3. SSE event: `{"type": "embed_start", "total": T, "already_embedded": A, "model": "text-embedding-3-small"}`
+4. New messages (UUIDs not already in Qdrant) are split into batches of **500**.
+5. A `tokio::sync::Semaphore` with **3 permits** limits concurrency to 3 simultaneous OpenAI requests.
+6. Each batch calls `POST https://api.openai.com/v1/embeddings` with:
+   ```json
+   {"model": "text-embedding-3-small", "input": ["text1", "text2", ...]}
+   ```
+   HTTP 429 responses are retried with exponential back-off: 2s, 4s, 8s. The `Retry-After` response header is respected if present.
+7. Each batch's 1536-dimensional vectors are immediately upserted to Qdrant with the corresponding `msg_uuid`, `upload_id`, and `document` payload.
+8. SSE event after each batch: `{"type": "embed_progress", "embedded": N, "total": T}`
+9. On full completion: `{"type": "done", "upload_id": "...", "total_inserted": N, "embedded": E, ...}`
+10. `embedded_uploads` is updated: `INSERT INTO embedded_uploads (upload_id, model_id, embedded_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`.
+
+**Constants:**
+
+| Constant | Value |
+|---|---|
+| CSV insert batch size | 500 rows |
+| OpenAI embed batch size | 500 texts |
+| Concurrent embed requests | 3 (Semaphore) |
+| Qdrant scroll page size | 10,000 points |
+| Retry delays (429) | 2s → 4s → 8s |
+| Upload body limit | 200 MB |
+
+### Re-embed (SSE)
+
+`POST /api/uploads/:id/reembed` is structurally identical to Phase 2 above, operating on an existing upload. The resumability check always runs first so the operation is idempotent.
+
+---
+
+## 5. Keyword Search (PostgreSQL FTS)
+
+**File:** `backend/src/routes/search.rs` — `search_keyword()`
+
+### tsvector full-text search
+
+The `messages.search_vector` column is a `tsvector` built from `content || ' ' || username` using the `simple` text search dictionary. The `simple` dictionary performs only case-folding and no stemming, meaning searches match on the exact token forms present in the text.
+
+**Query construction** — controlled by the `match_type` request parameter:
+
+| `match_type` | tsquery expression | Behaviour |
+|---|---|---|
+| `fuzzy` (default) | `to_tsquery('simple', 'tok1:* & tok2:*')` | Prefix AND — matches messages containing all tokens as prefixes |
+| `exact` | `phraseto_tsquery('simple', 'tok1 tok2')` | Adjacent phrase — tokens must appear in order and adjacent |
+| `any_word` | `to_tsquery('simple', 'tok1 | tok2')` | OR — any of the supplied tokens |
+
+All tokens are lower-cased before query construction. FTS special characters (`'`, `:`, `&`, `|`, `!`, `<`, `>`) are escaped to prevent injection into the `tsquery` expression.
+
+**SQL query (parameterised):**
+
+```sql
+SELECT m.id, m.msg_uuid, m.author_id, m.username, m.date, m.content,
+       m.attachments, m.reactions, m.is_suno_team, m.upload_id, m.row_index,
+       (b.id IS NOT NULL) AS is_bookmark
+FROM messages m
+LEFT JOIN bookmarks b ON m.id = b.msg_id AND b.user_id = $user_id
+WHERE m.search_vector @@ to_tsquery('simple', $tsquery)
+  [AND m.upload_id = ANY($upload_ids)]
+  [AND LOWER(m.username) LIKE LOWER($username_pattern)]
+  [AND m.date >= $date_from]
+  [AND m.date <= $date_to]
+  [AND m.word_count >= $min_words]
+  [AND m.is_suno_team IN ('true','1')]    -- suno_team = "only"
+  [AND m.is_suno_team NOT IN ('true','1')]  -- suno_team = "exclude"
+ORDER BY m.date ASC, m.row_index ASC
+LIMIT $limit
 ```
 
-Uses `AsyncOpenAI.embeddings.create()` with model `text-embedding-3-small`. Texts are truncated to 8191 characters each (OpenAI token limit approximation). Returns a list of 1536-dimensional float vectors.
+**GIN index:** The `idx_messages_search_vector` GIN index on `search_vector` allows the `@@` operator to run in O(log n + k) time where k is the number of matching rows, rather than a full table scan.
 
-### Upload-time embedding (synchronous with streaming progress)
+**Fallback:** If the `search_vector` column contains NULLs (startup backfill still running) or if the `match_type` cannot be compiled to a valid `tsquery`, the query falls back to:
 
-During `POST /api/upload`, embedding happens inline within the SSE generator:
+```sql
+WHERE content ILIKE '%token1%' AND content ILIKE '%token2%'
+```
 
-1. All non-empty `content` values are collected with their UUIDs and metadata.
-2. They are split into batches of `EMBED_BATCH_SIZE` (default 2048).
-3. Batches are processed with `EMBED_CONCURRENCY` (default 10) concurrent `asyncio.gather` calls.
-4. After each concurrency chunk, the SSE stream emits a progress message: `"Embedded N/M messages"`.
-5. On completion, `mark_upload_embedded(upload_id, model_id)` writes to `embedded_uploads`.
+---
 
-### Re-embed background job
+## 6. Semantic Search with HyDE
 
-`POST /api/uploads/{upload_id}/reembed` returns immediately with a `job_id`. The actual work runs in `asyncio.create_task(run_embed_job(...))`.
+**File:** `backend/src/routes/search.rs` — `search_semantic()`
 
-**Resumability check (phase: "checking"):**
+HyDE (Hypothetical Document Embeddings) improves retrieval precision by augmenting the raw query embedding with an embedding derived from a hypothetical answer document generated by `gpt-4o-mini`.
 
-- All UUIDs for the upload are split into batches of 500.
-- Up to 4 concurrent async tasks call `col.get(ids=batch, include=[])` via `run_in_executor` on `state.vector_executor`.
-- UUIDs already present in the vector store are collected into `already_done`.
-- Only UUIDs not in `already_done` are included in the embedding work list.
+### Full algorithm
 
-**Embedding (phase: "embedding"):**
+**Step 1 — HyDE weight selection:**
 
-- Work is split into `EMBED_BATCH_SIZE` batches.
-- Up to `EMBED_CONCURRENCY` batches run concurrently, each acquiring a `Semaphore` slot.
-- Each batch: calls `embed_texts_async()`, then upserts to the vector store via `run_in_executor`.
-- Per-batch errors are logged but do not abort the job; they are stored in `job["batch_errors"]`.
+```
+if query.split_whitespace().count() <= 3:
+    w = 0.75   # short query: rely heavily on hypothetical document
+else:
+    w = 0.55   # standard: roughly equal blend
+```
 
-**Job state** (`state.embed_jobs[job_id]`):
+**Step 2 — Parallel embedding and document generation:**
 
-```python
+```rust
+let (raw_emb, hyde_emb) = tokio::join!(
+    embed_text(&query, &openai_key),
+    async {
+        let hypo_doc = generate_hypothetical_doc(&query, &openai_key).await;
+        embed_text(&hypo_doc, &openai_key).await
+    }
+);
+```
+
+Hypothetical document prompt sent to `gpt-4o-mini`:
+
+```
+Generate 2-3 hypothetical Discord messages (about 80 words total) from the
+Suno AI Discord server that would be relevant to: "<query>".
+Write in the style of Discord messages, be concise and specific.
+```
+
+Model: `gpt-4o-mini`. Temperature: 0.7. Max tokens: 200.
+
+**Step 3 — Embedding blend:**
+
+Both embeddings are L2-normalised before blending:
+
+```
+norm_raw  = raw_emb  / ||raw_emb||
+norm_hyde = hyde_emb / ||hyde_emb||
+blended   = norm_raw * (1 - w) + norm_hyde * w
+blended   = blended  / ||blended||            ← renormalize
+```
+
+**Step 4 — Qdrant ANN search:**
+
+```
+fetch_n = min(limit * 8, 800)
+
+POST /collections/{name}/points/search
 {
-    "status":        "running" | "completed" | "failed",
-    "phase":         "checking" | "embedding",
-    "upload_id":     str,
-    "model":         str,       # human-readable label
-    "embedded":      int,       # messages successfully embedded so far
-    "total":         int,       # messages to embed (after resumability check)
-    "skipped":       int,       # already in vector store
-    "current_batch": int,
-    "batch_errors":  list,
-    "error":         str | None,
-    "traceback":     str | None,
+  "vector": blended,
+  "limit": fetch_n,
+  "with_payload": true,
+  "with_vector": false
 }
 ```
 
----
+Response: `[{id, score, payload: {msg_uuid, upload_id, document}}, ...]`
 
-## 5. Keyword Search (FTS5)
+**Step 5 — Relative similarity threshold:**
 
-**File:** `sql_helpers.py` — `keyword_search()`, `_build_fts_query()`
-
-### FTS5 query compilation
-
-```python
-def _build_fts_query(keyword: str) -> str:
+```
+best_sim = results[0].score          (highest similarity)
+min_sim  = max(0.15, best_sim * 0.50)
+results  = [r for r in results if r.score >= min_sim]
 ```
 
-1. FTS5 syntax characters (`" ' * ^ ( ) [ ] { } ; : \`) are replaced with spaces.
-2. The cleaned string is tokenised on whitespace.
-3. Single token → prefix match: `"token"*`
-4. Multiple tokens → phrase match: `"token1 token2 ..."`
+This adaptive threshold keeps all results within 50% of the best score, with an absolute floor of 0.15. It avoids returning low-quality results when the best score is already mediocre.
 
-Prefix match allows partial-word hits (e.g. `feat` matches `feature`, `features`). Phrase match requires the exact sequence of words in adjacent positions.
-
-### Two-phase retrieval
-
-**Phase 1 — FTS5 candidate fetch:**
+**Step 6 — PostgreSQL fetch:**
 
 ```sql
-SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? LIMIT ?
+SELECT m.*, (b.id IS NOT NULL) AS is_bookmark
+FROM messages m
+LEFT JOIN bookmarks b ON m.id = b.msg_id AND b.user_id = $user_id
+WHERE m.msg_uuid = ANY($matching_uuids)
+  [AND upload_id, username, date, word_count, suno_team filters]
 ```
 
-The limit is `limit × 20` to ensure enough candidates survive the metadata filters in phase 2. FTS5 returns `rowid` values corresponding to `messages.id`.
+**Step 7 — Sort and cap:**
 
-**Phase 2 — Metadata filter and full-row fetch:**
+Sorted by `sort_by` parameter:
+- `date_asc` — chronological
+- `date_desc` — reverse chronological
+- *(default)* — Qdrant similarity order (best first)
 
-```sql
-SELECT * FROM messages
-WHERE id IN (?,?,...)
-  [AND LOWER(username) LIKE LOWER(?)]
-  [AND upload_id IN (?,...)]
-  [AND LOWER(is_suno_team) IN ('true','1')]
-  [AND substr(date,1,10) >= ?]
-  [AND substr(date,1,10) <= ?]
-  [AND (length(trim(content))-length(replace(trim(content),' ',''))+1) >= ?]
-ORDER BY date, row_index
-LIMIT ?
-```
-
-**Word-count filter:** `(length(trim(content)) - length(replace(trim(content), ' ', '')) + 1) >= min_words` counts words as space-count + 1. This is a heuristic that avoids the need for a UDF.
-
-**Fallback:** If the FTS query raises any exception (malformed expression, index not ready), the function logs a warning and retries with `LOWER(content) LIKE LOWER('%keyword%')`.
-
----
-
-## 6. Semantic Search
-
-**File:** `routers/search.py` — `search_semantic()`
-
-```
-Request: query string + filters + n_results
-         │
-         ▼
-embed_texts_async([query])   → 1 × 1536 float vector
-         │
-         ▼
-col.query(query_embeddings=[query_emb], n_results=fetch_n)
-  fetch_n = min(n_results × 4, total) if filters active
-          = n_results                 if no filters
-         │
-         ▼
-results = {"ids": [[uuid, ...]], "distances": [[dist, ...]]}
-         │
-         ▼
-SELECT * FROM messages WHERE msg_uuid IN (?)
-         │
-         ▼
-Post-filter in Python:
-  - upload_id in uid_list
-  - username substring match
-  - date_in_range(date, date_from, date_to)
-  - suno_team membership
-  - word count
-         │
-         ▼
-Attach similarity_score = round(1.0 − distance, 4)
-Keep first n_results after filtering
-```
-
-The **4× overfetch factor** when filters are active compensates for the fact that ANN results are not aware of metadata filters: fetching 4 times as many candidates statistically ensures enough survive post-filtering to fill the requested `n_results` quota.
+Each result carries a `similarity_score` field (the raw Qdrant cosine similarity).
 
 ---
 
 ## 7. In-Results Semantic Filter
 
-**File:** `routers/context.py` — `filter_semantic()`
+**File:** `backend/src/routes/context_route.rs` — `filter_semantic()`
 
-This endpoint operates on an already-retrieved set of message IDs (from any search mode) and re-ranks them by semantic relevance without performing a new ANN query.
+Reranks an already-retrieved set of message IDs by semantic relevance without a new ANN query.
 
 ### Query preprocessing
 
-```python
-def _prepare_filter_query(raw: str) -> tuple[str, float]:
+```
+if query starts with {what, how, why, when, where, who, which, is, are, do, does, can}
+   or query ends with '?':
+    strip stop words and question words from query
+    threshold = 0.20
+else:
+    use query as-is
+    threshold = 0.30
 ```
 
-1. If the raw query matches `^(what|how|why|...)` or ends with `?`, it is classified as a question.
-2. For questions: all stop words and question-word tokens are removed; the core semantic tokens are joined and embedded. Threshold = 0.20.
-3. For non-question queries: embedded as-is. Threshold = 0.30.
-
-The lower threshold for questions compensates for the fact that the question's semantic embedding is anchored to the core concept, not diluted by function words.
+The lower threshold for questions compensates for the semantic dilution caused by function words in the question phrasing.
 
 ### Scoring
 
-1. `col.get(ids=uuids, include=["embeddings"])` fetches stored vectors directly by ID (no ANN search).
-2. For each `(uuid, stored_embedding)` pair, cosine similarity is computed with NumPy: `sim = dot(q_norm, e_norm)` (the vectors as stored are not normalised; a full dot product is used, which equals cosine similarity when both vectors are unit-norm — the OpenAI embedding API returns unit-norm vectors by default).
-3. Results with `sim >= threshold` are returned sorted by score descending.
+1. Fetch stored embeddings from Qdrant for all provided UUIDs:
+   ```
+   POST /collections/{name}/points
+   {"ids": [...], "with_payload": false, "with_vector": true}
+   ```
+2. Embed the preprocessed query with `text-embedding-3-small`.
+3. For each `(uuid, stored_embedding)` pair, compute cosine similarity:
+   ```
+   sim = dot(normalize(query_emb), normalize(stored_emb))
+   ```
+   (OpenAI embeddings are unit-normalised by the API; normalisation is verified before the dot product.)
+4. Return only results where `sim >= threshold`, sorted by score descending.
 
 ---
 
 ## 8. Context Window
 
-**File:** `routers/context.py` — `get_context()`
+**File:** `backend/src/routes/context_route.rs` — `get_context()`
 
 ```sql
-SELECT * FROM messages
-WHERE upload_id = ?
-  AND row_index BETWEEN max(0, target_row_index − before) AND target_row_index + after
-ORDER BY row_index
+SELECT m.*
+FROM messages m
+WHERE m.upload_id = $1
+  AND m.row_index BETWEEN GREATEST(0, $target_row - $before)
+                      AND $target_row + $after
+ORDER BY m.row_index ASC
 ```
 
-The `row_index` column stores the original 0-based position of each row in the uploaded CSV. This guarantees that context is reconstructed in the exact order the messages appeared in the source export, regardless of whether timestamps are precise or have duplicates.
+`before` and `after` are clamped to [0, 200]. `row_index` stores the original 0-based CSV row position, guaranteeing that context is reconstructed in exact source order regardless of timestamp precision or duplicates.
 
-The target message is identified by `id = message_id` and tagged with `is_target: true` in the returned list.
-
-Parameter bounds: `before` and `after` are clamped to [0, 200].
+The target message (`id = message_id`) is tagged `is_target: true` in the response list.
 
 ---
 
-## 9. RAG Chat
+## 9. Summarize Results (HDBSCAN Pipeline)
 
-**File:** `routers/chat.py` — `chat_endpoint()`
+**File:** `backend/src/routes/chat.rs` — `summarize_results()`
 
-### Retrieval (parallel)
+This endpoint receives the messages currently displayed in the browser (passed in the request body) and summarises them using HDBSCAN clustering for evidence selection.
 
-```python
-semantic_rows, keyword_rows = await asyncio.gather(
-    loop.run_in_executor(vector_executor, _semantic_search),
-    keyword_search(keyword=message, upload_ids=upload_ids, limit=10),
-)
+### Request schema
+
+```rust
+struct SummarizeResultsRequest {
+    messages: Vec<SummarizeMsg>,  // {username, date, content, msg_uuid?}
+    query:    Option<String>,     // optional retrieval/summary guidance
+    model:    Option<String>,     // default "gpt-4o"
+    retrieval_mode: Option<String>,  // "cluster" (default) or "all"
+}
 ```
 
-**Semantic path** (`_semantic_search()`):
+### Pipeline (streaming SSE)
 
-- Queries the active collection for 12 nearest neighbours.
-- Filters by `upload_ids` if specified.
-- Converts distances to `_score = round(1.0 − dist, 4)`.
-- Returns at most 12 rows.
+**Step 1 — Content deduplication:**
 
-**Keyword path** (`keyword_search()`):
+Messages with identical lowercased content are removed before clustering. SSE log event emitted.
 
-- Runs the FTS5 two-phase search with the user's message as the keyword.
-- Returns at most 10 rows.
+**Step 2 — Retrieval mode branch:**
 
-**Merge:** Both result sets are deduplicated by `msg_uuid` (semantic results take priority). The combined list is capped at 20 messages.
+**`retrieval_mode = "cluster"` (default):**
 
-### Prompt construction
+1. Collect all `msg_uuid` values and fetch their stored embeddings from Qdrant:
+   ```
+   POST /collections/{name}/points
+   {"ids": [uuid1, uuid2, ...], "with_vector": true}
+   ```
+2. If fewer than 3 embeddings are returned (messages not yet embedded), fall back to word-count sampling: take up to 200 messages sorted by `word_count` descending.
+3. Run HDBSCAN on the embedding matrix (§9.1).
+4. For each cluster, sample the `n_closest=5` and `n_furthest=5` points from the cluster centroid (or all members if cluster size ≤ 10). For noise points (label = -1), take up to 5 total.
+5. Assemble all sampled messages, sort chronologically by `date`, cap at 120.
 
-**With retrieved context:**
+**`retrieval_mode = "all"`:**
 
-```
-system:
-  "You are a knowledgeable assistant for the Suno AI Discord community.
-   INSTRUCTIONS: Use retrieved excerpts as PRIMARY source...
-   MANDATORY FORMATTING: ## heading, ### subheadings, **bold**,
-   - bullets, > blockquotes, inline code, --- + *Sources* section.
-   RETRIEVED CONTEXT:
-   [username | date] content
-   [username | date] content
-   ..."
+Skip clustering. Use all messages, capped at 200.
 
-history[-20:]   (prior turns, filtered for valid role values)
+**Step 3 — LLM generation:**
 
-user: <message>
-```
-
-**Without context (no embeddings):**
-
-```
-system:
-  "No embedded messages available — answer from general knowledge.
-   MANDATORY FORMATTING: ..."
-
-history[-20:]
-user: <message>
-```
-
-### Streaming
-
-`state.openai_client.chat.completions.create(..., stream=True)` uses the synchronous OpenAI client (not async) because the async client is reserved for embedding calls. Each `chunk.choices[0].delta.content` token is serialised as `data: {"content": "<token>"}\n\n` and flushed via `StreamingResponse`.
-
-The `X-Accel-Buffering: no` header disables Nginx proxy buffering so tokens reach the browser immediately.
+Evidence messages are formatted as `[username | date]: content` lines. Sent to the specified model with `prompts::SUMMARIZE`. Response streams as SSE `{type: "chunk", content: "..."}` events.
 
 ---
 
-## 10. Hybrid Summary Pipeline
+### 9.1 HDBSCAN Implementation
 
-**File:** `routers/chat.py` — `summarize_endpoint()`
+**File:** `backend/src/hdbscan.rs`
 
-### Stage 1: Metadata filter
+Pure-Rust implementation. Input: `&[Vec<f32>]` (n × 1536 embeddings). Output: `Vec<i32>` (cluster labels, 0-based; -1 = noise).
+
+**Parameters:**
+
+```rust
+let min_cluster_size: usize = 3.min(n / 4).max(2);
+// e.g. n=20 → mcs=3; n=40 → mcs=3; n=100 → mcs=3 (min(3,25).max(2))
+// ensures at least 2, at most n/4, absolute cap of 3
+```
+
+**Algorithm:**
+
+**Stage 1 — Pairwise cosine distance matrix** `D[i][j]` for all pairs:
+
+```
+cosine_distance(a, b) = 1.0 - dot(a, b) / (||a|| * ||b||)
+```
+
+Time complexity: O(n² · d) where d = 1536.
+
+**Stage 2 — Core distances:**
+
+For each point `i`, `core_dist[i]` = `D[i][k]` where `k` is the index of the `min_cluster_size`-th nearest neighbour of `i`. Core distances prevent low-density regions from being absorbed into clusters.
+
+**Stage 3 — Mutual reachability distance:**
+
+```
+mrd(i, j) = max(core_dist[i], core_dist[j], D[i][j])
+```
+
+**Stage 4 — Minimum spanning tree:**
+
+Prim's algorithm on the complete graph with `mrd` edge weights. Produces `n-1` edges. Time complexity: O(n²).
+
+**Stage 5 — Single-linkage dendrogram:**
+
+MST edges sorted ascending by weight. Union-find processes them in order. Each merge event `(node_A, node_B, weight)` creates a dendrogram node with `lambda = 1.0 / weight` (higher lambda = tighter merge).
+
+**Stage 6 — Condensed tree construction:**
+
+Depth-first traversal of the dendrogram. At each merge:
+- If **both** sub-trees have ≥ `min_cluster_size` members: real cluster split → create two condensed cluster nodes.
+- If one or both sub-trees are smaller: the small sub-tree's points become noise at this level; their `lambda` values contribute to the parent cluster's stability score.
+
+**Stage 7 — Excess-of-mass cluster selection:**
+
+For each condensed cluster `C`:
+```
+stability(C) = Σ_{p ∈ C} (lambda(p) - lambda_birth(C))
+```
+
+Where `lambda(p)` is the lambda value at which point `p` falls out of `C`, and `lambda_birth(C)` is the lambda at which `C` was created.
+
+Bottom-up decision: keep cluster `C` if `stability(C) ≥ Σ stability(children)`. Otherwise propagate children upward.
+
+**Stage 8 — Label assignment:**
+
+Each point walks up the condensed tree until it reaches a selected cluster; that cluster's index (0-based) is the point's label. Points not reachable from any selected cluster receive label -1 (noise).
+
+**Utility functions (used by sampling in §9):**
+
+```rust
+fn centroid(embeddings: &[Vec<f32>]) -> Vec<f32>
+// Element-wise mean of all embedding vectors in the set
+
+fn closest_and_furthest(embeddings: &[Vec<f32>], centroid: &[f32], n: usize)
+    -> (Vec<usize>, Vec<usize>)
+// Sorts member indices by L2 distance from centroid
+// Returns first n (closest) and last n (furthest) indices
+```
+
+---
+
+## 10. Hybrid Summary
+
+**File:** `backend/src/routes/chat.rs` — `summarize()`, `summarize_followup()`
+
+The Hybrid Summary runs a full retrieval → cluster → LLM pipeline directly on the database corpus.
+
+### Pipeline stages
+
+**Stage 1 — Metadata filter:**
 
 ```sql
-SELECT msg_uuid, username, date, content FROM messages
-WHERE [username LIKE ?]
-  [AND upload_id IN (?,...)]
+SELECT msg_uuid, username, date, content
+FROM messages
+WHERE [LOWER(username) LIKE LOWER($username)]
+  [AND upload_id = ANY($upload_ids)]
+  [AND date >= $date_from AND date <= $date_to]
   [AND is_suno_team filter]
-  [AND date range]
-  [AND min_words]
-ORDER BY date, row_index
+  [AND word_count >= $min_words]
+ORDER BY date ASC, row_index ASC
 ```
 
-Produces `filtered_map: dict[uuid → row]` used as the intersection basis for all subsequent stages.
+Result: `filtered_map: HashMap<String, Row>` keyed by `msg_uuid`.
 
-### Stage 2: Semantic retrieval (cluster mode only)
+**Stage 2 — Semantic retrieval:**
 
-**Retrieval query:** The user's custom prompt is used as the retrieval query if provided; otherwise a generic coverage query is used:  
-`"key discussions, important insights, notable feedback, use cases, significant events"`.
-
-The query is embedded with `embed_texts_async`. The vector store is queried with:
-
+The user's custom prompt is the retrieval query when provided; otherwise the generic coverage query is used:
 ```
-overfetch_n = min(total_in_store, max(n_filtered × 5, 2000))
+"key discussions, important insights, notable feedback, use cases, significant events"
 ```
 
-Results are intersected with `filtered_map` (UUID matching). Each intersecting result gets `score = round(1.0 − dist, 4)`. Scores are sorted descending.
+The query is embedded with `text-embedding-3-small` (**not** HyDE — the corpus is pre-filtered so coverage matters more than precision here). Qdrant is queried:
 
-**Adaptive threshold:** The 70th percentile of scores is computed. Results scoring at or above this percentile are kept (i.e., the top 30% by score are discarded as less relevant — wait, actually the bottom 30% are discarded: `threshold = np.percentile(scores, 30)`, so messages scoring at or above the 30th-percentile value are kept). If this leaves fewer than `_MIN_CANDIDATES` (15) results, the top 15 are used unconditionally.
+```
+overfetch_n = min(total_qdrant_count, max(n_filtered * 5, 2000))
+POST /collections/{name}/points/search {vector: ..., limit: overfetch_n}
+```
 
-After filtering, stored embeddings are fetched for the surviving UUIDs using `col.get(ids=top_uuids, include=["embeddings"])`.
+Results are intersected with `filtered_map` by `msg_uuid`. Each intersecting result gets `score = similarity`.
 
-### Stage 3: Deduplication
+**Stage 3 — Adaptive threshold:**
 
-**Function:** `_deduplicate_candidates(rows, embs, threshold=0.97)`
+```
+threshold = 30th percentile of scores
+keep: score >= threshold  (top 70% retained)
+ensure: at least 15 candidates survive (force-keep top 15 if fewer)
+```
 
-1. Pre-drop messages shorter than 10 characters.
-2. Compute pairwise cosine similarity matrix: `sim = (embs / |embs|) @ (embs / |embs|).T` using NumPy broadcasting.
-3. Process messages in ranking order. For each kept message `i`, mark any later message `j` with `sim[i,j] ≥ 0.97` as a duplicate.
-4. Returns filtered rows and embeddings.
+Embeddings are then fetched for the surviving UUIDs.
 
-A threshold of 0.97 targets near-identical messages (e.g. copy-pastes, bot reposts) while preserving paraphrases and topically related but distinct messages.
+**Stage 4 — Deduplication:**
 
-### Stage 4: Clustering
+Near-duplicate removal using pairwise cosine similarity of stored embeddings:
+1. Drop messages shorter than 10 characters.
+2. Compute normalised embedding matrix: `E_norm = E / ||E||`.
+3. Pairwise similarity: `S = E_norm @ E_norm.T` (all values in [-1, 1]).
+4. Process in ranking order: for each kept message `i`, mark all later messages `j` with `S[i,j] ≥ 0.97` as duplicates.
 
-**Function:** `_cluster_candidates(rows, embs)`
+Threshold 0.97 targets near-identical messages (copy-pastes, bot reposts) while preserving paraphrases.
 
-Tries clustering algorithms in priority order:
+**Stage 5 — HDBSCAN clustering:**
 
-| Priority | Algorithm | Conditions | Notes |
-|---|---|---|---|
-| 1 | HDBSCAN | `import hdbscan` succeeds | `min_cluster_size = max(2, n//25)`, `min_samples = max(1, n//50)`, metric=euclidean |
-| 2 | OPTICS | `from sklearn.cluster import OPTICS` succeeds | same parameters |
-| 3 | KMeans (sklearn) | `from sklearn.cluster import KMeans` succeeds | `k = max(3, n//5)` |
-| 4 | KMeans (NumPy) | fallback | Lloyd's algorithm, seed=42 |
+Same algorithm as §9.1 with the same `min_cluster_size` formula.
 
-Noise points (HDBSCAN/OPTICS label −1) are promoted to individual singleton clusters so outlier messages are not silently discarded.
+**Stage 6 — Per-cluster sampling:**
 
-For very small inputs (n ≤ 4), each message is its own singleton cluster and no algorithm is run.
+For each cluster: 5 closest + 5 furthest from centroid. Clusters with ≤ 10 members contribute all members.
 
-### Stage 5: Per-cluster sampling
+**Stage 7 — Assemble:**
 
-**Function:** `_sample_cluster(cluster_rows, cluster_embs, n_closest=5, n_furthest=5)`
+All sampled messages are combined, sorted chronologically by `date`, and capped at **120 messages** (`max_evidence`).
 
-For each cluster:
+**Stage 8 — Transparency log + LLM generation:**
 
-1. Compute the centroid as the mean of cluster embeddings.
-2. Sort cluster members by L2 distance from the centroid.
-3. Select the 5 closest (most representative) and 5 furthest (most peripheral/diverse).
-4. If the cluster has ≤ 10 members, all are kept.
+Before the LLM token stream begins, SSE log events are emitted for each pipeline step:
 
-This bimodal sampling ensures the LLM receives both the central theme of each cluster and its boundary cases.
+```json
+{"type": "log", "step": "filter",    "count": N}
+{"type": "log", "step": "retrieval", "count": R, "overfetch": O}
+{"type": "log", "step": "threshold", "kept": K, "dropped": D}
+{"type": "log", "step": "dedup",     "kept": K, "removed": R}
+{"type": "log", "step": "cluster",   "algorithm": "HDBSCAN", "clusters": C}
+{"type": "log", "step": "evidence",  "count": E}
+```
 
-### Stage 6: Assemble
-
-Selected messages from all clusters are combined, sorted chronologically by `date`, and capped at 120 messages (`max_evidence`).
-
-### Stage 7: LLM generation
-
-The evidence set is formatted as `[username | date]: content` lines and combined with the user's prompt (or a default structured Markdown prompt) into a single user message. The pipeline log events (one JSON object per step) are emitted as SSE frames *before* the LLM token stream begins, making the retrieval process visible in the browser.
+These appear in the browser UI as a visible "research pipeline" trace. LLM tokens then stream as `{"type": "chunk", "content": "..."}`.
 
 ### Fallback chain
 
 ```
-Semantic retrieval returns ≥ 10 candidates?
-├── YES → run dedup/cluster/sample
-└── NO  → fetch stored embeddings for entire filtered_map (up to 3000 random)
-          ≥ 10 rows have embeddings?
-          ├── YES → run dedup/cluster/sample on those (fallback cluster)
-          └── NO  → send all filtered rows to LLM directly
+Stage 2 returns ≥ 10 candidates?
+├── YES → Stages 3–7 (dedup/cluster/sample)
+└── NO  → Fetch embeddings for all rows in filtered_map (up to 3000 random sample)
+          ≥ 10 rows have stored embeddings?
+          ├── YES → Stages 4–7 on those embeddings (no score threshold)
+          └── NO  → Send all filtered_map rows directly to LLM (no clustering)
 ```
 
-### Follow-up endpoint
+### Follow-up (`POST /api/summarize/followup`)
 
-`POST /api/summarize/followup` re-runs the same pipeline but:
-- The *follow-up question* (not the original prompt) is used as the retrieval query.
-- The overfetch multiplier is `max(n_filtered × 4, 1000)` instead of `× 5 / 2000`.
-- The evidence cap is 80 instead of 120.
+- The follow-up question is the retrieval query (not the original prompt).
+- Overfetch: `max(n_filtered * 4, 1000)`.
+- Evidence cap: **80** (not 120).
 - The initial summary (first assistant turn in `history`) is embedded in the system prompt.
-- Prior Q&A turns (up to 20) are appended to the message list.
+- Up to 20 prior Q&A turns are appended to the message list.
 
 ---
 
-## 11. Summarize Results Pipeline
+## 11. User Profile Analysis
 
-**File:** `routers/chat.py` — `summarize_results_endpoint()`
+**File:** `backend/src/routes/chat.rs` — `user_profile()`, `user_profile_followup()`
 
-This endpoint receives messages directly from the browser (the current search result set) rather than querying the database. It uses the same dedup/cluster/sample `_build_evidence_set()` pipeline, with two differences:
+Functionally identical to §10, with these differences:
 
-1. **Embedding lookup instead of ANN search:** Embeddings are fetched by UUID using `col.get(ids=uuids, include=["embeddings"])`. There is no semantic retrieval query — the input set is the full candidate pool.
+**Filter:** Exact match on `LOWER(username) = LOWER($1)` (not `ILIKE` partial match).
 
-2. **Token safety net:** After clustering, the character count of the evidence set is estimated:
-   ```
-   chars = sum(len(username) + len(date) + len(content) + 10 for each message)
-   ```
-   If `chars > 360,000` (≈ 90,000 tokens at 4 chars/token), the pipeline auto-triggers cluster+sample regardless of `retrieval_mode`. If clustering still yields an oversized payload, a loop progressively truncates the list to 80% of its size until it fits.
+**Fallback retrieval query:**
+```
+"attitude, opinions, concerns, feedback, and persona of {username} regarding Suno AI"
+```
 
-The follow-up variant (`/api/summarize-results/followup`) is fully stateless: all context is in the `history` array; no DB or vector calls are made.
+**Entry/exit dates:** Extracted from `db_rows.first()` and `db_rows.last()` and injected into the LLM prompt template.
 
----
+**LLM prompt instructs the model to output:**
+1. Entry date (first message) and exit date (last message)
+2. Persona description — role, communication style, expertise signals
+3. Evolution of attitude over time — chronological narrative with identified inflection points
+4. Key recurring topics and concerns
+5. Representative verbatim quotes (at least 3, with dates)
+6. Summary assessment
 
-## 12. User Profile Analysis
-
-**File:** `routers/chat.py` — `user_profile_endpoint()`
-
-Functionally identical to the Hybrid Summary pipeline except:
-
-- The filter is an exact-match on `LOWER(username) = LOWER(?)` rather than a partial match.
-- The fallback retrieval query is:  
-  `"attitude, opinions, concerns, feedback, and persona of {username} regarding Suno AI"`
-- Entry and exit dates are extracted from `db_rows[0]` and `db_rows[-1]`.
-- The default LLM prompt requests: persona, entry/exit dates, evolution of attitude (chronological), key topics, notable quotes, summary assessment.
-- The `msg_uuid` list for the profile query is capped at 3000 random samples for the fallback embedding fetch (same as Hybrid Summary).
-
-The follow-up endpoint (`/api/user-profile/followup`) appends evidence as a block to the user turn rather than the system prompt, and includes the initial profile as a system-level context block.
+**Follow-up (`POST /api/user-profile/followup`):** The initial profile is included as a system-level context block. Evidence is appended to the user turn rather than the system prompt.
 
 ---
 
-## 13. Bookmarks and Labels
+## 12. Bookmarks and Labels
 
-**File:** `routers/bookmarks.py`, `routers/labels.py`
+**File:** `backend/src/routes/bookmarks.rs`
 
-### Bookmark creation
+### Bookmark creation (`POST /api/bookmarks`)
 
 1. Validate `msg_id` exists in `messages`.
-2. Check for existing bookmark on the same `msg_id` — return `{status: "exists"}` rather than creating a duplicate.
-3. Insert: `(msg_id, ctx_before, ctx_after, note, created_at)`.
+2. Check for existing bookmark: `SELECT id FROM bookmarks WHERE msg_id = $1 AND (user_id = $2 OR user_id IS NULL)`. Return `{status: "exists", bookmark_id: N}` without creating a duplicate.
+3. Insert: `INSERT INTO bookmarks (msg_id, ctx_before, ctx_after, note, created_at, user_id)`.
 
-### Bookmark listing
+### Bookmark listing (`GET /api/bookmarks`)
 
-Single query joining `bookmarks` → `messages`. A second query fetches all `(bookmark_id, label)` rows. Labels are grouped into a dict `{bookmark_id: [label, ...]}` in Python and merged into each bookmark dict before returning. This avoids N+1 queries.
+Two queries, no N+1:
 
-### ID-only listing
+**Query 1:** All bookmarks for the authenticated user joined with messages:
+```sql
+SELECT b.*, m.*
+FROM bookmarks b
+JOIN messages m ON b.msg_id = m.id
+WHERE b.user_id = $1
+ORDER BY b.created_at DESC
+```
 
-`GET /api/bookmarks/ids` returns only `[msg_id, ...]` — used by the frontend to cheaply determine which message cards should show the "bookmarked" indicator without loading full bookmark data.
+**Query 2:** All label assignments for those bookmarks:
+```sql
+SELECT bl.bookmark_id, l.*
+FROM bookmark_labels bl
+JOIN labels l ON bl.label_id = l.id
+WHERE bl.bookmark_id = ANY($bookmark_ids)
+```
+
+Labels are grouped into `HashMap<i64, Vec<Label>>` in Rust and merged into each bookmark struct before JSON serialisation.
+
+### Lightweight ID listing (`GET /api/bookmarks/ids`)
+
+```sql
+SELECT msg_id FROM bookmarks WHERE user_id = $1
+```
+
+Returns only message IDs. Used by the frontend to mark bookmarked message cards without loading full bookmark data on every search.
 
 ### Labels
 
-Labels are stored with a `name` (unique), a `color` (hex string, default `#6366f1`), and a `created_at` timestamp. Assignment uses `INSERT OR IGNORE` on the `bookmark_labels` junction table.
-
-On bookmark deletion, `ON DELETE CASCADE` automatically removes all `bookmark_labels` rows for that bookmark.
+Labels carry `name` (unique), `color` (hex, default `#6366f1`), `created_at`. Assignment uses `INSERT INTO bookmark_labels ... ON CONFLICT (bookmark_id, label_id) DO NOTHING`. `ON DELETE CASCADE` on `bookmark_labels.bookmark_id` automatically removes label assignments when a bookmark is deleted.
 
 ---
 
-## 14. Security Model
+## 13. Qualitative Coding System
 
-**File:** `app.py`
+**File:** `backend/src/routes/codes.rs`
 
-### Authentication middleware (`_AuthMiddleware`)
+### Data model
 
-- If `API_SECRET` is empty, all requests are allowed (development mode).
-- The root path `/` and all `/static/*` paths are always public (UI must be accessible without a token).
-- All `/api/*` paths require: `Authorization: Bearer <API_SECRET>`.
-- Non-matching or missing header → HTTP 401 `{"detail": "Unauthorized"}`.
+**Codes** are qualitative tags with `name`, `color`, `description`, and an optional `category_id`. **Code categories** have `name`, `color`, and an optional `parent_id` (self-referential foreign key) enabling a two-level hierarchy. `ON DELETE SET NULL` on `parent_id` means deleting a parent category does not cascade to its children.
 
-The middleware is a `BaseHTTPMiddleware` that calls `call_next` after validation, adding no overhead to unauthenticated paths.
+**Two coding granularities:**
 
-### Security headers middleware (`_SecurityHeadersMiddleware`)
+| Table | Key | Purpose |
+|---|---|---|
+| `bookmark_codes` | `(bookmark_id, code_id)` | Message-level: one code per bookmark, optional short excerpt |
+| `bookmark_code_highlights` | `id` (auto) | Passage-level: multiple excerpts per `(bookmark, code)` pair |
 
-Applied to all responses:
+The distinction enables both coarse-grained tagging (e.g. "this message is about frustration") and fine-grained textual coding (e.g. "this specific sentence expresses concern about pricing").
+
+### Key operations
+
+**Assign code to bookmark (`POST /api/bookmark-codes`):**
+
+```sql
+INSERT INTO bookmark_codes (bookmark_id, code_id, highlighted_text)
+VALUES ($1, $2, $3)
+ON CONFLICT (bookmark_id, code_id) DO UPDATE SET highlighted_text = $3
+```
+
+**Add passage highlight (`POST /api/bookmarks/:id/highlights`):**
+
+```sql
+INSERT INTO bookmark_code_highlights (bookmark_id, code_id, highlighted_text, created_at)
+VALUES ($1, $2, $3, $4)
+```
+
+No unique constraint — multiple highlights per `(bookmark_id, code_id)` are allowed by design.
+
+**List codes for bookmark (`GET /api/bookmark-codes/:bookmark_id`):**
+
+Single query joining `bookmark_codes → codes → code_categories` and a second query for `bookmark_code_highlights`. Both are merged in Rust.
+
+---
+
+## 14. Authentication and Sessions
+
+**File:** `backend/src/routes/auth.rs`, `backend/src/main.rs`
+
+### Argon2id password hashing
+
+Registration:
+```rust
+let salt = SaltString::generate(&mut OsRng);       // cryptographically random
+let hash = Argon2::default()
+    .hash_password(password.as_bytes(), &salt)?
+    .to_string();                                    // PHC string format
+```
+
+`Argon2::default()` parameters:
+| Parameter | Value |
+|---|---|
+| Variant | Argon2id |
+| Memory cost | 19,456 KiB (19 MiB) |
+| Iterations | 2 |
+| Parallelism | 1 |
+| Salt length | 16 bytes (SaltString generates 128-bit) |
+| Output length | 32 bytes |
+
+Verification:
+```rust
+Argon2::default().verify_password(
+    password.as_bytes(),
+    &PasswordHash::new(&stored_hash)?
+)?
+```
+
+`verify_password` runs in constant time (no early-exit on mismatch), preventing timing-based side-channel attacks.
+
+### Session lifecycle
+
+**Login (`POST /api/auth/login`):**
+```rust
+session.insert("user_id", user.id).await?;
+```
+
+**Auth check (`AuthUser` extractor):**
+```rust
+let user_id: i64 = session.get("user_id").await?  // None → 401
+    .ok_or(StatusCode::UNAUTHORIZED)?;
+sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", user_id)
+    .fetch_one(&pool).await?
+```
+
+In `single`/`demo` mode: the extractor bypasses the session lookup entirely and returns a hard-coded `User { id: 1, username: "admin", is_admin: true }`.
+
+**Logout (`POST /api/auth/logout`):**
+```rust
+session.delete().await?;
+```
+
+**Session TTL:** `Expiry::OnInactivity(Duration::seconds(2_592_000))` — 30 days. Each authenticated request that reads the session refreshes the expiry. `tower-sessions-sqlx-store` handles the expiry check and cleanup automatically.
+
+### Mode-based auth
+
+`GET /api/auth/app-mode` returns the current mode (`"single"`, `"multi"`, or `"demo"`). The frontend fetches this on app load to decide whether to show the login UI and whether to read the API key from session vs. localStorage.
+
+---
+
+## 15. Security Model
+
+### API key handling
+
+The OpenAI API key is never stored in the database. It flows as the `X-OpenAI-Key` request header from the browser's `localStorage` (single/demo mode) or from per-user localStorage (multi mode). The backend reads it per-request, uses it for the duration of the handler, and discards it. This means a database breach does not expose API keys.
+
+### SQL injection prevention
+
+All database access uses sqlx parameterised queries (`$1`, `$2`, ...) with Rust type-level binding. The only dynamic SQL construction is:
+- `= ANY($1)` with a `Vec<String>` bind — safe (no string interpolation)
+- Keyword search token construction — tokens are extracted from user input and passed to `to_tsquery()` via a bind variable, not interpolated into the SQL string
+
+FTS injection (malformed `tsquery` expressions) is mitigated by lower-casing and stripping special characters before token extraction.
+
+### Chat model allowlist
+
+`VALID_CHAT_MODELS` is a compile-time `const &[&str]` slice. Any request specifying an unlisted model ID returns HTTP 400 before any API call is made.
+
+### CORS
+
+The backend CORS layer is fully permissive (`CORSLayer::very_permissive()`). In production, nginx provides origin restriction and the backend's permissive policy avoids conflicts with the reverse proxy headers. In development, this allows the Vite dev server (port 5173) to call the backend (port 8000) without CORS errors.
+
+### Security headers
+
+Applied by the `tower_http` `SetResponseHeaderLayer` (or equivalent) to all responses:
 
 | Header | Value |
 |---|---|
 | `X-Content-Type-Options` | `nosniff` |
 | `X-Frame-Options` | `DENY` |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` |
-| `Permissions-Policy` | `geolocation=(), microphone=(), camera=()` |
-| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` (HTTPS only) |
-
-### Chat model allowlist
-
-`VALID_CHAT_MODELS` in `config.py` is a `frozenset` of permitted OpenAI model IDs. Any request specifying an unlisted model ID receives HTTP 400. This prevents arbitrary model invocation via the chat and summarisation endpoints.
-
-### FTS5 injection prevention
-
-`_build_fts_query()` in `sql_helpers.py` strips FTS5 syntax characters before building the MATCH expression. All SQL parameters are passed as bind variables (parameterised queries), never interpolated into SQL strings except for `IN (?,?,...)` placeholders which are generated from `",".join("?" * len(ids))` and bound normally.
 
 ---
 
-## 15. Caching Strategy
+## 16. SSE Streaming Pattern
 
-**File:** `state.py`
+All streaming endpoints (upload, reembed, summarize, summarize-results, user-profile) use Axum's `Sse<impl Stream>` with the `async_stream::stream!` macro:
 
-Two in-memory caches reduce repeated DB and vector-store hits from frequent dashboard polling:
+```rust
+async fn my_handler(/* ... */) -> impl IntoResponse {
+    let stream = async_stream::stream! {
+        // ... work ...
+        yield Ok(Event::default().data(serde_json::to_string(&payload)?));
+        // ... more work ...
+    };
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+}
+```
 
-| Cache | Variable | TTL | Invalidated by |
-|---|---|---|---|
-| Stats | `_stats_cache` | 30 s | `invalidate_all_caches()` |
-| Uploads list | `_uploads_cache` | 30 s | `invalidate_all_caches()` |
+Each SSE frame is formatted as:
+```
+data: {"type":"...","field":"..."}\n\n
+```
 
-`invalidate_all_caches()` is called after every write operation: CSV upload, re-embed completion, upload deletion. This ensures the UI reflects the updated state immediately after a write, while reads within a 30-second window served from cache avoid redundant vector-count queries (which require a network round-trip to Qdrant).
+The `X-Accel-Buffering: no` response header is set to disable Nginx proxy buffering, ensuring tokens reach the browser immediately rather than being held until the buffer fills.
 
-Cache staleness is checked with `time.monotonic()` (monotonic clock, unaffected by system clock adjustments).
+The frontend consumes SSE streams using the browser's native `EventSource` API (for simple streams) or a custom `fetch`+`ReadableStream` pipeline (for streams requiring `POST` bodies and custom headers). TanStack Query's mutation state manages the loading/error UI, while a Zustand store accumulates streaming content for real-time display.
