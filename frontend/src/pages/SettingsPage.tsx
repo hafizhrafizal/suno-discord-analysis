@@ -1,5 +1,4 @@
 import { useState, useRef } from 'react'
-import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../api/client'
@@ -227,16 +226,10 @@ function UploadCard({
 }
 
 export default function SettingsPage() {
-  const { user, appMode } = useAuthStore()
+  const { user, appMode, setShowKeyModal } = useAuthStore()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const isAdmin = appMode !== 'multi' || user?.is_admin === true
-
-  // API Key
-  const [showKeyPopup, setShowKeyPopup] = useState(false)
-  const [keyInput, setKeyInput] = useState('')
-  const [keySaving, setKeySaving] = useState(false)
-  const [keyError, setKeyError] = useState('')
 
   // Upload
   const [uploadFile, setUploadFile] = useState<File | null>(null)
@@ -268,26 +261,10 @@ export default function SettingsPage() {
     enabled: isAdmin,
   })
 
-  const handleSaveKey = () => {
-    if (!keyInput.trim()) { setKeyError('Please enter your API key.'); return }
-    setKeySaving(true)
-    setKeyError('')
-    try {
-      localStorage.setItem('openai_api_key', keyInput.trim())
-      setShowKeyPopup(false)
-      setKeyInput('')
-      queryClient.invalidateQueries({ queryKey: ['stats'] })
-    } catch (e) {
-      setKeyError(e instanceof Error ? e.message : 'Failed to save API key')
-    } finally {
-      setKeySaving(false)
-    }
-  }
-
   const handleUpload = async () => {
     if (!uploadFile) { setUploadStatus('Please select a CSV file.'); return }
     const apiKey = localStorage.getItem('openai_api_key')
-    if (!apiKey) { setShowKeyPopup(true); return }
+    if (!apiKey) { setShowKeyModal(true); return }
     setUploadBtnLoading(true)
     setUploadPaused(false)
     uploadPausedRef.current = false
@@ -389,73 +366,6 @@ export default function SettingsPage() {
   const resumeUpload = () => { uploadPausedRef.current = false; setUploadPaused(false) }
   const stopUpload = () => { uploadAbortRef.current?.abort() }
 
-  const [syncChromaLoading, setSyncChromaLoading] = useState(false)
-  const [syncChromaProgress, setSyncChromaProgress] = useState<{ label: string; pct: number } | null>(null)
-  const [syncChromaResult, setSyncChromaResult] = useState<{
-    total_postgres: number
-    total_chroma: number
-    orphans_deleted: number
-    un_embedded: number
-  } | null>(null)
-  const [syncChromaError, setSyncChromaError] = useState('')
-
-  const handleSyncChroma = async () => {
-    setSyncChromaLoading(true)
-    setSyncChromaProgress({ label: `Connecting to ${vdbName}…`, pct: 5 })
-    setSyncChromaResult(null)
-    setSyncChromaError('')
-    try {
-      const response = await fetch('/api/uploads/sync-chroma', { method: 'POST', credentials: 'include' })
-      if (!response.ok) {
-        let msg = `HTTP ${response.status}`
-        try { const d = await response.json(); msg = d.error ?? d.message ?? msg } catch {}
-        throw new Error(msg)
-      }
-      const reader = response.body!.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const event = JSON.parse(line.slice(6).trim())
-            if (event.type === 'pg_done') {
-              setSyncChromaProgress({ label: `${Number(event.count).toLocaleString()} embeddable messages found. Scanning ${vdbName}…`, pct: 15 })
-            } else if (event.type === 'chroma_page') {
-              const fetched = Number(event.fetched)
-              setSyncChromaProgress({ label: `Scanning ${vdbName}: ${fetched.toLocaleString()} vectors read…`, pct: Math.min(75, 15 + Math.round(fetched / 500)) })
-            } else if (event.type === 'delete_progress') {
-              const deleted = Number(event.deleted)
-              const total = Number(event.total_orphans)
-              setSyncChromaProgress({ label: `Removing orphans: ${deleted.toLocaleString()} / ${total.toLocaleString()}…`, pct: Math.min(95, 75 + Math.round((deleted / Math.max(total, 1)) * 20)) })
-            } else if (event.type === 'done') {
-              setSyncChromaResult({
-                total_postgres: event.total_postgres,
-                total_chroma: event.total_chroma,
-                orphans_deleted: event.orphans_deleted,
-                un_embedded: event.un_embedded,
-              })
-              setSyncChromaProgress(null)
-              queryClient.invalidateQueries({ queryKey: ['stats'] })
-            } else if (event.type === 'error') {
-              throw new Error(event.message)
-            }
-          } catch { /* skip malformed lines */ }
-        }
-      }
-    } catch (e) {
-      setSyncChromaError(e instanceof Error ? e.message : String(e))
-      setSyncChromaProgress(null)
-    } finally {
-      setSyncChromaLoading(false)
-    }
-  }
-
   const [sunoAddInput, setSunoAddInput] = useState('')
   const [sunoAddStatus, setSunoAddStatus] = useState<{ text: string; ok: boolean } | null>(null)
   const [sunoAddLoading, setSunoAddLoading] = useState(false)
@@ -554,7 +464,7 @@ export default function SettingsPage() {
               Stored in your browser's localStorage only — never sent to or saved on the server.
             </p>
           </div>
-          <button onClick={() => { setKeyInput(localStorage.getItem('openai_api_key') || ''); setShowKeyPopup(true) }} className="shrink-0 px-4 py-2 text-sm font-semibold bg-indigo-700 text-white rounded-lg hover:bg-indigo-800 transition-colors">
+          <button onClick={() => setShowKeyModal(true)} className="shrink-0 px-4 py-2 text-sm font-semibold bg-indigo-700 text-white rounded-lg hover:bg-indigo-800 transition-colors">
             Change Key
           </button>
         </div>
@@ -651,55 +561,11 @@ export default function SettingsPage() {
             <p className="text-sm text-gray-600 text-center py-6">No dataset uploads yet.</p>
           ) : (
             uploads.map((u) => (
-              <UploadCard key={u.id} upload={u} isAdmin={isAdmin} vdbName={vdbName} onRefresh={() => { refetchUploads(); queryClient.invalidateQueries({ queryKey: ['stats'] }) }} onNeedApiKey={() => setShowKeyPopup(true)} />
+              <UploadCard key={u.id} upload={u} isAdmin={isAdmin} vdbName={vdbName} onRefresh={() => { refetchUploads(); queryClient.invalidateQueries({ queryKey: ['stats'] }) }} onNeedApiKey={() => setShowKeyModal(true)} />
             ))
           )}
         </div>
       </section>}
-
-      {/* Vector DB Maintenance (multi-mode admins only) */}
-      {appMode === 'multi' && user?.is_admin === true && (
-        <section className="bg-white rounded-2xl shadow p-5">
-          <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide mb-1">Vector DB Maintenance</h2>
-          <p className="text-xs text-gray-500 mb-4">
-            Scans Vector DB and removes any vectors that have no matching message in the database.
-            Run this after deleting uploads to reclaim vector storage.
-          </p>
-          <button
-            onClick={handleSyncChroma}
-            disabled={syncChromaLoading}
-            className="px-4 py-2 text-sm font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {syncChromaLoading ? 'Scanning…' : `Sync & Clean ${vdbName}`}
-          </button>
-          {syncChromaProgress && (
-            <div className="mt-3">
-              <div className="progress-track">
-                <div className="progress-fill" style={{ width: `${syncChromaProgress.pct}%` }} />
-              </div>
-              <p className="mt-1 text-xs text-gray-600">{syncChromaProgress.label}</p>
-            </div>
-          )}
-          {syncChromaResult && (
-            <div className="mt-3 space-y-2">
-              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-800 space-y-1">
-                <div className="flex justify-between"><span>Embeddable messages (PostgreSQL)</span><span className="font-semibold">{syncChromaResult.total_postgres.toLocaleString()}</span></div>
-                <div className="flex justify-between"><span>Vectors scanned ({vdbName})</span><span className="font-semibold">{syncChromaResult.total_chroma.toLocaleString()}</span></div>
-                <div className="flex justify-between"><span>Orphan vectors removed</span><span className="font-semibold">{syncChromaResult.orphans_deleted.toLocaleString()}</span></div>
-                <div className="flex justify-between"><span>Messages without a vector</span><span className={`font-semibold ${syncChromaResult.un_embedded > 0 ? 'text-amber-700' : 'text-green-700'}`}>{syncChromaResult.un_embedded.toLocaleString()}</span></div>
-              </div>
-              {syncChromaResult.un_embedded === 0 && syncChromaResult.orphans_deleted === 0
-                ? <p className="text-xs font-semibold text-green-700">{vdbName} is fully in sync.</p>
-                : syncChromaResult.un_embedded > 0
-                  ? <p className="text-xs text-amber-700"><span className="font-semibold">{syncChromaResult.un_embedded.toLocaleString()} messages have no vector.</span> Use Re-embed on each upload to fix this.</p>
-                  : <p className="text-xs font-semibold text-green-700">Orphan cleanup complete. {vdbName} is in sync.</p>}
-            </div>
-          )}
-          {syncChromaError && (
-            <p className="mt-2 text-xs text-red-600">{syncChromaError}</p>
-          )}
-        </section>
-      )}
 
       {/* Suno Team management (multi-mode admins only) */}
       {appMode === 'multi' && user?.is_admin === true && (
@@ -768,61 +634,6 @@ export default function SettingsPage() {
         </section>
       )}
 
-      {/* API Key Popup — rendered via portal directly on document.body so fixed positioning
-          is never clipped by ancestor transforms or overflow */}
-      {showKeyPopup && createPortal(
-        <>
-          <div className="fixed inset-0 z-[9999] bg-black/50" onClick={() => setShowKeyPopup(false)} />
-          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 pointer-events-none">
-            <div className="pointer-events-auto w-full max-w-md rounded-xl shadow-2xl overflow-hidden">
-              {/* Header */}
-              <div className="bg-[#0d3e7f] px-5 py-4">
-                <div className="flex items-center gap-2.5 mb-0.5">
-                  <svg className="w-5 h-5 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                  </svg>
-                  <h2 className="text-lg font-bold text-white">OpenAI API Key</h2>
-                </div>
-                <p className="text-xs text-blue-200 ml-[30px]">Required for Chat, Summarize, and the OpenAI embedding model.</p>
-              </div>
-              {/* Body */}
-              <div className="bg-white px-5 py-5">
-                <label className="block text-sm font-semibold text-gray-800 mb-1.5">Your API key</label>
-                <input
-                  type="text"
-                  value={keyInput}
-                  onChange={(e) => setKeyInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
-                  placeholder="sk-…"
-                  className="w-full border-2 border-[#0d3e7f] rounded px-3 py-2.5 text-sm font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#0d3e7f]/30 mb-3"
-                  autoFocus
-                />
-                <p className="text-xs text-gray-600 mb-4 leading-relaxed">
-                  Stored in <strong>your browser&apos;s localStorage</strong> only — never saved to the server or
-                  database. Sent to your own server per session to make OpenAI requests on your behalf.
-                </p>
-                {keyError && <p className="text-xs text-red-600 mb-3">{keyError}</p>}
-                <div className="flex gap-2.5">
-                  <button
-                    onClick={handleSaveKey}
-                    disabled={keySaving}
-                    className="flex-1 py-2.5 text-sm font-bold bg-[#0d3e7f] text-white rounded hover:bg-[#0a2f60] disabled:opacity-50 transition-colors"
-                  >
-                    {keySaving ? 'Saving…' : 'Save & Continue'}
-                  </button>
-                  <button
-                    onClick={() => setShowKeyPopup(false)}
-                    className="px-6 py-2.5 text-sm font-semibold border border-gray-300 text-gray-700 rounded hover:bg-gray-50 transition-colors"
-                  >
-                    Skip
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </>,
-        document.body,
-      )}
     </div>
   )
 }

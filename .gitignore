@@ -1,8 +1,6 @@
 # Data files (contain research data — keep local)
 discord_data.db
 discord_data*
-chroma_db/
-chroma_db_/
 
 # Secrets — never commit
 .env

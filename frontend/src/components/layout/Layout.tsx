@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Outlet } from 'react-router-dom'
 import Header from './Header'
+import ApiKeyModal from '../modals/ApiKeyModal'
 
 export default function Layout() {
   const mainRef = useRef<HTMLElement>(null)
@@ -20,6 +21,7 @@ export default function Layout() {
       <main ref={mainRef} className="flex-1 overflow-auto">
         <Outlet />
       </main>
+      <ApiKeyModal />
       {showBackToTop && (
         <button
           onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}

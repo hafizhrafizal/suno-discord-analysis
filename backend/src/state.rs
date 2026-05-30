@@ -55,51 +55,13 @@ impl AppState {
         "text-embedding-3-small".to_string()
     }
 
-    /// Query the configured vector store for the total number of vectors in the active collection.
-    /// Returns None if the store is unreachable or the collection doesn't exist.
+    /// Query Qdrant for the total number of vectors in the active collection.
+    /// Returns None if Qdrant is unreachable or the collection doesn't exist.
     pub async fn get_vector_count(&self) -> Option<i64> {
-        match self.config.vector_db.to_lowercase().as_str() {
-            "qdrant" => self.get_qdrant_vector_count().await,
-            _ => self.get_chroma_vector_count().await,
-        }
-    }
-
-    async fn get_chroma_vector_count(&self) -> Option<i64> {
-        let base = format!(
-            "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
-            self.config.chroma_host, self.config.chroma_port
+        let url = format!(
+            "{}/collections/{}/points/count",
+            self.config.qdrant_url, self.config.qdrant_collection
         );
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .build()
-            .ok()?;
-
-        let info: serde_json::Value = client
-            .get(format!("{}/collections/{}", base, self.config.chroma_collection))
-            .send()
-            .await
-            .ok()?
-            .json()
-            .await
-            .ok()?;
-        let collection_id = info["id"].as_str()?.to_string();
-
-        let count_val: serde_json::Value = client
-            .get(format!("{}/collections/{}/count", base, collection_id))
-            .send()
-            .await
-            .ok()?
-            .json()
-            .await
-            .ok()?;
-
-        count_val.as_i64().or_else(|| count_val.as_f64().map(|f| f as i64))
-    }
-
-    async fn get_qdrant_vector_count(&self) -> Option<i64> {
-        // POST /points/count with exact:true is guaranteed to return the true total
-        // regardless of indexing or optimizer state — more reliable than collection info fields.
-        let url = format!("{}/collections/{}/points/count", self.config.qdrant_url, self.config.qdrant_collection);
         let mut req = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()

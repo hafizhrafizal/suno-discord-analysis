@@ -5,7 +5,7 @@ import { useAuthStore } from '../../store/authStore'
 import type { Stats } from '../../types'
 
 export default function Header() {
-  const { user, appMode, setUser } = useAuthStore()
+  const { user, appMode, setUser, setShowKeyModal } = useAuthStore()
   const navigate = useNavigate()
   const [stats, setStats] = useState<Stats | null>(null)
   const [bookmarkCount, setBookmarkCount] = useState(0)
@@ -45,16 +45,26 @@ export default function Header() {
 
   return (
     <header className="bg-indigo-700 text-white shadow-lg sticky top-0 z-40">
-      <div className="max-w-5xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-4">
+      <div className="max-w-5xl mx-auto px-3 sm:px-4 py-2 sm:py-3 flex items-center gap-2 sm:gap-4">
+
+        {/* Title + stats */}
         <div className="flex-1 min-w-0">
-          <h1 className="text-base font-bold tracking-tight leading-none">Suno Discord Analysis</h1>
-          <p className="text-indigo-100 text-xs mt-0.5 truncate" aria-live="polite">
-            {stats
-              ? `${stats.total_messages.toLocaleString()} msgs • ${stats.total_uploads} dataset • ${stats.embedded_messages.toLocaleString()} embedded •`
-              : 'Loading…'}
-          </p>
+          <h1 className="text-sm sm:text-base font-bold tracking-tight leading-none">Suno Discord</h1>
+          {stats ? (
+            <p className="text-indigo-200 text-xs mt-0.5 truncate" aria-live="polite">
+              <span className="hidden sm:inline">
+                {stats.total_messages.toLocaleString()} msgs &bull; {stats.total_uploads} uploads &bull; {stats.embedded_messages.toLocaleString()} embedded
+              </span>
+              <span className="sm:hidden">
+                {stats.total_messages.toLocaleString()} msgs &bull; {stats.embedded_messages.toLocaleString()} vecs
+              </span>
+            </p>
+          ) : (
+            <p className="text-indigo-300 text-xs mt-0.5">Loading…</p>
+          )}
         </div>
 
+        {/* Nav tabs */}
         <nav className="flex gap-0 sm:gap-0.5 bg-indigo-800 rounded-lg p-0.5 shrink-0">
           <NavLink to="/search" className={navCls} aria-label="Search">
             <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -93,6 +103,24 @@ export default function Header() {
           )}
         </nav>
 
+        {/* API key indicator (single/demo mode) — tap to open modal */}
+        {appMode !== 'multi' && (
+          <button
+            onClick={() => setShowKeyModal(true)}
+            className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+              localStorage.getItem('openai_api_key')
+                ? 'bg-green-500 hover:bg-green-400'
+                : 'bg-red-500 hover:bg-red-400 animate-pulse'
+            }`}
+            title={localStorage.getItem('openai_api_key') ? 'API key set — tap to change' : 'No API key — tap to set'}
+            aria-label="OpenAI API key"
+          >
+            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+          </button>
+        )}
+
         {/* User avatar dropdown (multi mode only) */}
         {appMode === 'multi' && user && (
           <div className="shrink-0 relative" ref={dropdownRef}>
@@ -111,6 +139,16 @@ export default function Header() {
                   <p className="text-sm font-semibold text-gray-900 truncate">{user.username}</p>
                   <p className="text-xs text-gray-500">{user.is_admin ? 'Administrator' : 'User'}</p>
                 </div>
+                {/* API key status row */}
+                <button
+                  onClick={() => { setDropdownOpen(false); setShowKeyModal(true) }}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${localStorage.getItem('openai_api_key') ? 'bg-green-500' : 'bg-red-500'}`} />
+                  <span className={localStorage.getItem('openai_api_key') ? 'text-gray-700' : 'text-red-600 font-semibold'}>
+                    {localStorage.getItem('openai_api_key') ? 'API key set' : 'Set API key'}
+                  </span>
+                </button>
                 {isAdmin && (
                   <button
                     onClick={() => { setDropdownOpen(false); navigate('/admin') }}

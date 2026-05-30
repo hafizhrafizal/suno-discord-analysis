@@ -60,7 +60,6 @@ pub fn all_routes(state: AppState) -> Router {
         .route("/uploads/:id/sqlite", delete(uploads::delete_upload_sqlite))
         .route("/uploads/:id/embeddings", delete(uploads::delete_upload_embeddings))
         .route("/uploads/:id/reembed", post(uploads::reembed))
-        .route("/uploads/sync-chroma", post(uploads::sync_chroma))
         .route("/jobs/:job_id", get(uploads::get_job))
         // Bookmarks
         .route("/bookmarks", post(bookmarks::create_bookmark).get(bookmarks::list_bookmarks))

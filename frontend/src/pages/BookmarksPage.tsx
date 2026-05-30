@@ -715,7 +715,7 @@ export default function BookmarksPage() {
 
   const queryClient = useQueryClient()
 
-  const { data: rawBookmarks = [], isLoading, refetch } = useQuery<BookmarkWithAll[]>({
+  const { data: rawBookmarks, isLoading, refetch } = useQuery<BookmarkWithAll[]>({
     queryKey: ['bookmarks'],
     queryFn: () => apiFetch('/bookmarks'),
   })
@@ -725,9 +725,11 @@ export default function BookmarksPage() {
     queryFn: () => apiFetch('/codes'),
   })
 
-  // Sync server data into local state
+  // Sync server data into local state — rawBookmarks is undefined until loaded (stable ref),
+  // then the actual query result (also stable). Avoid inline `= []` default which creates a
+  // new array reference every render and causes an infinite setState → re-render loop.
   useEffect(() => {
-    setBookmarks(rawBookmarks)
+    if (rawBookmarks !== undefined) setBookmarks(rawBookmarks)
   }, [rawBookmarks])
 
   // ── Global mouseup for text selection ────────────────────────────────────────

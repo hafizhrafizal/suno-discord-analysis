@@ -73,43 +73,6 @@ fn dedup_messages(msgs: Vec<SummarizeMsg>) -> (Vec<SummarizeMsg>, usize) {
     (deduped, removed)
 }
 
-/// Fetch embeddings from ChromaDB for the given msg_uuids.
-/// Returns (embeddings, found_indices) where found_indices[i] is the index in `uuids` for embeddings[i].
-async fn fetch_embeddings(
-    chroma_base: &str,
-    collection_id: &str,
-    uuids: &[String],
-) -> Option<Vec<(String, Vec<f32>)>> {
-    let client = reqwest::Client::new();
-    let url = format!("{}/collections/{}/get", chroma_base, collection_id);
-    let resp = client
-        .post(&url)
-        .json(&serde_json::json!({ "ids": uuids, "include": ["embeddings"] }))
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let body: serde_json::Value = resp.json().await.ok()?;
-    let ids = body["ids"].as_array()?;
-    let embs = body["embeddings"].as_array()?;
-    let result: Vec<(String, Vec<f32>)> = ids
-        .iter()
-        .zip(embs.iter())
-        .filter_map(|(id, emb)| {
-            let id_str = id.as_str()?.to_string();
-            let vec: Vec<f32> = emb
-                .as_array()?
-                .iter()
-                .filter_map(|v| v.as_f64().map(|x| x as f32))
-                .collect();
-            if vec.is_empty() { None } else { Some((id_str, vec)) }
-        })
-        .collect();
-    Some(result)
-}
-
 /// Convert any msg_uuid to a Qdrant-compatible UUID string (mirrors uploads.rs logic).
 fn to_qdrant_id(id: &str) -> String {
     if uuid::Uuid::parse_str(id).is_ok() {
@@ -159,16 +122,6 @@ async fn fetch_embeddings_qdrant(
         })
         .collect();
     Some(result)
-}
-
-/// Resolve collection name → UUID from ChromaDB.
-async fn resolve_collection_id(chroma_base: &str, collection_name: &str) -> Option<String> {
-    let client = reqwest::Client::new();
-    let url = format!("{}/collections/{}", chroma_base, collection_name);
-    let resp = client.get(&url).send().await.ok()?;
-    if !resp.status().is_success() { return None; }
-    let body: serde_json::Value = resp.json().await.ok()?;
-    body["id"].as_str().map(String::from)
 }
 
 async fn retrieve_keyword_messages(
@@ -359,19 +312,9 @@ pub async fn summarize_results(
     let model = req.model.unwrap_or_else(|| "gpt-4o".to_string());
     let retrieval_mode = req.retrieval_mode.unwrap_or_else(|| "cluster".to_string());
     let input_messages = req.messages;
-    let is_qdrant = state.config.vector_db.to_lowercase() == "qdrant";
     let qdrant_url = state.config.qdrant_url.clone();
     let qdrant_collection = state.config.qdrant_collection.clone();
     let qdrant_api_key = state.config.qdrant_api_key.clone();
-    let chroma_base = if !is_qdrant {
-        format!(
-            "http://{}:{}/api/v2/tenants/default_tenant/databases/default_database",
-            state.config.chroma_host, state.config.chroma_port
-        )
-    } else {
-        String::new()
-    };
-    let chroma_collection = state.config.chroma_collection.clone();
 
     let stream = async_stream::stream! {
         use futures::StreamExt;
@@ -407,37 +350,18 @@ pub async fn summarize_results(
             let has_uuids = !uuids.is_empty();
 
             if has_uuids {
-                let store_label = if is_qdrant { "Qdrant" } else { "ChromaDB" };
                 yield Ok(log_event("retrieval", "Retrieval",
-                    &format!("Fetching embeddings for {} messages from {}…", uuids.len(), store_label)));
+                    &format!("Fetching embeddings for {} messages from Qdrant…", uuids.len())));
             }
 
             let embedding_map: std::collections::HashMap<String, Vec<f32>> = if has_uuids {
-                if is_qdrant {
-                    match fetch_embeddings_qdrant(
-                        &qdrant_url, &qdrant_collection, qdrant_api_key.as_deref(), &uuids,
-                    ).await {
-                        Some(pairs) => pairs.into_iter().collect(),
-                        None => {
-                            yield Ok(log_event("fallback", "Warning",
-                                "Could not fetch embeddings from Qdrant — falling back to word-count sampling"));
-                            std::collections::HashMap::new()
-                        }
-                    }
-                } else {
-                    let coll_id_opt = resolve_collection_id(&chroma_base, &chroma_collection).await;
-                    if let Some(coll_id) = coll_id_opt {
-                        match fetch_embeddings(&chroma_base, &coll_id, &uuids).await {
-                            Some(pairs) => pairs.into_iter().collect(),
-                            None => {
-                                yield Ok(log_event("fallback", "Warning",
-                                    "Could not fetch embeddings — falling back to word-count sampling"));
-                                std::collections::HashMap::new()
-                            }
-                        }
-                    } else {
+                match fetch_embeddings_qdrant(
+                    &qdrant_url, &qdrant_collection, qdrant_api_key.as_deref(), &uuids,
+                ).await {
+                    Some(pairs) => pairs.into_iter().collect(),
+                    None => {
                         yield Ok(log_event("fallback", "Warning",
-                            "ChromaDB unreachable — falling back to word-count sampling"));
+                            "Could not fetch embeddings from Qdrant — falling back to word-count sampling"));
                         std::collections::HashMap::new()
                     }
                 }

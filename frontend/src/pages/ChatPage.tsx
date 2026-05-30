@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { streamEvents } from '../api/client'
+import { useAuthStore } from '../store/authStore'
 
 type SubTab = 'chat' | 'profile'
 type DateMode = 'exact' | 'month'
@@ -125,6 +126,7 @@ const MODEL_OPTIONS = (
 )
 
 export default function ChatPage() {
+  const { setShowKeyModal } = useAuthStore()
   const [subTab, setSubTab] = useState<SubTab>('chat')
 
   // RAG Chat state
@@ -175,6 +177,7 @@ export default function ChatPage() {
     setProfLog((prev) => [...prev, { type, text }])
 
   const handleSumGenerate = useCallback(() => {
+    if (!localStorage.getItem('openai_api_key')) { setShowKeyModal(true); return }
     setSumLog([])
     setSumResult('')
     setSumResultVisible(false)
@@ -227,7 +230,7 @@ export default function ChatPage() {
         setSumLoading(false)
       },
     )
-  }, [sumModel, sumMode, sumUsername, sumPrompt, sumDateMode, sumDateFrom, sumDateTo, sumMonthFrom, sumMonthTo, sumMinWords, sumSuno])
+  }, [sumModel, sumMode, sumUsername, sumPrompt, sumDateMode, sumDateFrom, sumDateTo, sumMonthFrom, sumMonthTo, sumMinWords, sumSuno, setShowKeyModal])
 
   const handleSumFollowUp = useCallback((q: string) => {
     setSumFollowUpHistory((prev) => [...prev, { role: 'user', content: q }])
@@ -267,6 +270,7 @@ export default function ChatPage() {
 
   const handleProfAnalyse = useCallback(() => {
     if (!profUsername.trim()) return
+    if (!localStorage.getItem('openai_api_key')) { setShowKeyModal(true); return }
     setProfLog([])
     setProfResult('')
     setProfResultVisible(false)
@@ -317,7 +321,7 @@ export default function ChatPage() {
         setProfLoading(false)
       },
     )
-  }, [profUsername, profModel, profMode, profPrompt, profDateMode, profDateFrom, profDateTo, profMonthFrom, profMonthTo])
+  }, [profUsername, profModel, profMode, profPrompt, profDateMode, profDateFrom, profDateTo, profMonthFrom, profMonthTo, setShowKeyModal])
 
   const handleProfFollowUp = useCallback((q: string) => {
     setProfFollowUpHistory((prev) => [...prev, { role: 'user', content: q }])
@@ -483,8 +487,13 @@ export default function ChatPage() {
                     {MODEL_OPTIONS}
                   </select>
                   <button onClick={handleSumGenerate} disabled={sumLoading} className="search-btn">
-                    {sumLoading ? 'Generating…' : 'Generate RAG Summary'}
+                    {sumLoading ? 'Generating…' : 'Generate'}
                   </button>
+                  {sumLoading && (
+                    <button onClick={() => { sumStopRef.current?.(); setSumLoading(false) }} className="px-3 py-1.5 text-sm font-semibold bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 transition-colors">
+                      Stop
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -604,8 +613,13 @@ export default function ChatPage() {
                     {MODEL_OPTIONS}
                   </select>
                   <button onClick={handleProfAnalyse} disabled={profLoading || !profUsername.trim()} className="search-btn">
-                    {profLoading ? 'Analysing…' : 'Analyse User'}
+                    {profLoading ? 'Analysing…' : 'Analyse'}
                   </button>
+                  {profLoading && (
+                    <button onClick={() => { profStopRef.current?.(); setProfLoading(false) }} className="px-3 py-1.5 text-sm font-semibold bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 transition-colors">
+                      Stop
+                    </button>
+                  )}
                 </div>
               </div>
             )}
