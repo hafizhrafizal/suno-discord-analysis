@@ -6,6 +6,7 @@ import {
 import ReactMarkdown from 'react-markdown'
 import { apiFetch, streamEvents } from '../api/client'
 import { useSearchStore } from '../store/searchStore'
+import { useAuthStore } from '../store/authStore'
 import { getUserStyle, getUserColor, highlightText, highlightTerms } from '../utils/colors'
 import type { Message, Upload, UserInRange, Stats } from '../types'
 
@@ -396,6 +397,7 @@ function SearchingAnimation() {
 
 export default function SearchPage() {
   const { results, setResults, selectedIds, toggleSelected, selectAll, clearSelected, bookmarkedIds, setBookmarkedIds, toggleBookmarked } = useSearchStore()
+  const { setShowKeyModal } = useAuthStore()
 
   // Search state
   const [searchCat, setSearchCat] = useState<SearchCat>(() => (localStorage.getItem('search_cat') as SearchCat) || 'chat')
@@ -766,6 +768,7 @@ export default function SearchPage() {
       setFilterTokens([])
       return
     }
+    if (!localStorage.getItem('openai_api_key')) { setShowKeyModal(true); return }
     setFilterLoading(true)
     try {
       const data = await apiFetch<Message[]>('/filter/semantic', {
@@ -781,7 +784,7 @@ export default function SearchPage() {
     } finally {
       setFilterLoading(false)
     }
-  }, [])
+  }, [setShowKeyModal])
 
   // When filter text or mode changes, recompute displayedResults
   useEffect(() => {
@@ -850,6 +853,7 @@ export default function SearchPage() {
         else if (matchType === 'any') toks = query.split(/\s+/).filter(Boolean)
       } else if (activeTab === 'semantic') {
         if (!query.trim()) { setSearching(false); return }
+        if (!localStorage.getItem('openai_api_key')) { setShowKeyModal(true); setSearching(false); return }
         params.set('q', query)
         if (filterUsername) params.set('username', filterUsername)
         if (sortBy !== 'similarity') params.set('sort_by', sortBy)
@@ -889,7 +893,7 @@ export default function SearchPage() {
       setDidSearch(true)
       setTimeout(() => resultsAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
     }
-  }, [query, activeTab, matchType, filterUsername, buildParams, rangeLimit, rangeOffset, sortBy, trendBucket, setResults, clearSelected, buildTrend, dateFrom, dateTo, rangeDateFrom, rangeDateTo, sunoTeam, minWords, scopeParam])
+  }, [query, activeTab, matchType, filterUsername, buildParams, rangeLimit, rangeOffset, sortBy, trendBucket, setResults, clearSelected, buildTrend, dateFrom, dateTo, rangeDateFrom, rangeDateTo, sunoTeam, minWords, scopeParam, setShowKeyModal])
 
   const doUserSearch = async () => {
     setSearching(true)
@@ -1011,6 +1015,7 @@ export default function SearchPage() {
   }
 
   const handleSummarize = () => {
+    if (!localStorage.getItem('openai_api_key')) { setShowKeyModal(true); return }
     const sel = results.filter((r) => selectedIds.has(r.id))
     const msgs = sel.length > 0 ? sel : results
     if (msgs.length === 0) return
@@ -1051,6 +1056,7 @@ export default function SearchPage() {
 
   const handleSumFollowUp = () => {
     if (!summarizeFollowUpInput.trim() || summarizeFollowUpLoading) return
+    if (!localStorage.getItem('openai_api_key')) { setShowKeyModal(true); return }
     const q = summarizeFollowUpInput.trim()
     setSummarizeFollowUpInput('')
     setSummarizeFollowUp((prev) => [...prev, { role: 'user', content: q }])
