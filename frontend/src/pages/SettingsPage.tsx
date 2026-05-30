@@ -683,8 +683,8 @@ export default function SettingsPage() {
         </div>
       </section>}
 
-      {/* Vector DB Maintenance (admin only) */}
-      {isAdmin && (
+      {/* Vector DB Maintenance (multi-mode admins only) */}
+      {appMode === 'multi' && user?.is_admin === true && (
         <section className="bg-white rounded-2xl shadow p-5">
           <div className="flex items-center justify-between mb-1">
             <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide">Vector DB Maintenance</h2>
