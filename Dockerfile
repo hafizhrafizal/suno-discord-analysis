@@ -13,6 +13,10 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs \
     && rm -rf src target/release/deps/retrieval_backend* target/release/retrieval-backend*
 
 COPY backend/src ./src
+# Force mtimes definitively newer than the stub build's cargo fingerprint
+# cache -- otherwise cargo can decide (by mtime) that nothing changed and
+# silently relink the STUB binary instead of recompiling with real source.
+RUN find src -exec touch {} +
 RUN cargo build --release
 
 # ── Runtime ───────────────────────────────────────────────────────────────────

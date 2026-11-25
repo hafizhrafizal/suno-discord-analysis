@@ -26,7 +26,7 @@ pub fn all_routes(state: AppState) -> Router {
         .route("/auth/app-mode", get(auth::get_mode))
         .route("/auth/set-mode", post(auth::set_mode))
         // Admin
-        .route("/admin/users", get(admin::list_users))
+        .route("/admin/users", get(admin::list_users).post(admin::create_user))
         .route("/admin/users/:user_id", delete(admin::delete_user))
         .route("/admin/users/:user_id/toggle-admin", post(admin::toggle_admin))
         .route("/admin/users/:user_id/password", post(admin::set_user_password))

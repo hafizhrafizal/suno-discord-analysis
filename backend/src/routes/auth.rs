@@ -2,63 +2,19 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde_json::{json, Value};
 use tower_sessions::Session;
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{PasswordHash, PasswordVerifier},
     Argon2,
 };
 use crate::{error::{AppError, Result}, models::{AuthUser, LoginRequest, SetModeRequest}, state::AppState};
 
-pub async fn register(
-    State(state): State<AppState>,
-    session: Session,
-    Json(req): Json<LoginRequest>,
-) -> Result<Json<Value>> {
-    let mode = state.get_app_mode().await.unwrap_or_default();
-    if mode != "multi" {
-        return Err(AppError::Forbidden);
-    }
-    if req.username.len() < 2 || req.username.len() > 40 {
-        return Err(AppError::BadRequest("Username must be 2-40 characters".into()));
-    }
-    if req.password.len() < 8 {
-        return Err(AppError::BadRequest("Password must be at least 8 characters".into()));
-    }
-
-    // Case-insensitive uniqueness check (matches the LOWER() unique index)
-    let exists: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM users WHERE LOWER(username) = LOWER($1)")
-            .bind(&req.username)
-            .fetch_optional(&state.db)
-            .await?;
-    if exists.is_some() {
-        return Err(AppError::BadRequest("Username already taken".into()));
-    }
-
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    let hash = argon2
-        .hash_password(req.password.as_bytes(), &salt)
-        .map_err(|e| AppError::Internal(e.to_string()))?
-        .to_string();
-
-    let id: i64 = sqlx::query_scalar(
-        "INSERT INTO users (username, password_hash, password_salt) VALUES ($1, $2, $3) RETURNING id",
-    )
-    .bind(&req.username)
-    .bind(&hash)
-    .bind(salt.as_str())
-    .fetch_one(&state.db)
-    .await?;
-
-    let is_admin: bool = sqlx::query_scalar("SELECT is_admin FROM users WHERE id = $1")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(false);
-
-    session.insert("user_id", id).await.map_err(|e| AppError::Internal(e.to_string()))?;
-
-    Ok(Json(json!({ "id": id, "username": req.username, "is_admin": is_admin })))
+// Public self-registration is intentionally removed -- accounts are
+// created only by an admin via POST /api/admin/users (see admin.rs).
+// This handler is kept so any old client still pointing at the route
+// gets a clear, explicit error instead of a generic 404.
+pub async fn register() -> Result<Json<Value>> {
+    Err(AppError::Forbidden)
 }
+
 
 pub async fn login(
     State(state): State<AppState>,

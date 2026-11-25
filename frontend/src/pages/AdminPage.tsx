@@ -22,11 +22,40 @@ export default function AdminPage() {
   const [pwError, setPwError] = useState('')
   const [pwSuccess, setPwSuccess] = useState(false)
 
+  const [showCreate, setShowCreate] = useState(false)
+  const [newUsername, setNewUsername] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [newIsAdmin, setNewIsAdmin] = useState(false)
+  const [createLoading, setCreateLoading] = useState(false)
+  const [createError, setCreateError] = useState('')
+
   if (!isAllowed) {
     return <Navigate to="/search" replace />
   }
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+
+  const createUser = async () => {
+    if (!newUsername.trim() || !newPassword.trim()) return
+    if (newPassword.length < 8) { setCreateError('Password must be at least 8 characters.'); return }
+    setCreateLoading(true)
+    setCreateError('')
+    try {
+      await apiFetch('/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({ username: newUsername.trim(), password: newPassword, is_admin: newIsAdmin }),
+      })
+      setNewUsername('')
+      setNewPassword('')
+      setNewIsAdmin(false)
+      setShowCreate(false)
+      refresh()
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Failed to create user')
+    } finally {
+      setCreateLoading(false)
+    }
+  }
 
   const toggleAdmin = async (userId: number) => {
     try {
@@ -87,8 +116,52 @@ export default function AdminPage() {
       <section className="bg-white rounded-2xl shadow p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-sm text-gray-700 uppercase tracking-wide">User Management</h2>
-          <button onClick={refresh} className="text-xs font-semibold text-indigo-700 hover:underline">Refresh</button>
+          <div className="flex gap-3">
+            <button onClick={() => setShowCreate(v => !v)} className="text-xs font-semibold text-indigo-700 hover:underline">
+              {showCreate ? 'Cancel' : '+ Create User'}
+            </button>
+            <button onClick={refresh} className="text-xs font-semibold text-indigo-700 hover:underline">Refresh</button>
+          </div>
         </div>
+
+        {showCreate && (
+          <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 mb-4 flex items-end gap-2 flex-wrap">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Username</label>
+              <input
+                type="text"
+                value={newUsername}
+                onChange={(e) => { setNewUsername(e.target.value); setCreateError('') }}
+                className="search-input text-sm min-w-[160px]"
+                placeholder="Username"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Password</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => { setNewPassword(e.target.value); setCreateError('') }}
+                onKeyDown={(e) => e.key === 'Enter' && createUser()}
+                className="search-input text-sm min-w-[160px]"
+                placeholder="Min 8 characters…"
+              />
+            </div>
+            <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 pb-2">
+              <input type="checkbox" checked={newIsAdmin} onChange={(e) => setNewIsAdmin(e.target.checked)} />
+              Admin
+            </label>
+            <button
+              onClick={createUser}
+              disabled={createLoading || !newUsername.trim() || !newPassword.trim()}
+              className="action-btn-primary disabled:opacity-50"
+            >
+              {createLoading ? 'Creating…' : 'Create'}
+            </button>
+            {createError && <p className="w-full text-xs text-red-600 mt-1">{createError}</p>}
+          </div>
+        )}
 
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 mb-4">

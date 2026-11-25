@@ -20,12 +20,9 @@ pub async fn create_bookmark(
     user: AuthUser,
     Json(req): Json<CreateBookmarkRequest>,
 ) -> Result<Json<Value>> {
-    let mode = state.get_app_mode().await;
-    let user_id = if mode.as_deref() == Some("multi") {
-        Some(user.id)
-    } else {
-        None
-    };
+    // Attribution only -- bookmarks/coding are shared across all accounts,
+    // not scoped per-creator (see list_bookmarks etc. below).
+    let user_id = Some(user.id);
 
     let ctx_before = req.ctx_before.unwrap_or(5);
     let ctx_after = req.ctx_after.unwrap_or(5);
@@ -47,37 +44,23 @@ pub async fn create_bookmark(
 
 pub async fn list_bookmarks(
     State(state): State<AppState>,
-    user: AuthUser,
+    _user: AuthUser,
     Query(q): Query<ListBookmarksQuery>,
 ) -> Result<Json<Value>> {
-    let mode = state.get_app_mode().await;
+    // Shared across all accounts -- no per-user filtering (bookmarks/coding
+    // are intentionally visible to every account, not just their creator).
     let source_filter = q.source.as_deref().unwrap_or("discord");
-    let bookmark_rows = if mode.as_deref() == Some("multi") {
-        sqlx::query(
-            "SELECT b.id, b.msg_id, b.ctx_before, b.ctx_after, b.note, b.created_at,
-                    b.source, m.content, m.username, m.date, m.is_suno_team
-             FROM bookmarks b
-             JOIN messages m ON m.id = b.msg_id
-             WHERE b.user_id = $1 AND b.source = $2
-             ORDER BY b.created_at DESC",
-        )
-        .bind(user.id)
-        .bind(source_filter)
-        .fetch_all(&state.db)
-        .await?
-    } else {
-        sqlx::query(
-            "SELECT b.id, b.msg_id, b.ctx_before, b.ctx_after, b.note, b.created_at,
-                    b.source, m.content, m.username, m.date, m.is_suno_team
-             FROM bookmarks b
-             JOIN messages m ON m.id = b.msg_id
-             WHERE b.source = $1
-             ORDER BY b.created_at DESC",
-        )
-        .bind(source_filter)
-        .fetch_all(&state.db)
-        .await?
-    };
+    let bookmark_rows = sqlx::query(
+        "SELECT b.id, b.msg_id, b.ctx_before, b.ctx_after, b.note, b.created_at,
+                b.source, m.content, m.username, m.date, m.is_suno_team
+         FROM bookmarks b
+         JOIN messages m ON m.id = b.msg_id
+         WHERE b.source = $1
+         ORDER BY b.created_at DESC",
+    )
+    .bind(source_filter)
+    .fetch_all(&state.db)
+    .await?;
 
     use sqlx::Row;
     use std::collections::HashMap;
@@ -170,32 +153,17 @@ pub async fn list_bookmarks(
 /// Lightweight bookmark list — only message metadata, no codes or highlights sub-queries.
 pub async fn list_bookmarks_meta(
     State(state): State<AppState>,
-    user: AuthUser,
+    _user: AuthUser,
 ) -> Result<Json<Value>> {
-    let mode = state.get_app_mode().await;
-    let rows = if mode.as_deref() == Some("multi") {
-        sqlx::query(
-            "SELECT b.id, b.msg_id, b.note, b.created_at,
-                    m.content, m.username, m.date, m.is_suno_team
-             FROM bookmarks b
-             JOIN messages m ON m.id = b.msg_id
-             WHERE b.user_id = $1
-             ORDER BY b.created_at DESC",
-        )
-        .bind(user.id)
-        .fetch_all(&state.db)
-        .await?
-    } else {
-        sqlx::query(
-            "SELECT b.id, b.msg_id, b.note, b.created_at,
-                    m.content, m.username, m.date, m.is_suno_team
-             FROM bookmarks b
-             JOIN messages m ON m.id = b.msg_id
-             ORDER BY b.created_at DESC",
-        )
-        .fetch_all(&state.db)
-        .await?
-    };
+    let rows = sqlx::query(
+        "SELECT b.id, b.msg_id, b.note, b.created_at,
+                m.content, m.username, m.date, m.is_suno_team
+         FROM bookmarks b
+         JOIN messages m ON m.id = b.msg_id
+         ORDER BY b.created_at DESC",
+    )
+    .fetch_all(&state.db)
+    .await?;
 
     use sqlx::Row;
     let bookmarks: Vec<Value> = rows
@@ -217,19 +185,11 @@ pub async fn list_bookmarks_meta(
 
 pub async fn list_bookmark_ids(
     State(state): State<AppState>,
-    user: AuthUser,
+    _user: AuthUser,
 ) -> Result<Json<Value>> {
-    let mode = state.get_app_mode().await;
-    let ids: Vec<i64> = if mode.as_deref() == Some("multi") {
-        sqlx::query_scalar("SELECT msg_id FROM bookmarks WHERE user_id = $1")
-            .bind(user.id)
-            .fetch_all(&state.db)
-            .await?
-    } else {
-        sqlx::query_scalar("SELECT msg_id FROM bookmarks")
-            .fetch_all(&state.db)
-            .await?
-    };
+    let ids: Vec<i64> = sqlx::query_scalar("SELECT msg_id FROM bookmarks")
+        .fetch_all(&state.db)
+        .await?;
 
     Ok(Json(json!(ids)))
 }

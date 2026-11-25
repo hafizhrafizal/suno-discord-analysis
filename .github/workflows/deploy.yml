@@ -128,7 +128,7 @@ jobs:
       - name: Upload frontend and stack definition
         run: |
           rsync -az --delete dist/ vps:/var/www/suno-analysis/
-          scp deploy/docker-compose.prod.yml vps:suno-analysis/docker-compose.yml
+          scp deploy/docker-compose.prod.yml vps:/var/www/apps/suno-analysis/docker-compose.yml
 
       - name: Pull images and restart
         env:
@@ -138,7 +138,7 @@ jobs:
         run: |
           ssh vps "GHCR_USER='$GHCR_USER' GHCR_TOKEN='$GHCR_TOKEN' IMAGE_TAG='$IMAGE_TAG' bash -s" <<'EOF'
           set -euo pipefail
-          cd ~/suno-analysis
+          cd /var/www/apps/suno-analysis
           # Pin the deployed commit so manual `docker compose up` keeps the same images
           if grep -q '^IMAGE_TAG=' .env; then sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$IMAGE_TAG/" .env; else echo "IMAGE_TAG=$IMAGE_TAG" >> .env; fi
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin

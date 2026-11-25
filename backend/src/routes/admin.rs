@@ -15,6 +15,56 @@ pub struct SetPasswordRequest {
     pub password: String,
 }
 
+#[derive(Deserialize)]
+pub struct CreateUserRequest {
+    pub username: String,
+    pub password: String,
+    #[serde(default)]
+    pub is_admin: bool,
+}
+
+/// Accounts are only ever created here, by an existing admin -- there is
+/// no public self-registration (see routes/auth.rs::register).
+pub async fn create_user(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(req): Json<CreateUserRequest>,
+) -> Result<Json<Value>> {
+    if req.username.len() < 2 || req.username.len() > 40 {
+        return Err(AppError::BadRequest("Username must be 2-40 characters".into()));
+    }
+    if req.password.len() < 8 {
+        return Err(AppError::BadRequest("Password must be at least 8 characters".into()));
+    }
+
+    let exists: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM users WHERE LOWER(username) = LOWER($1)")
+            .bind(&req.username)
+            .fetch_optional(&state.db)
+            .await?;
+    if exists.is_some() {
+        return Err(AppError::BadRequest("Username already taken".into()));
+    }
+
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(req.password.as_bytes(), &salt)
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .to_string();
+
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, password_salt, is_admin) VALUES ($1, $2, $3, $4) RETURNING id",
+    )
+    .bind(&req.username)
+    .bind(&hash)
+    .bind(salt.as_str())
+    .bind(req.is_admin)
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(json!({ "id": id, "username": req.username, "is_admin": req.is_admin })))
+}
+
 pub async fn list_users(
     State(state): State<AppState>,
     _admin: AdminUser,

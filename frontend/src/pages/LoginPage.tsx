@@ -5,10 +5,8 @@ import { useAuthStore } from '../store/authStore'
 import type { User } from '../types'
 
 export default function LoginPage() {
-  const [tab, setTab] = useState<'login' | 'register'>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [modeChecked, setModeChecked] = useState(false)
@@ -34,15 +32,9 @@ export default function LoginPage() {
     e.preventDefault()
     setError(null)
 
-    if (tab === 'register' && password !== confirmPassword) {
-      setError('Passwords do not match')
-      return
-    }
-
     setLoading(true)
     try {
-      const endpoint = tab === 'login' ? '/auth/login' : '/auth/register'
-      const u = await apiFetch<User>(endpoint, {
+      const u = await apiFetch<User>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       })
@@ -87,31 +79,11 @@ export default function LoginPage() {
         </div>
 
         <div className="p-8">
-          {/* Tabs */}
-          <div className="flex mb-6 border-b border-gray-200">
-            <button
-              onClick={() => { setTab('login'); setError(null) }}
-              className={`flex-1 pb-2.5 text-sm font-semibold transition-colors border-b-2 -mb-px ${
-                tab === 'login'
-                  ? 'border-indigo-700 text-indigo-700'
-                  : 'border-transparent text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              Log In
-            </button>
-            <button
-              onClick={() => { setTab('register'); setError(null) }}
-              className={`flex-1 pb-2.5 text-sm font-semibold transition-colors border-b-2 -mb-px ${
-                tab === 'register'
-                  ? 'border-indigo-700 text-indigo-700'
-                  : 'border-transparent text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              Sign Up
-            </button>
-          </div>
+          <h2 className="text-sm font-semibold text-gray-700 mb-6 pb-2.5 border-b-2 border-indigo-700 -mb-px inline-block">
+            Log In
+          </h2>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4 mt-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
               <input
@@ -135,19 +107,6 @@ export default function LoginPage() {
                 placeholder="Enter password"
               />
             </div>
-            {tab === 'register' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                  className="search-input w-full"
-                  placeholder="Confirm password"
-                />
-              </div>
-            )}
 
             {error && (
               <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
@@ -160,9 +119,13 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full search-btn justify-center py-2"
             >
-              {loading ? 'Please wait…' : tab === 'login' ? 'Log In' : 'Create Account'}
+              {loading ? 'Please wait…' : 'Log In'}
             </button>
           </form>
+
+          <p className="text-xs text-gray-400 text-center mt-6">
+            Accounts are created by an admin. Contact yours if you need access.
+          </p>
         </div>
       </div>
     </div>
