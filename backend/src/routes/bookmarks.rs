@@ -42,6 +42,36 @@ pub async fn create_bookmark(
     Ok(Json(json!({ "id": id, "msg_id": req.msg_id })))
 }
 
+/// Get-or-create: returns the existing bookmark for this message if one
+/// already exists (any account's -- bookmarks are shared), otherwise
+/// creates one. Used by the Coding Workspace so inline highlighting never
+/// produces duplicate bookmark rows for the same message.
+pub async fn get_or_create_bookmark_for_message(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(msg_id): Path<i64>,
+) -> Result<Json<Value>> {
+    if let Some(id) = sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM bookmarks WHERE msg_id = $1 ORDER BY id ASC LIMIT 1",
+    )
+    .bind(msg_id)
+    .fetch_optional(&state.db)
+    .await?
+    {
+        return Ok(Json(json!({ "id": id, "msg_id": msg_id })));
+    }
+
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO bookmarks (msg_id, user_id) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(msg_id)
+    .bind(user.id)
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(Json(json!({ "id": id, "msg_id": msg_id })))
+}
+
 pub async fn list_bookmarks(
     State(state): State<AppState>,
     _user: AuthUser,

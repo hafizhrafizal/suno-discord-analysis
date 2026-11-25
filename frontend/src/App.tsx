@@ -18,6 +18,7 @@ import BookmarksPage from './pages/BookmarksPage'
 import AdminPage from './pages/AdminPage'
 import SettingsPage from './pages/SettingsPage'
 import CodingPage from './pages/CodingPage'
+import CodingWorkspacePage from './pages/CodingWorkspacePage'
 import NotFoundPage from './pages/NotFoundPage'
 import ErrorPage from './pages/ErrorPage'
 
@@ -113,6 +114,7 @@ const router = createBrowserRouter([
           { path: 'coding', element: <CodingRedirect basePath="/discord" /> },
           { path: 'coding/manager', element: <CodingPage /> },
           { path: 'coding/table', element: <CodingPage /> },
+          { path: 'workspace', element: <CodingWorkspacePage /> },
           { path: 'settings', element: <SettingsPage /> },
           { path: 'admin', element: <AdminPage /> },
         ],

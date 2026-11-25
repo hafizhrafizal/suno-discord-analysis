@@ -94,7 +94,7 @@ pub fn all_routes(state: AppState) -> Router {
         .route("/bookmarks/ids", get(bookmarks::list_bookmark_ids))
         .route("/bookmarks/meta", get(bookmarks::list_bookmarks_meta))
         .route("/bookmarks/:id", delete(bookmarks::delete_bookmark))
-        .route("/bookmarks/by-msg/:msg_id", delete(bookmarks::delete_bookmark_by_msg))
+        .route("/bookmarks/by-msg/:msg_id", delete(bookmarks::delete_bookmark_by_msg).put(bookmarks::get_or_create_bookmark_for_message))
         .route("/bookmarks/:id/labels/:label_id",
             post(bookmarks::add_label).delete(bookmarks::remove_label))
         .route("/bookmarks/:id/highlights", post(bookmarks::add_highlight))
@@ -110,6 +110,7 @@ pub fn all_routes(state: AppState) -> Router {
         .route("/bookmark-codes", post(codes::assign_code).get(codes::list_all_bookmark_codes))
         .route("/bookmark-codes/:bookmark_id", get(codes::list_codes_for_bookmark))
         .route("/bookmark-codes/:bookmark_id/:code_id", delete(codes::remove_code_assignment))
+        .route("/codes/by-message/:msg_id", get(codes::list_highlights_for_message))
         // Suno team
         .route("/suno-team", get(suno_team::list_suno_team))
         .route("/suno-team/:username", post(suno_team::add_suno_team).delete(suno_team::remove_suno_team))

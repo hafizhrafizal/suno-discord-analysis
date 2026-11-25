@@ -96,6 +96,13 @@ export default function Header({ basePath }: { basePath: string }) {
             <span className="hidden sm:inline">Coding</span>
           </NavLink>
 
+          <NavLink to={`${basePath}/workspace`} className={navCls} aria-label="Coding Workspace">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            <span className="hidden sm:inline">Workspace</span>
+          </NavLink>
+
           {appMode !== 'multi' && (
             <NavLink to={`${basePath}/settings`} className={navCls} aria-label="Settings">
               <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">

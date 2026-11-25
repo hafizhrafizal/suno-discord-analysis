@@ -379,3 +379,41 @@ pub async fn remove_code_assignment(
 
     Ok(Json(json!({ "removed": true, "bookmark_id": bookmark_id, "code_id": code_id })))
 }
+
+/// Highlights for a raw message id (joined through bookmarks.msg_id) --
+/// lets the Coding Workspace show already-coded spans for a message
+/// without the caller needing to know its bookmark id up front.
+pub async fn list_highlights_for_message(
+    State(state): State<AppState>,
+    Path(msg_id): Path<i64>,
+) -> Result<Json<Value>> {
+    let rows = sqlx::query(
+        "SELECT bch.id as highlight_id, bch.bookmark_id, bch.code_id,
+                bch.highlighted_text, c.name as code_name, c.color
+         FROM bookmark_code_highlights bch
+         JOIN bookmarks b ON b.id = bch.bookmark_id
+         JOIN codes c ON c.id = bch.code_id
+         WHERE b.msg_id = $1
+         ORDER BY bch.id ASC",
+    )
+    .bind(msg_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let result: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            use sqlx::Row;
+            json!({
+                "highlight_id": r.get::<i64, _>("highlight_id"),
+                "bookmark_id": r.get::<i64, _>("bookmark_id"),
+                "code_id": r.get::<i64, _>("code_id"),
+                "highlighted_text": r.get::<String, _>("highlighted_text"),
+                "code_name": r.get::<String, _>("code_name"),
+                "color": r.get::<String, _>("color"),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!(result)))
+}
